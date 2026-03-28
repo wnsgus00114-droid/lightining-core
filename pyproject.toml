@@ -6,16 +6,16 @@ requires = [
 build-backend = "scikit_build_core.build"
 
 [project]
-name = "lightining-core"
+name = "lightning-core"
 version = "0.1.1"
-description = "Lightining Core: macOS-first CUDA-style runtime with Metal backend"
+description = "Lightning Core: macOS-first CUDA-style runtime with Metal backend"
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [
-  { name = "Lightining Core Team" }
+  { name = "Lightning Core Team" }
 ]
 maintainers = [
-  { name = "Lightining Core Team" }
+  { name = "Lightning Core Team" }
 ]
 license = { text = "Proprietary" }
 keywords = [
@@ -43,9 +43,9 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/wnsgus00114-droid/lightining-core"
-Repository = "https://github.com/wnsgus00114-droid/lightining-core"
-Issues = "https://github.com/wnsgus00114-droid/lightining-core/issues"
+Homepage = "https://github.com/wnsgus00114-droid/lightning-core"
+Repository = "https://github.com/wnsgus00114-droid/lightning-core"
+Issues = "https://github.com/wnsgus00114-droid/lightning-core/issues"
 
 [tool.scikit-build]
 cmake.build-type = "Release"

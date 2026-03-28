@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "lightining_core/lightining_core.h"
+#include "lightning_core/lightning_core.h"
 
 int main(void) {
   float host_in[8] = {0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f};
@@ -42,7 +42,7 @@ int main(void) {
   }
 
   printf("backend=%s, metal=%d, cuda=%d\n", lcBackendName(), lcIsMetalAvailable(), lcIsCudaAvailable());
-  printf("Lightining Core C API example: OK\n");
+  printf("Lightning Core C API example: OK\n");
 
   lcFree(device_ptr);
   return 0;

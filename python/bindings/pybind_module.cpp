@@ -148,9 +148,9 @@ void bindTensorType(py::module_& m, const char* name) {
       });
 }
 
-PYBIND11_MODULE(lightining_core, m) {
+PYBIND11_MODULE(lightning_core, m) {
   // 모듈 docstring.
-  m.doc() = "Lightining Core python bindings";
+  m.doc() = "Lightning Core python bindings";
 
   py::class_<cudajun::ops::MatMulIoPolicy>(m, "MatMulIoPolicy")
       .def(py::init<>())

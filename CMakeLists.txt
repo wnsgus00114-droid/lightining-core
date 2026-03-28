@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.23)
-project(LightiningCore VERSION 0.1.1 LANGUAGES CXX)
+project(LightningCore VERSION 0.1.1 LANGUAGES CXX)
 
 if(NOT APPLE)
-  message(FATAL_ERROR "Lightining Core currently supports macOS only.")
+  message(FATAL_ERROR "Lightning Core currently supports macOS only.")
 endif()
 
 # CMake의 언어 감지 유틸을 끌어온다.
@@ -64,7 +64,7 @@ endif()
 # 공통 소스: 런타임, 텐서, 디스패치, CPU 구현.
 set(CJ_SOURCES
   src/runtime.cpp
-  src/lightining_core_c_api.cpp
+  src/lightning_core_c_api.cpp
   src/attention.cpp
   src/attention_cpu.cpp
   src/ops/matmul_cpu.cpp
@@ -101,8 +101,8 @@ endif()
 # 코어 라이브러리 타깃과 네임스페이스 별칭.
 add_library(cudajun STATIC ${CJ_SOURCES})
 add_library(cudajun::cudajun ALIAS cudajun)
-add_library(lightining_core::lightining_core ALIAS cudajun)
-set_target_properties(cudajun PROPERTIES OUTPUT_NAME lightining_core)
+add_library(lightning_core::lightning_core ALIAS cudajun)
+set_target_properties(cudajun PROPERTIES OUTPUT_NAME lightning_core)
 
 target_compile_options(cudajun PRIVATE
   $<$<CONFIG:Release>:-O3 -ffast-math -funroll-loops>

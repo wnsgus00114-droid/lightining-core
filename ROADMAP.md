@@ -1,4 +1,4 @@
-# Lightining Core Roadmap
+# Lightning Core Roadmap
 
 This roadmap tracks known architecture gaps and compatibility work.
 

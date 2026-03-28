@@ -1,14 +1,14 @@
-# Lightining Core
+# Lightning Core
 
-`Lightining Core` is a macOS-first CUDA-style runtime focused on custom attention training/inference paths.
+`Lightning Core` is a macOS-first CUDA-style runtime focused on custom attention training/inference paths.
 
 ## Identity and Naming
 
-- Repository/package public name: `lightining-core` / `lightining_core`
-- Public C++ include path/namespace: `lightining_core/*` and `lightining_core::...`
+- Repository/package public name: `lightning-core` / `lightning_core`
+- Public C++ include path/namespace: `lightning_core/*` and `lightning_core::...`
 - Legacy compatibility shim remains available internally for older integrations
 
-Public-facing docs and examples now use only `lightining_core` naming.
+Public-facing docs and examples now use only `lightning_core` naming.
 
 ## Goals
 
@@ -27,7 +27,7 @@ Public-facing docs and examples now use only `lightining_core` naming.
 
 - macOS: Metal + CPU path (CUDA backend disabled)
 
-`Lightining Core` now targets macOS only and uses Metal as the primary GPU path.
+`Lightning Core` now targets macOS only and uses Metal as the primary GPU path.
 
 ## Apple Silicon Strategy
 
@@ -60,7 +60,7 @@ The following stage-1 upgrades are implemented:
 
 - Tensor view/slice/layout metadata layer
 - Python matmul/session/policy first-pass exposure
-- Public API naming integration stage-2 wrappers (`lightining_core` include path expansion)
+- Public API naming integration stage-2 wrappers (`lightning_core` include path expansion)
 
 ## Build
 
@@ -71,12 +71,12 @@ cmake --build build -j
 
 On macOS, CUDA is disabled and Metal/CPU paths are used automatically.
 
-## CUDA-Style C API (Lightining Core)
+## CUDA-Style C API (Lightning Core)
 
 Use the new C header:
 
 ```c
-#include <lightining_core/lightining_core.h>
+#include <lightning_core/lightning_core.h>
 
 void* dptr = NULL;
 if (lcMalloc(&dptr, 1024) != LC_SUCCESS) {
@@ -106,13 +106,13 @@ Memory model note:
 
 C example source:
 
-- `examples/lightining_core_c_api.c`
+- `examples/lightning_core_c_api.c`
 
 Compile/run example:
 
 ```bash
-cmake --build build --target lightining_core_c_api_example -j
-./build/lightining_core_c_api_example
+cmake --build build --target lightning_core_c_api_example -j
+./build/lightning_core_c_api_example
 ```
 
 ## Python Packaging (pip)
@@ -126,7 +126,7 @@ pip install .
 Quick import check:
 
 ```bash
-python -c "import lightining_core; print(lightining_core.backend_name())"
+python -c "import lightning_core; print(lightning_core.backend_name())"
 ```
 
 Python API highlights:
@@ -145,19 +145,19 @@ Python API highlights:
 Production install (after PyPI publish is configured):
 
 ```bash
-python3 -m pip install lightining-core
+python3 -m pip install lightning-core
 ```
 
 Immediate install from GitHub (works now, no PyPI needed):
 
 ```bash
-python3 -m pip install "git+https://github.com/wnsgus00114-droid/lightining-core.git@main"
+python3 -m pip install "git+https://github.com/wnsgus00114-droid/lightning-core.git@main"
 ```
 
 Install a specific release tag:
 
 ```bash
-python3 -m pip install "git+https://github.com/wnsgus00114-droid/lightining-core.git@v0.1.1"
+python3 -m pip install "git+https://github.com/wnsgus00114-droid/lightning-core.git@v0.1.1"
 ```
 
 ## GitHub Actions: Wheel Build and Publish
@@ -186,7 +186,7 @@ Manual TestPyPI dry-run:
 3. After publish, verify install:
 
 ```bash
-python -m pip install -i https://test.pypi.org/simple/ lightining-core
+python -m pip install -i https://test.pypi.org/simple/ lightning-core
 ```
 
 Note:
@@ -195,7 +195,7 @@ Note:
 
 Trusted Publishing setup checklist (PyPI):
 
-1. Create the `lightining-core` project on PyPI (once).
+1. Create the `lightning-core` project on PyPI (once).
 2. In PyPI project settings, open `Publishing` -> `Add a new pending publisher`.
 3. Set:
 	- Owner: your GitHub org/user
@@ -206,7 +206,7 @@ Trusted Publishing setup checklist (PyPI):
 
 Trusted Publishing setup checklist (TestPyPI):
 
-1. Create the `lightining-core` project on TestPyPI (once).
+1. Create the `lightning-core` project on TestPyPI (once).
 2. In TestPyPI project settings, open `Publishing` -> `Add a new pending publisher`.
 3. Set:
 	- Owner: your GitHub org/user
@@ -221,40 +221,40 @@ GitHub repository recommendation:
 
 ## C++ Namespace Migration
 
-To use the new namespace without rewriting existing implementation internals, include Lightining Core wrappers:
+To use the new namespace without rewriting existing implementation internals, include Lightning Core wrappers:
 
-- `include/lightining_core/runtime.hpp`
-- `include/lightining_core/tensor.hpp`
-- `include/lightining_core/ops.hpp`
-- `include/lightining_core/attention.hpp`
-- `include/lightining_core/model_customization.hpp`
+- `include/lightning_core/runtime.hpp`
+- `include/lightning_core/tensor.hpp`
+- `include/lightning_core/ops.hpp`
+- `include/lightning_core/attention.hpp`
+- `include/lightning_core/model_customization.hpp`
 
 Example:
 
 ```cpp
-#include "lightining_core/tensor.hpp"
-lightining_core::Tensor t(shape, lightining_core::Device::kMetal);
+#include "lightning_core/tensor.hpp"
+lightning_core::Tensor t(shape, lightning_core::Device::kMetal);
 ```
 
 Migration status:
 
-- Step 1 (done): public wrapper headers with `lightining_core` alias
+- Step 1 (done): public wrapper headers with `lightning_core` alias
 - Step 2 (done): expanded wrapper coverage for model headers and umbrella include
-- Step 3 (done): public docs/examples now use only `lightining_core` naming
+- Step 3 (done): public docs/examples now use only `lightning_core` naming
 - Compatibility shim remains for legacy code paths
 
 Detailed technical roadmap is tracked in `ROADMAP.md`.
 
 Stage-2 naming integration status:
 
-- Added lightining_core model wrapper headers under `include/lightining_core/models/*`
-- Added umbrella header `include/lightining_core/lightining_core.hpp`
+- Added lightning_core model wrapper headers under `include/lightning_core/models/*`
+- Added umbrella header `include/lightning_core/lightning_core.hpp`
 - Existing legacy namespace remains supported for compatibility
 
 Ops modularization status:
 
 - `ops.hpp` is being split incrementally.
-- Policy helpers are now in `include/lightining_core/ops/policy.hpp` and re-exported via `ops.hpp`.
+- Policy helpers are now in `include/lightning_core/ops/policy.hpp` and re-exported via `ops.hpp`.
 
 ## Test
 
@@ -405,19 +405,19 @@ va.finish(a, b, out);
 Attention forward postprocess (fused in Metal forward command buffer):
 
 ```cpp
-lightining_core::AttentionIoPolicy p;
+lightning_core::AttentionIoPolicy p;
 p.output_scale = 0.5f;
 p.output_bias = 0.1f;
 p.output_relu = true;
-lightining_core::attentionForwardWithPolicy(q, k, v, out, cfg, lightining_core::runtime::Device::kMetal, p);
+lightning_core::attentionForwardWithPolicy(q, k, v, out, cfg, lightning_core::runtime::Device::kMetal, p);
 ```
 
 Model-family customization presets (Transformer/LSTM/RNN/DNN/CNN/GCN/GAT/VLM):
 
 ```cpp
-#include "lightining_core/model_customization.hpp"
+#include "lightning_core/model_customization.hpp"
 
-using namespace lightining_core;
+using namespace lightning_core;
 
 // 1) pick an aggressive preset for your model family
 auto custom = makeAggressiveCustomization(
@@ -448,80 +448,80 @@ Preset intent:
 Transformer fast-path wrapper:
 
 ```cpp
-#include "lightining_core/models/transformer_fastpath.hpp"
+#include "lightning_core/models/transformer_fastpath.hpp"
 
-lightining_core::models::TransformerFastPathConfig cfg;
+lightning_core::models::TransformerFastPathConfig cfg;
 cfg.seq_len = 1024;
 cfg.head_dim = 64;
 cfg.causal = true;
 cfg.training = true;
 
-lightining_core::models::TransformerFastPath fast(cfg, lightining_core::runtime::Device::kMetal);
+lightning_core::models::TransformerFastPath fast(cfg, lightning_core::runtime::Device::kMetal);
 
 // attention loop stage example
-fast.attentionForward(q, k, v, out, lightining_core::LoopStage::kStart);
+fast.attentionForward(q, k, v, out, lightning_core::LoopStage::kStart);
 for (int step = 0; step < steps; ++step) {
-	fast.attentionForward(q, k, v, out, lightining_core::LoopStage::kRun);
+	fast.attentionForward(q, k, v, out, lightning_core::LoopStage::kRun);
 }
-fast.attentionForward(q, k, v, out, lightining_core::LoopStage::kFinish);
+fast.attentionForward(q, k, v, out, lightning_core::LoopStage::kFinish);
 ```
 
 LSTM/RNN fast-path wrapper:
 
 ```cpp
-#include "lightining_core/models/lstm_rnn_fastpath.hpp"
+#include "lightning_core/models/lstm_rnn_fastpath.hpp"
 
-lightining_core::models::LstmRnnFastPathConfig rnn_cfg;
+lightning_core::models::LstmRnnFastPathConfig rnn_cfg;
 rnn_cfg.input_dim = 512;
 rnn_cfg.hidden_dim = 512;
 rnn_cfg.training = true;
 rnn_cfg.lstm_mode = true;
 
-lightining_core::models::LstmRnnFastPath rnn(rnn_cfg, lightining_core::runtime::Device::kMetal);
-rnn.projectInput(x, w_x, h_x, batch, lightining_core::LoopStage::kRun);
-rnn.projectHidden(h, w_h, h_h, batch, lightining_core::LoopStage::kRun);
-rnn.fuseRecurrent(h_x, h_h, h_out, batch * rnn_cfg.hidden_dim, lightining_core::LoopStage::kRun);
+lightning_core::models::LstmRnnFastPath rnn(rnn_cfg, lightning_core::runtime::Device::kMetal);
+rnn.projectInput(x, w_x, h_x, batch, lightning_core::LoopStage::kRun);
+rnn.projectHidden(h, w_h, h_h, batch, lightning_core::LoopStage::kRun);
+rnn.fuseRecurrent(h_x, h_h, h_out, batch * rnn_cfg.hidden_dim, lightning_core::LoopStage::kRun);
 ```
 
 DNN/CNN fast-path wrapper:
 
 ```cpp
-#include "lightining_core/models/dnn_cnn_fastpath.hpp"
+#include "lightning_core/models/dnn_cnn_fastpath.hpp"
 
-lightining_core::models::DnnCnnFastPathConfig cnn_cfg;
+lightning_core::models::DnnCnnFastPathConfig cnn_cfg;
 cnn_cfg.in_dim = 1024;
 cnn_cfg.out_dim = 512;
 cnn_cfg.training = true;
 cnn_cfg.cnn_mode = true;
 
-lightining_core::models::DnnCnnFastPath cnn(cnn_cfg, lightining_core::runtime::Device::kMetal);
-cnn.denseProject(x, w, proj, batch, lightining_core::LoopStage::kRun);
-cnn.residualSub(proj, skip, sub, batch, cnn_cfg.out_dim, lightining_core::LoopStage::kRun);
-cnn.channelNormDiv(sub, norm, out, batch, cnn_cfg.out_dim, lightining_core::LoopStage::kRun);
+lightning_core::models::DnnCnnFastPath cnn(cnn_cfg, lightning_core::runtime::Device::kMetal);
+cnn.denseProject(x, w, proj, batch, lightning_core::LoopStage::kRun);
+cnn.residualSub(proj, skip, sub, batch, cnn_cfg.out_dim, lightning_core::LoopStage::kRun);
+cnn.channelNormDiv(sub, norm, out, batch, cnn_cfg.out_dim, lightning_core::LoopStage::kRun);
 ```
 
 GCN/GAT sparse-friendly policy layer:
 
 ```cpp
-#include "lightining_core/models/graph_fastpath.hpp"
+#include "lightning_core/models/graph_fastpath.hpp"
 
-auto gcn = lightining_core::models::makeGraphSparseFriendlyPolicy(
-	lightining_core::ModelFamily::kGcn,
-	lightining_core::ExecutionMode::kTraining,
+auto gcn = lightning_core::models::makeGraphSparseFriendlyPolicy(
+	lightning_core::ModelFamily::kGcn,
+	lightning_core::ExecutionMode::kTraining,
 	/*num_nodes=*/131072,
 	/*num_edges=*/1048576,
 	/*feature_dim=*/128);
 
-auto proj_run = lightining_core::models::makeGraphProjectionPolicy(gcn, lightining_core::LoopStage::kRun);
-auto update_run = lightining_core::models::makeGraphUpdatePolicy(gcn, lightining_core::LoopStage::kRun);
+auto proj_run = lightning_core::models::makeGraphProjectionPolicy(gcn, lightning_core::LoopStage::kRun);
+auto update_run = lightning_core::models::makeGraphUpdatePolicy(gcn, lightning_core::LoopStage::kRun);
 ```
 
 VLM fast-path wrapper (vision projection + text projection + fusion attention):
 
 ```cpp
-#include "lightining_core/models/vlm_fastpath.hpp"
+#include "lightning_core/models/vlm_fastpath.hpp"
 
-lightining_core::models::VlmFastPathConfig vcfg;
+lightning_core::models::VlmFastPathConfig vcfg;
 vcfg.image_tokens = 256;
 vcfg.text_tokens = 128;
 vcfg.vision_dim = 1024;
@@ -529,18 +529,18 @@ vcfg.text_dim = 768;
 vcfg.fused_dim = 64;
 vcfg.training = true;
 
-lightining_core::models::VlmFastPath vlm(vcfg, lightining_core::runtime::Device::kMetal);
-vlm.projectVision(image_tokens, w_vision, image_proj, lightining_core::LoopStage::kRun);
-vlm.projectText(text_tokens, w_text, text_proj, lightining_core::LoopStage::kRun);
-vlm.runCrossAttentionFast(image_proj, text_proj, out_text, lightining_core::LoopStage::kRun);
-vlm.runFusionAttention(q, k, v, out, lightining_core::LoopStage::kRun);
+lightning_core::models::VlmFastPath vlm(vcfg, lightning_core::runtime::Device::kMetal);
+vlm.projectVision(image_tokens, w_vision, image_proj, lightning_core::LoopStage::kRun);
+vlm.projectText(text_tokens, w_text, text_proj, lightning_core::LoopStage::kRun);
+vlm.runCrossAttentionFast(image_proj, text_proj, out_text, lightning_core::LoopStage::kRun);
+vlm.runFusionAttention(q, k, v, out, lightning_core::LoopStage::kRun);
 ```
 
 VLM patch embedding integration:
 
 ```cpp
 // image_nhwc: [H, W, C], patchified internally then projected.
-vlm.patchEmbedFromImage(image_nhwc, image_h, image_w, w_patch, image_proj, lightining_core::LoopStage::kRun);
+vlm.patchEmbedFromImage(image_nhwc, image_h, image_w, w_patch, image_proj, lightning_core::LoopStage::kRun);
 ```
 
 Graph policy cache persistence:
@@ -597,7 +597,7 @@ source build/benchmarks/model_runtime_profile.env
 
 Runtime autoload of profile env:
 
-- On first runtime usage, `lightining_core::runtime` tries to load tuning vars from:
+- On first runtime usage, `lightning_core::runtime` tries to load tuning vars from:
 	- `CJ_RUNTIME_PROFILE_ENV_FILE` (if set), or
 	- `build/benchmarks/model_runtime_profile.env`, or
 	- `../build/benchmarks/model_runtime_profile.env`
@@ -627,11 +627,11 @@ Generated CSV:
 
 ## Python Binding
 
-The python module target is built as `lightining_core` via pybind11 if pybind11 is available.
+The python module target is built as `lightning_core` via pybind11 if pybind11 is available.
 
 ## Project Layout
 
-- `include/lightining_core`: public headers
+- `include/lightning_core`: public headers
 - legacy compatibility headers/shims are preserved for existing integrations
 - `src`: runtime + tensor + ops implementation
 - `tests`: C++ unit tests

@@ -1,4 +1,4 @@
-#include "lightining_core/lightining_core.h"
+#include "lightning_core/lightning_core.h"
 
 #include <string>
 
