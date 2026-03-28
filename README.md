@@ -5,10 +5,10 @@
 ## Identity and Naming
 
 - Repository/package public name: `lightining-core` / `lightining_core`
-- Internal compatibility namespace currently remains `cudajun`
-- Compatibility alias is provided as `lightining_core` for user-facing C++ includes
+- Public C++ include path/namespace: `lightining_core/*` and `lightining_core::...`
+- Legacy compatibility shim remains available internally for older integrations
 
-This mixed naming is currently intentional for compatibility, and will be phased toward a single public identity in future releases.
+Public-facing docs and examples now use only `lightining_core` naming.
 
 ## Goals
 
@@ -133,10 +133,12 @@ Python API highlights:
 
 - `Tensor` / `Tensor64` now expose `shape`, `strides`, `rank`, `is_contiguous`, `dtype`, `reshape`
 - `Tensor` / `Tensor64` also expose `view(...)` and `slice(axis, start, end)` returning tensor view metadata objects
+- `Tensor` / `Tensor64` expose concrete view data access: `to_host_view(view)`, `slice_copy(...)`, `read_strided(...)`
 - Runtime helpers: `backend_name`, `cuda_available`, `metal_available`, `memory_model_name`
 - Attention helper: `attention_forward(q, k, v, seq_len, head_dim, causal=False, device='metal')`
 - Matmul helpers: `matmul(...)`, `matmul_with_policy(...)`
-- Policy/session helpers: `MatMulIoPolicy`, `MatMulMetalResidentSession`
+- Policy/session helpers: `MatMulIoPolicy`, `MatrixElementwiseIoPolicy`, `VectorAddIoPolicy`, `AttentionIoPolicy`
+- Session helpers: `MatMulMetalResidentSession`, `MatrixElemwiseMetalResidentSession`, `VectorAddMetalResidentSession`, `AttentionSession`
 
 ## Install for macOS Users (Terminal)
 
@@ -217,7 +219,7 @@ GitHub repository recommendation:
 
 - Add protection rules/reviewers for the `pypi` and `testpypi` environments before first publish.
 
-## C++ Namespace Migration (Step 1 Applied)
+## C++ Namespace Migration
 
 To use the new namespace without rewriting existing implementation internals, include Lightining Core wrappers:
 
@@ -227,20 +229,7 @@ To use the new namespace without rewriting existing implementation internals, in
 - `include/lightining_core/attention.hpp`
 - `include/lightining_core/model_customization.hpp`
 
-These wrappers map:
-
-```cpp
-namespace lightining_core = cudajun;
-```
-
-So existing code can move from:
-
-```cpp
-#include "cudajun/tensor.hpp"
-cudajun::Tensor t(shape, cudajun::Device::kMetal);
-```
-
-to:
+Example:
 
 ```cpp
 #include "lightining_core/tensor.hpp"
@@ -250,8 +239,9 @@ lightining_core::Tensor t(shape, lightining_core::Device::kMetal);
 Migration status:
 
 - Step 1 (done): public wrapper headers with `lightining_core` alias
-- Step 2 (planned): progressively remove `cudajun` naming from public-facing APIs
-- Step 3 (planned): evaluate internal symbol/target rename with compatibility shims
+- Step 2 (done): expanded wrapper coverage for model headers and umbrella include
+- Step 3 (done): public docs/examples now use only `lightining_core` naming
+- Compatibility shim remains for legacy code paths
 
 Detailed technical roadmap is tracked in `ROADMAP.md`.
 
@@ -259,12 +249,12 @@ Stage-2 naming integration status:
 
 - Added lightining_core model wrapper headers under `include/lightining_core/models/*`
 - Added umbrella header `include/lightining_core/lightining_core.hpp`
-- Existing `cudajun` namespace remains supported for compatibility
+- Existing legacy namespace remains supported for compatibility
 
 Ops modularization status:
 
 - `ops.hpp` is being split incrementally.
-- Policy helpers are now in `include/cudajun/ops/policy.hpp` and re-exported via `ops.hpp`.
+- Policy helpers are now in `include/lightining_core/ops/policy.hpp` and re-exported via `ops.hpp`.
 
 ## Test
 
@@ -415,19 +405,19 @@ va.finish(a, b, out);
 Attention forward postprocess (fused in Metal forward command buffer):
 
 ```cpp
-cudajun::AttentionIoPolicy p;
+lightining_core::AttentionIoPolicy p;
 p.output_scale = 0.5f;
 p.output_bias = 0.1f;
 p.output_relu = true;
-cudajun::attentionForwardWithPolicy(q, k, v, out, cfg, cudajun::runtime::Device::kMetal, p);
+lightining_core::attentionForwardWithPolicy(q, k, v, out, cfg, lightining_core::runtime::Device::kMetal, p);
 ```
 
 Model-family customization presets (Transformer/LSTM/RNN/DNN/CNN/GCN/GAT/VLM):
 
 ```cpp
-#include "cudajun/model_customization.hpp"
+#include "lightining_core/model_customization.hpp"
 
-using namespace cudajun;
+using namespace lightining_core;
 
 // 1) pick an aggressive preset for your model family
 auto custom = makeAggressiveCustomization(
@@ -458,80 +448,80 @@ Preset intent:
 Transformer fast-path wrapper:
 
 ```cpp
-#include "cudajun/models/transformer_fastpath.hpp"
+#include "lightining_core/models/transformer_fastpath.hpp"
 
-cudajun::models::TransformerFastPathConfig cfg;
+lightining_core::models::TransformerFastPathConfig cfg;
 cfg.seq_len = 1024;
 cfg.head_dim = 64;
 cfg.causal = true;
 cfg.training = true;
 
-cudajun::models::TransformerFastPath fast(cfg, cudajun::runtime::Device::kMetal);
+lightining_core::models::TransformerFastPath fast(cfg, lightining_core::runtime::Device::kMetal);
 
 // attention loop stage example
-fast.attentionForward(q, k, v, out, cudajun::LoopStage::kStart);
+fast.attentionForward(q, k, v, out, lightining_core::LoopStage::kStart);
 for (int step = 0; step < steps; ++step) {
-	fast.attentionForward(q, k, v, out, cudajun::LoopStage::kRun);
+	fast.attentionForward(q, k, v, out, lightining_core::LoopStage::kRun);
 }
-fast.attentionForward(q, k, v, out, cudajun::LoopStage::kFinish);
+fast.attentionForward(q, k, v, out, lightining_core::LoopStage::kFinish);
 ```
 
 LSTM/RNN fast-path wrapper:
 
 ```cpp
-#include "cudajun/models/lstm_rnn_fastpath.hpp"
+#include "lightining_core/models/lstm_rnn_fastpath.hpp"
 
-cudajun::models::LstmRnnFastPathConfig rnn_cfg;
+lightining_core::models::LstmRnnFastPathConfig rnn_cfg;
 rnn_cfg.input_dim = 512;
 rnn_cfg.hidden_dim = 512;
 rnn_cfg.training = true;
 rnn_cfg.lstm_mode = true;
 
-cudajun::models::LstmRnnFastPath rnn(rnn_cfg, cudajun::runtime::Device::kMetal);
-rnn.projectInput(x, w_x, h_x, batch, cudajun::LoopStage::kRun);
-rnn.projectHidden(h, w_h, h_h, batch, cudajun::LoopStage::kRun);
-rnn.fuseRecurrent(h_x, h_h, h_out, batch * rnn_cfg.hidden_dim, cudajun::LoopStage::kRun);
+lightining_core::models::LstmRnnFastPath rnn(rnn_cfg, lightining_core::runtime::Device::kMetal);
+rnn.projectInput(x, w_x, h_x, batch, lightining_core::LoopStage::kRun);
+rnn.projectHidden(h, w_h, h_h, batch, lightining_core::LoopStage::kRun);
+rnn.fuseRecurrent(h_x, h_h, h_out, batch * rnn_cfg.hidden_dim, lightining_core::LoopStage::kRun);
 ```
 
 DNN/CNN fast-path wrapper:
 
 ```cpp
-#include "cudajun/models/dnn_cnn_fastpath.hpp"
+#include "lightining_core/models/dnn_cnn_fastpath.hpp"
 
-cudajun::models::DnnCnnFastPathConfig cnn_cfg;
+lightining_core::models::DnnCnnFastPathConfig cnn_cfg;
 cnn_cfg.in_dim = 1024;
 cnn_cfg.out_dim = 512;
 cnn_cfg.training = true;
 cnn_cfg.cnn_mode = true;
 
-cudajun::models::DnnCnnFastPath cnn(cnn_cfg, cudajun::runtime::Device::kMetal);
-cnn.denseProject(x, w, proj, batch, cudajun::LoopStage::kRun);
-cnn.residualSub(proj, skip, sub, batch, cnn_cfg.out_dim, cudajun::LoopStage::kRun);
-cnn.channelNormDiv(sub, norm, out, batch, cnn_cfg.out_dim, cudajun::LoopStage::kRun);
+lightining_core::models::DnnCnnFastPath cnn(cnn_cfg, lightining_core::runtime::Device::kMetal);
+cnn.denseProject(x, w, proj, batch, lightining_core::LoopStage::kRun);
+cnn.residualSub(proj, skip, sub, batch, cnn_cfg.out_dim, lightining_core::LoopStage::kRun);
+cnn.channelNormDiv(sub, norm, out, batch, cnn_cfg.out_dim, lightining_core::LoopStage::kRun);
 ```
 
 GCN/GAT sparse-friendly policy layer:
 
 ```cpp
-#include "cudajun/models/graph_fastpath.hpp"
+#include "lightining_core/models/graph_fastpath.hpp"
 
-auto gcn = cudajun::models::makeGraphSparseFriendlyPolicy(
-	cudajun::ModelFamily::kGcn,
-	cudajun::ExecutionMode::kTraining,
+auto gcn = lightining_core::models::makeGraphSparseFriendlyPolicy(
+	lightining_core::ModelFamily::kGcn,
+	lightining_core::ExecutionMode::kTraining,
 	/*num_nodes=*/131072,
 	/*num_edges=*/1048576,
 	/*feature_dim=*/128);
 
-auto proj_run = cudajun::models::makeGraphProjectionPolicy(gcn, cudajun::LoopStage::kRun);
-auto update_run = cudajun::models::makeGraphUpdatePolicy(gcn, cudajun::LoopStage::kRun);
+auto proj_run = lightining_core::models::makeGraphProjectionPolicy(gcn, lightining_core::LoopStage::kRun);
+auto update_run = lightining_core::models::makeGraphUpdatePolicy(gcn, lightining_core::LoopStage::kRun);
 ```
 
 VLM fast-path wrapper (vision projection + text projection + fusion attention):
 
 ```cpp
-#include "cudajun/models/vlm_fastpath.hpp"
+#include "lightining_core/models/vlm_fastpath.hpp"
 
-cudajun::models::VlmFastPathConfig vcfg;
+lightining_core::models::VlmFastPathConfig vcfg;
 vcfg.image_tokens = 256;
 vcfg.text_tokens = 128;
 vcfg.vision_dim = 1024;
@@ -539,18 +529,18 @@ vcfg.text_dim = 768;
 vcfg.fused_dim = 64;
 vcfg.training = true;
 
-cudajun::models::VlmFastPath vlm(vcfg, cudajun::runtime::Device::kMetal);
-vlm.projectVision(image_tokens, w_vision, image_proj, cudajun::LoopStage::kRun);
-vlm.projectText(text_tokens, w_text, text_proj, cudajun::LoopStage::kRun);
-vlm.runCrossAttentionFast(image_proj, text_proj, out_text, cudajun::LoopStage::kRun);
-vlm.runFusionAttention(q, k, v, out, cudajun::LoopStage::kRun);
+lightining_core::models::VlmFastPath vlm(vcfg, lightining_core::runtime::Device::kMetal);
+vlm.projectVision(image_tokens, w_vision, image_proj, lightining_core::LoopStage::kRun);
+vlm.projectText(text_tokens, w_text, text_proj, lightining_core::LoopStage::kRun);
+vlm.runCrossAttentionFast(image_proj, text_proj, out_text, lightining_core::LoopStage::kRun);
+vlm.runFusionAttention(q, k, v, out, lightining_core::LoopStage::kRun);
 ```
 
 VLM patch embedding integration:
 
 ```cpp
 // image_nhwc: [H, W, C], patchified internally then projected.
-vlm.patchEmbedFromImage(image_nhwc, image_h, image_w, w_patch, image_proj, cudajun::LoopStage::kRun);
+vlm.patchEmbedFromImage(image_nhwc, image_h, image_w, w_patch, image_proj, lightining_core::LoopStage::kRun);
 ```
 
 Graph policy cache persistence:
@@ -607,7 +597,7 @@ source build/benchmarks/model_runtime_profile.env
 
 Runtime autoload of profile env:
 
-- On first runtime usage, `cudajun::runtime` tries to load tuning vars from:
+- On first runtime usage, `lightining_core::runtime` tries to load tuning vars from:
 	- `CJ_RUNTIME_PROFILE_ENV_FILE` (if set), or
 	- `build/benchmarks/model_runtime_profile.env`, or
 	- `../build/benchmarks/model_runtime_profile.env`
@@ -641,7 +631,8 @@ The python module target is built as `lightining_core` via pybind11 if pybind11 
 
 ## Project Layout
 
-- `include/cudajun`: public headers
+- `include/lightining_core`: public headers
+- legacy compatibility headers/shims are preserved for existing integrations
 - `src`: runtime + tensor + ops implementation
 - `tests`: C++ unit tests
 - `benchmarks`: benchmarking binaries

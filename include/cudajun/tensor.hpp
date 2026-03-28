@@ -231,6 +231,87 @@ class TensorT {
     return runtime::Status::kSuccess;
   }
 
+  runtime::Status toHostView(const TensorViewT<T>& view, std::vector<T>* out) const {
+    if (view.device() != device_) {
+      return runtime::Status::kInvalidValue;
+    }
+    return readStrided(view.shape(), view.strides(), view.offsetElements(), out);
+  }
+
+  runtime::Status sliceCopy(
+      std::size_t axis,
+      std::int64_t start,
+      std::int64_t end,
+      std::vector<T>* out) const {
+    TensorViewT<T> v;
+    runtime::Status st = slice(axis, start, end, &v);
+    if (st != runtime::Status::kSuccess) {
+      return st;
+    }
+    return toHostView(v, out);
+  }
+
+  runtime::Status readStrided(
+      const std::vector<std::int64_t>& out_shape,
+      const std::vector<std::int64_t>& source_strides,
+      std::size_t offset_elements,
+      std::vector<T>* out) const {
+    if (out == nullptr || !isShapeValid(out_shape) || out_shape.size() != source_strides.size()) {
+      return runtime::Status::kInvalidValue;
+    }
+    for (std::int64_t s : source_strides) {
+      if (s <= 0) {
+        return runtime::Status::kInvalidValue;
+      }
+    }
+
+    std::size_t out_numel = 1;
+    for (std::int64_t d : out_shape) {
+      out_numel *= static_cast<std::size_t>(d);
+    }
+
+    std::size_t max_source_index = offset_elements;
+    for (std::size_t i = 0; i < out_shape.size(); ++i) {
+      max_source_index +=
+          static_cast<std::size_t>(out_shape[i] - 1) * static_cast<std::size_t>(source_strides[i]);
+    }
+    if (max_source_index >= numel()) {
+      return runtime::Status::kInvalidValue;
+    }
+
+    std::vector<T> host_values;
+    const T* src = nullptr;
+    if (device_ == Device::kCPU) {
+      src = cpu_storage_.data();
+    } else {
+      runtime::Status st = toHost(&host_values);
+      if (st != runtime::Status::kSuccess) {
+        return st;
+      }
+      src = host_values.data();
+    }
+
+    out->assign(out_numel, static_cast<T>(0));
+
+    std::vector<std::size_t> linear_strides(out_shape.size(), 1);
+    for (std::size_t i = out_shape.size(); i > 1; --i) {
+      linear_strides[i - 2] = linear_strides[i - 1] * static_cast<std::size_t>(out_shape[i - 1]);
+    }
+
+    for (std::size_t linear = 0; linear < out_numel; ++linear) {
+      std::size_t rem = linear;
+      std::size_t source_index = offset_elements;
+      for (std::size_t axis = 0; axis < out_shape.size(); ++axis) {
+        const std::size_t idx = rem / linear_strides[axis];
+        rem %= linear_strides[axis];
+        source_index += idx * static_cast<std::size_t>(source_strides[axis]);
+      }
+      (*out)[linear] = src[source_index];
+    }
+
+    return runtime::Status::kSuccess;
+  }
+
   runtime::Status fromHost(const std::vector<T>& values) {
     if (values.size() != numel()) {
       return runtime::Status::kInvalidValue;

@@ -103,6 +103,48 @@ int runCase(cudajun::Device device) {
     return 1;
   }
 
+  std::vector<T> slice_values;
+  if (a.toHostView(sview, &slice_values) != cudajun::runtime::Status::kSuccess) {
+    std::cerr << "toHostView failed\n";
+    return 1;
+  }
+  const std::vector<T> slice_expected{static_cast<T>(1), static_cast<T>(2)};
+  if (slice_values.size() != slice_expected.size()) {
+    std::cerr << "toHostView size mismatch\n";
+    return 1;
+  }
+  for (std::size_t i = 0; i < slice_expected.size(); ++i) {
+    if (!nearlyEqual(slice_values[i], slice_expected[i])) {
+      std::cerr << "toHostView value mismatch\n";
+      return 1;
+    }
+  }
+
+  std::vector<T> copy_values;
+  if (a.sliceCopy(1, 0, 1, &copy_values) != cudajun::runtime::Status::kSuccess) {
+    std::cerr << "sliceCopy failed\n";
+    return 1;
+  }
+  const std::vector<T> copy_expected{static_cast<T>(1), static_cast<T>(3)};
+  for (std::size_t i = 0; i < copy_expected.size(); ++i) {
+    if (!nearlyEqual(copy_values[i], copy_expected[i])) {
+      std::cerr << "sliceCopy value mismatch\n";
+      return 1;
+    }
+  }
+
+  std::vector<T> strided_values;
+  if (a.readStrided({2}, {2}, 0, &strided_values) != cudajun::runtime::Status::kSuccess) {
+    std::cerr << "readStrided failed\n";
+    return 1;
+  }
+  for (std::size_t i = 0; i < copy_expected.size(); ++i) {
+    if (!nearlyEqual(strided_values[i], copy_expected[i])) {
+      std::cerr << "readStrided value mismatch\n";
+      return 1;
+    }
+  }
+
   return 0;
 }
 
