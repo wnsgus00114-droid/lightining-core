@@ -1,6 +1,6 @@
-#include "cudajun/detail/ops_backend.hpp"
+#include "lightning_core/core/detail/ops_backend.hpp"
 
-namespace cudajun::detail {
+namespace lightning_core::detail {
 
 runtime::Status vectorAddCuda(const float* a, const float* b, float* out, std::size_t n) {
   // 스텁 구현: CUDA 파일이 아예 빌드되지 않는 환경에서 링킹용으로만 존재.
@@ -28,4 +28,4 @@ runtime::Status vectorAddCuda(const long double* a, const long double* b, long d
   return runtime::Status::kNotSupported;
 }
 
-}  // namespace cudajun::detail
+}  // namespace lightning_core::detail

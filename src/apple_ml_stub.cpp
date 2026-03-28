@@ -1,6 +1,6 @@
-#include "cudajun/apple_ml.hpp"
+#include "lightning_core/core/apple_ml.hpp"
 
-namespace cudajun::apple {
+namespace lightning_core::apple {
 
 runtime::Status benchmarkCoreMLInference(const std::string& modelPath, std::size_t n, int iters, double* avgMs) {
   (void)modelPath;
@@ -30,4 +30,4 @@ runtime::Status benchmarkMpsGraphTrainStep(std::size_t n, int iters, double* avg
   return runtime::Status::kNotSupported;
 }
 
-}  // namespace cudajun::apple
+}  // namespace lightning_core::apple

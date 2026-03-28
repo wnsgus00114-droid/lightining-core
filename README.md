@@ -29,7 +29,8 @@ cmake --build build --target lightning_core_c_api_example -j
 
 - Repository/package public name: `lightning-core` / `lightning_core`
 - Public C++ include path/namespace: `lightning_core/*` and `lightning_core::...`
-- Legacy compatibility shim remains available internally for older integrations
+- Internal canonical core headers now live under `include/lightning_core/core/*`
+- Legacy `include/cudajun/*` is now a compatibility shim that forwards to canonical core headers
 
 Public-facing docs and examples now use only `lightning_core` naming.
 

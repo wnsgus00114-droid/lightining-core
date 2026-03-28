@@ -2,59 +2,59 @@
 
 #include <string>
 
-#include "cudajun/runtime.hpp"
+#include "lightning_core/core/runtime.hpp"
 
 namespace {
 
-lcError_t toLcError(cudajun::runtime::Status status) {
+lcError_t toLcError(lightning_core::runtime::Status status) {
   switch (status) {
-    case cudajun::runtime::Status::kSuccess:
+    case lightning_core::runtime::Status::kSuccess:
       return LC_SUCCESS;
-    case cudajun::runtime::Status::kNotInitialized:
+    case lightning_core::runtime::Status::kNotInitialized:
       return LC_NOT_INITIALIZED;
-    case cudajun::runtime::Status::kInvalidValue:
+    case lightning_core::runtime::Status::kInvalidValue:
       return LC_INVALID_VALUE;
-    case cudajun::runtime::Status::kOutOfMemory:
+    case lightning_core::runtime::Status::kOutOfMemory:
       return LC_OUT_OF_MEMORY;
-    case cudajun::runtime::Status::kNotSupported:
+    case lightning_core::runtime::Status::kNotSupported:
       return LC_NOT_SUPPORTED;
-    case cudajun::runtime::Status::kDriverError:
+    case lightning_core::runtime::Status::kDriverError:
       return LC_DRIVER_ERROR;
-    case cudajun::runtime::Status::kUnknown:
+    case lightning_core::runtime::Status::kUnknown:
     default:
       return LC_UNKNOWN;
   }
 }
 
-cudajun::runtime::MemcpyKind toMemcpyKind(lcMemcpyKind kind) {
+lightning_core::runtime::MemcpyKind toMemcpyKind(lcMemcpyKind kind) {
   switch (kind) {
     case LC_MEMCPY_HOST_TO_HOST:
-      return cudajun::runtime::MemcpyKind::kHostToHost;
+      return lightning_core::runtime::MemcpyKind::kHostToHost;
     case LC_MEMCPY_HOST_TO_DEVICE:
-      return cudajun::runtime::MemcpyKind::kHostToDevice;
+      return lightning_core::runtime::MemcpyKind::kHostToDevice;
     case LC_MEMCPY_DEVICE_TO_HOST:
-      return cudajun::runtime::MemcpyKind::kDeviceToHost;
+      return lightning_core::runtime::MemcpyKind::kDeviceToHost;
     case LC_MEMCPY_DEVICE_TO_DEVICE:
-      return cudajun::runtime::MemcpyKind::kDeviceToDevice;
+      return lightning_core::runtime::MemcpyKind::kDeviceToDevice;
     default:
-      return cudajun::runtime::MemcpyKind::kHostToHost;
+      return lightning_core::runtime::MemcpyKind::kHostToHost;
   }
 }
 
-lcDeviceKind toDeviceKind(cudajun::runtime::Device device) {
+lcDeviceKind toDeviceKind(lightning_core::runtime::Device device) {
   switch (device) {
-    case cudajun::runtime::Device::kCPU:
+    case lightning_core::runtime::Device::kCPU:
       return LC_DEVICE_CPU;
-    case cudajun::runtime::Device::kCUDA:
+    case lightning_core::runtime::Device::kCUDA:
       return LC_DEVICE_CUDA;
-    case cudajun::runtime::Device::kMetal:
+    case lightning_core::runtime::Device::kMetal:
     default:
       return LC_DEVICE_METAL;
   }
 }
 
-lcMemoryModel toLcMemoryModel(cudajun::runtime::MemoryModel model) {
-  if (model == cudajun::runtime::MemoryModel::kNativeDevice) {
+lcMemoryModel toLcMemoryModel(lightning_core::runtime::MemoryModel model) {
+  if (model == lightning_core::runtime::MemoryModel::kNativeDevice) {
     return LC_MEMORY_NATIVE_DEVICE;
   }
   return LC_MEMORY_HOST_MANAGED_COMPAT;
@@ -65,30 +65,30 @@ lcMemoryModel toLcMemoryModel(cudajun::runtime::MemoryModel model) {
 extern "C" {
 
 lcError_t lcMalloc(void** ptr, size_t size_bytes) {
-  return toLcError(cudajun::runtime::mallocDevice(ptr, size_bytes));
+  return toLcError(lightning_core::runtime::mallocDevice(ptr, size_bytes));
 }
 
 lcError_t lcFree(void* ptr) {
-  return toLcError(cudajun::runtime::freeDevice(ptr));
+  return toLcError(lightning_core::runtime::freeDevice(ptr));
 }
 
 lcError_t lcMemcpy(void* dst, const void* src, size_t size_bytes, lcMemcpyKind kind) {
-  return toLcError(cudajun::runtime::memcpy(dst, src, size_bytes, toMemcpyKind(kind)));
+  return toLcError(lightning_core::runtime::memcpy(dst, src, size_bytes, toMemcpyKind(kind)));
 }
 
 lcError_t lcDeviceSynchronize(void) {
-  return toLcError(cudajun::runtime::deviceSynchronize());
+  return toLcError(lightning_core::runtime::deviceSynchronize());
 }
 
 lcError_t lcGetDeviceCount(int* count) {
-  return toLcError(cudajun::runtime::getDeviceCount(count));
+  return toLcError(lightning_core::runtime::getDeviceCount(count));
 }
 
 lcError_t lcGetPreferredDeviceForInference(lcDeviceKind* device) {
   if (device == nullptr) {
     return LC_INVALID_VALUE;
   }
-  *device = toDeviceKind(cudajun::runtime::preferredDeviceFor(cudajun::runtime::WorkloadKind::kInference));
+  *device = toDeviceKind(lightning_core::runtime::preferredDeviceFor(lightning_core::runtime::WorkloadKind::kInference));
   return LC_SUCCESS;
 }
 
@@ -96,52 +96,52 @@ lcError_t lcGetPreferredDeviceForTraining(lcDeviceKind* device) {
   if (device == nullptr) {
     return LC_INVALID_VALUE;
   }
-  *device = toDeviceKind(cudajun::runtime::preferredDeviceFor(cudajun::runtime::WorkloadKind::kTraining));
+  *device = toDeviceKind(lightning_core::runtime::preferredDeviceFor(lightning_core::runtime::WorkloadKind::kTraining));
   return LC_SUCCESS;
 }
 
 int lcIsCudaAvailable(void) {
-  return cudajun::runtime::isCudaAvailable() ? 1 : 0;
+  return lightning_core::runtime::isCudaAvailable() ? 1 : 0;
 }
 
 int lcIsMetalAvailable(void) {
-  return cudajun::runtime::isMetalAvailable() ? 1 : 0;
+  return lightning_core::runtime::isMetalAvailable() ? 1 : 0;
 }
 
 lcMemoryModel lcGetMemoryModel(void) {
-  return toLcMemoryModel(cudajun::runtime::deviceMemoryModel());
+  return toLcMemoryModel(lightning_core::runtime::deviceMemoryModel());
 }
 
 const char* lcGetMemoryModelName(lcMemoryModel model) {
   if (model == LC_MEMORY_NATIVE_DEVICE) {
-    return cudajun::runtime::memoryModelName(cudajun::runtime::MemoryModel::kNativeDevice);
+    return lightning_core::runtime::memoryModelName(lightning_core::runtime::MemoryModel::kNativeDevice);
   }
-  return cudajun::runtime::memoryModelName(cudajun::runtime::MemoryModel::kHostManagedCompat);
+  return lightning_core::runtime::memoryModelName(lightning_core::runtime::MemoryModel::kHostManagedCompat);
 }
 
 const char* lcBackendName(void) {
   static std::string backend;
-  backend = cudajun::runtime::backendName();
+  backend = lightning_core::runtime::backendName();
   return backend.c_str();
 }
 
 const char* lcGetErrorString(lcError_t error) {
   switch (error) {
     case LC_SUCCESS:
-      return cudajun::runtime::getErrorString(cudajun::runtime::Status::kSuccess);
+      return lightning_core::runtime::getErrorString(lightning_core::runtime::Status::kSuccess);
     case LC_NOT_INITIALIZED:
-      return cudajun::runtime::getErrorString(cudajun::runtime::Status::kNotInitialized);
+      return lightning_core::runtime::getErrorString(lightning_core::runtime::Status::kNotInitialized);
     case LC_INVALID_VALUE:
-      return cudajun::runtime::getErrorString(cudajun::runtime::Status::kInvalidValue);
+      return lightning_core::runtime::getErrorString(lightning_core::runtime::Status::kInvalidValue);
     case LC_OUT_OF_MEMORY:
-      return cudajun::runtime::getErrorString(cudajun::runtime::Status::kOutOfMemory);
+      return lightning_core::runtime::getErrorString(lightning_core::runtime::Status::kOutOfMemory);
     case LC_NOT_SUPPORTED:
-      return cudajun::runtime::getErrorString(cudajun::runtime::Status::kNotSupported);
+      return lightning_core::runtime::getErrorString(lightning_core::runtime::Status::kNotSupported);
     case LC_DRIVER_ERROR:
-      return cudajun::runtime::getErrorString(cudajun::runtime::Status::kDriverError);
+      return lightning_core::runtime::getErrorString(lightning_core::runtime::Status::kDriverError);
     case LC_UNKNOWN:
     default:
-      return cudajun::runtime::getErrorString(cudajun::runtime::Status::kUnknown);
+      return lightning_core::runtime::getErrorString(lightning_core::runtime::Status::kUnknown);
   }
 }
 

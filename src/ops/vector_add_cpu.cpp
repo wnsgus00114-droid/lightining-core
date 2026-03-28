@@ -1,4 +1,4 @@
-#include "cudajun/detail/ops_backend.hpp"
+#include "lightning_core/core/detail/ops_backend.hpp"
 
 #if defined(__AVX2__)
 #include <immintrin.h>
@@ -8,7 +8,7 @@
 #include <arm_neon.h>
 #endif
 
-namespace cudajun::detail {
+namespace lightning_core::detail {
 
 runtime::Status vectorAddCpu(const float* a, const float* b, float* out, std::size_t n) {
   // CPU 경로 방어 체크.
@@ -179,4 +179,4 @@ runtime::Status vectorAddCudaWithPolicy(
   return vectorAddCuda(a, b, out, n);
 }
 
-}  // namespace cudajun::detail
+}  // namespace lightning_core::detail

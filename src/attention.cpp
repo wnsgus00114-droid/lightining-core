@@ -1,13 +1,13 @@
-#include "cudajun/attention.hpp"
+#include "lightning_core/core/attention.hpp"
 
-#include "cudajun/detail/attention_backend.hpp"
+#include "lightning_core/core/detail/attention_backend.hpp"
 
 #include <algorithm>
 #include <mutex>
 
 namespace {
 
-int autoLossEveryForShape(const cudajun::AttentionConfig& cfg) {
+int autoLossEveryForShape(const lightning_core::AttentionConfig& cfg) {
   if (cfg.seq_len == 256 && cfg.head_dim == 64) {
     return 32;
   }
@@ -29,7 +29,7 @@ int autoLossEveryForShape(const cudajun::AttentionConfig& cfg) {
   return 4;
 }
 
-int resolveLossEvery(const cudajun::AttentionConfig& cfg, const cudajun::AttentionIoPolicy& policy) {
+int resolveLossEvery(const lightning_core::AttentionConfig& cfg, const lightning_core::AttentionIoPolicy& policy) {
   if (policy.loss_every == 0) {
     return autoLossEveryForShape(cfg);
   }
@@ -38,8 +38,8 @@ int resolveLossEvery(const cudajun::AttentionConfig& cfg, const cudajun::Attenti
 
 void applyForwardPostprocess(
     float* out,
-    const cudajun::AttentionConfig& cfg,
-    const cudajun::AttentionIoPolicy& policy) {
+    const lightning_core::AttentionConfig& cfg,
+    const lightning_core::AttentionIoPolicy& policy) {
   if (out == nullptr) {
     return;
   }
@@ -64,7 +64,7 @@ std::mutex& attentionSessionStateMutex() {
 
 }  // namespace
 
-namespace cudajun {
+namespace lightning_core {
 
 AttentionImplementation attentionImplementation(runtime::Device device) {
   if (device == runtime::Device::kCPU) {
@@ -284,4 +284,4 @@ runtime::Status AttentionSession::trainStepWithPolicy(
   return runtime::Status::kSuccess;
 }
 
-}  // namespace cudajun
+}  // namespace lightning_core

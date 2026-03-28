@@ -1,6 +1,6 @@
-#include "cudajun/detail/ops_backend.hpp"
+#include "lightning_core/core/detail/ops_backend.hpp"
 
-namespace cudajun::detail {
+namespace lightning_core::detail {
 
 namespace {
 
@@ -339,4 +339,4 @@ runtime::Status matrixDivCudaWithPolicy(
   return matrixDivBackendWithPolicyImpl(a, b, out, rows, cols, upload_a, upload_b, download_out, synchronize);
 }
 
-}  // namespace cudajun::detail
+}  // namespace lightning_core::detail

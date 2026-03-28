@@ -1,6 +1,6 @@
-#include "cudajun/detail/ops_backend.hpp"
+#include "lightning_core/core/detail/ops_backend.hpp"
 
-namespace cudajun::detail {
+namespace lightning_core::detail {
 
 runtime::Status vectorAddMetal(const float* a, const float* b, float* out, std::size_t n) {
   (void)a;
@@ -86,4 +86,4 @@ runtime::Status vectorAddMetalWithPolicy(
   return runtime::Status::kNotSupported;
 }
 
-}  // namespace cudajun::detail
+}  // namespace lightning_core::detail

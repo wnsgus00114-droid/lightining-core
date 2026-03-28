@@ -1,4 +1,4 @@
-#include "cudajun/detail/ops_backend.hpp"
+#include "lightning_core/core/detail/ops_backend.hpp"
 
 #if defined(CJ_HAS_METAL) && CJ_HAS_METAL
 
@@ -7,7 +7,7 @@
 
 #include <cstring>
 
-namespace cudajun::detail {
+namespace lightning_core::detail {
 
 namespace {
 
@@ -319,11 +319,11 @@ runtime::Status vectorAddMetalWithPolicy(
   return runtime::Status::kNotSupported;
 }
 
-}  // namespace cudajun::detail
+}  // namespace lightning_core::detail
 
 #else
 
-namespace cudajun::detail {
+namespace lightning_core::detail {
 
 runtime::Status vectorAddMetal(const float* a, const float* b, float* out, std::size_t n) {
   (void)a;
@@ -409,6 +409,6 @@ runtime::Status vectorAddMetalWithPolicy(
   return runtime::Status::kNotSupported;
 }
 
-}  // namespace cudajun::detail
+}  // namespace lightning_core::detail
 
 #endif

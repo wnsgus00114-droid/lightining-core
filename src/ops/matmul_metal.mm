@@ -1,4 +1,4 @@
-#include "cudajun/detail/ops_backend.hpp"
+#include "lightning_core/core/detail/ops_backend.hpp"
 
 #if defined(CJ_HAS_METAL) && CJ_HAS_METAL
 
@@ -16,7 +16,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace cudajun::detail {
+namespace lightning_core::detail {
 
 namespace {
 
@@ -1103,11 +1103,11 @@ runtime::Status matMulMetalWithPolicy(
   return runtime::Status::kNotSupported;
 }
 
-}  // namespace cudajun::detail
+}  // namespace lightning_core::detail
 
 #else
 
-namespace cudajun::detail {
+namespace lightning_core::detail {
 
 runtime::Status matMulMetal(
     const float* a,
@@ -1229,6 +1229,6 @@ runtime::Status matMulMetalWithPolicy(
   return runtime::Status::kNotSupported;
 }
 
-}  // namespace cudajun::detail
+}  // namespace lightning_core::detail
 
 #endif

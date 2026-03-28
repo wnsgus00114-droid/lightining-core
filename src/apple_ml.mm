@@ -1,4 +1,4 @@
-#include "cudajun/apple_ml.hpp"
+#include "lightning_core/core/apple_ml.hpp"
 
 #if defined(CJ_PLATFORM_MACOS) && CJ_PLATFORM_MACOS
 
@@ -9,7 +9,7 @@
 #include <chrono>
 #include <vector>
 
-namespace cudajun::apple {
+namespace lightning_core::apple {
 
 namespace {
 
@@ -298,6 +298,6 @@ runtime::Status benchmarkMpsGraphTrainStep(std::size_t n, int iters, double* avg
   }
 }
 
-}  // namespace cudajun::apple
+}  // namespace lightning_core::apple
 
 #endif

@@ -1,4 +1,4 @@
-#include "cudajun/detail/attention_backend.hpp"
+#include "lightning_core/core/detail/attention_backend.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -8,7 +8,7 @@
 #include <arm_neon.h>
 #endif
 
-namespace cudajun::detail {
+namespace lightning_core::detail {
 
 namespace {
 
@@ -162,4 +162,4 @@ runtime::Status attentionTrainStepCpu(
   return runtime::Status::kSuccess;
 }
 
-}  // namespace cudajun::detail
+}  // namespace lightning_core::detail

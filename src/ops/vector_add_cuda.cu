@@ -4,7 +4,7 @@
 #include <cuda_runtime.h>
 #endif
 
-namespace cudajun::detail {
+namespace lightning_core::detail {
 
 #if CJ_HAS_CUDA
 namespace {
@@ -85,4 +85,4 @@ runtime::Status vectorAddCuda(const long double* a, const long double* b, long d
   return runtime::Status::kNotSupported;
 }
 
-}  // namespace cudajun::detail
+}  // namespace lightning_core::detail

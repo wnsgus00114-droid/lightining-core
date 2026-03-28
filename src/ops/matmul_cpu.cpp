@@ -1,8 +1,8 @@
-#include "cudajun/detail/ops_backend.hpp"
+#include "lightning_core/core/detail/ops_backend.hpp"
 
 #include <algorithm>
 
-namespace cudajun::detail {
+namespace lightning_core::detail {
 
 runtime::Status matMulCpu(
     const float* a,
@@ -235,4 +235,4 @@ runtime::Status matMulCudaWithPolicy(
   return matMulCuda(a, b, out, m, k, n);
 }
 
-}  // namespace cudajun::detail
+}  // namespace lightning_core::detail

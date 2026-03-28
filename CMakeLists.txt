@@ -99,25 +99,25 @@ else()
 endif()
 
 # 코어 라이브러리 타깃과 네임스페이스 별칭.
-add_library(cudajun STATIC ${CJ_SOURCES})
-add_library(cudajun::cudajun ALIAS cudajun)
-add_library(lightning_core::lightning_core ALIAS cudajun)
-set_target_properties(cudajun PROPERTIES OUTPUT_NAME lightning_core)
+add_library(lightning_core STATIC ${CJ_SOURCES})
+add_library(lightning_core::lightning_core ALIAS lightning_core)
+add_library(cudajun::cudajun ALIAS lightning_core)
+set_target_properties(lightning_core PROPERTIES OUTPUT_NAME lightning_core)
 
-target_compile_options(cudajun PRIVATE
+target_compile_options(lightning_core PRIVATE
   $<$<CONFIG:Release>:-O3 -ffast-math -funroll-loops>
 )
 
 # 공개 헤더 경로를 내보내서 외부 타깃에서도 include 가능하게 한다.
-target_include_directories(cudajun
+target_include_directories(lightning_core
   PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
 if(CJ_HAS_CUDA)
   # 코드에서 #if CJ_HAS_CUDA로 분기할 수 있도록 매크로 주입.
-  target_compile_definitions(cudajun PUBLIC CJ_HAS_CUDA=1)
-  set_target_properties(cudajun PROPERTIES
+  target_compile_definitions(lightning_core PUBLIC CJ_HAS_CUDA=1)
+  set_target_properties(lightning_core PROPERTIES
     # CUDA separable compilation: 커널/호스트 코드를 파일 단위로 나눠도 링크 가능.
     CUDA_SEPARABLE_COMPILATION ON
     CUDA_STANDARD 17
@@ -125,33 +125,33 @@ if(CJ_HAS_CUDA)
   )
   if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
     # 아키텍처 미지정이면 로컬에 맞춰 자동 추정.
-    set_target_properties(cudajun PROPERTIES CUDA_ARCHITECTURES "native")
+    set_target_properties(lightning_core PROPERTIES CUDA_ARCHITECTURES "native")
   endif()
   # CUDA 런타임(cudart) 링크.
-  target_link_libraries(cudajun PUBLIC CUDA::cudart)
+  target_link_libraries(lightning_core PUBLIC CUDA::cudart)
 else()
   # CPU 빌드에서도 코드 경로가 명확히 갈리도록 0을 박아둔다.
-  target_compile_definitions(cudajun PUBLIC CJ_HAS_CUDA=0)
+  target_compile_definitions(lightning_core PUBLIC CJ_HAS_CUDA=0)
 endif()
 
 if(CJ_HAS_METAL)
-  target_compile_definitions(cudajun PUBLIC CJ_HAS_METAL=1)
-  target_link_libraries(cudajun PUBLIC "-framework Metal" "-framework Foundation")
+  target_compile_definitions(lightning_core PUBLIC CJ_HAS_METAL=1)
+  target_link_libraries(lightning_core PUBLIC "-framework Metal" "-framework Foundation")
 else()
-  target_compile_definitions(cudajun PUBLIC CJ_HAS_METAL=0)
+  target_compile_definitions(lightning_core PUBLIC CJ_HAS_METAL=0)
 endif()
 
 if(APPLE)
-  target_link_libraries(cudajun PUBLIC "-framework CoreML" "-framework MetalPerformanceShaders" "-framework MetalPerformanceShadersGraph")
+  target_link_libraries(lightning_core PUBLIC "-framework CoreML" "-framework MetalPerformanceShaders" "-framework MetalPerformanceShadersGraph")
 endif()
 
 # 플랫폼 식별 매크로: OS별 조건 컴파일용.
 if(WIN32)
-  target_compile_definitions(cudajun PUBLIC CJ_PLATFORM_WINDOWS=1)
+  target_compile_definitions(lightning_core PUBLIC CJ_PLATFORM_WINDOWS=1)
 elseif(APPLE)
-  target_compile_definitions(cudajun PUBLIC CJ_PLATFORM_MACOS=1)
+  target_compile_definitions(lightning_core PUBLIC CJ_PLATFORM_MACOS=1)
 elseif(UNIX)
-  target_compile_definitions(cudajun PUBLIC CJ_PLATFORM_LINUX=1)
+  target_compile_definitions(lightning_core PUBLIC CJ_PLATFORM_LINUX=1)
 endif()
 
 # 선택 옵션에 따라 하위 모듈들을 순차적으로 연결한다.

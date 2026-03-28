@@ -1,4 +1,4 @@
-#include "cudajun/runtime.hpp"
+#include "lightning_core/core/runtime.hpp"
 
 #include <array>
 #include <cctype>
@@ -12,7 +12,7 @@
 #include <cuda_runtime.h>
 #endif
 
-namespace cudajun::runtime {
+namespace lightning_core::runtime {
 
 namespace {
 
@@ -350,4 +350,4 @@ const char* getErrorString(Status status) {
   }
 }
 
-}  // namespace cudajun::runtime
+}  // namespace lightning_core::runtime
