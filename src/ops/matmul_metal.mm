@@ -7,6 +7,7 @@
 #import <MetalPerformanceShaders/MetalPerformanceShaders.h>
 
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -74,6 +75,9 @@ struct MetalMatMulContext {
   uint32_t mps_k = 0;
   uint32_t mps_n = 0;
   MPSMatrixMultiplication* mps_op = nil;
+  MPSMatrix* mps_a_mat = nil;
+  MPSMatrix* mps_b_mat = nil;
+  MPSMatrix* mps_c_mat = nil;
   std::unordered_map<MatMulTuneKey, MatMulTuneValue, MatMulTuneKeyHash> tune_cache;
   std::unordered_map<MatMulTuneKey, MatMulSmallTuneValue, MatMulTuneKeyHash> small_tune_cache;
   bool tune_cache_loaded = false;
@@ -124,6 +128,48 @@ double matMulSmallHysteresisPct() {
     return 5.0;
   }
   return v;
+}
+
+double matMulMpsHysteresisPct() {
+  const char* env = std::getenv("CJ_MATMUL_MPS_HYST_PCT");
+  if (env == nullptr || env[0] == '\0') {
+    return 2.0;
+  }
+  char* end = nullptr;
+  double v = std::strtod(env, &end);
+  if (end == env || *end != '\0' || v < 0.0) {
+    return 2.0;
+  }
+  return v;
+}
+
+bool matMulPreferMpsOnLarge() {
+  const char* env = std::getenv("CJ_MATMUL_PREFER_MPS_ON_LARGE");
+  if (env == nullptr || env[0] == '\0') {
+    return true;
+  }
+  return (std::strcmp(env, "0") != 0 && std::strcmp(env, "false") != 0 && std::strcmp(env, "off") != 0);
+}
+
+bool matMulTryKernelOnLarge() {
+  const char* env = std::getenv("CJ_MATMUL_TRY_KERNEL_ON_LARGE");
+  if (env == nullptr || env[0] == '\0') {
+    return false;
+  }
+  return (std::strcmp(env, "0") != 0 && std::strcmp(env, "false") != 0 && std::strcmp(env, "off") != 0);
+}
+
+std::uint64_t matMulLargeOpsThreshold() {
+  const char* env = std::getenv("CJ_MATMUL_LARGE_OPS_THRESHOLD");
+  if (env == nullptr || env[0] == '\0') {
+    return 4000000000ULL;
+  }
+  char* end = nullptr;
+  unsigned long long v = std::strtoull(env, &end, 10);
+  if (end == env || *end != '\0' || v == 0ULL) {
+    return 4000000000ULL;
+  }
+  return static_cast<std::uint64_t>(v);
 }
 
 std::string resolveMatMulSmallTuneCachePath() {
@@ -576,6 +622,7 @@ runtime::Status ensureContext() {
 
 runtime::Status ensureBuffers(std::size_t bytes_a, std::size_t bytes_b, std::size_t bytes_out) {
   MetalMatMulContext& ctx = getContext();
+  bool resized = false;
 
   if (ctx.cap_a < bytes_a) {
     ctx.buf_a = [ctx.device newBufferWithLength:bytes_a options:MTLResourceStorageModeShared];
@@ -583,6 +630,7 @@ runtime::Status ensureBuffers(std::size_t bytes_a, std::size_t bytes_b, std::siz
       return runtime::Status::kOutOfMemory;
     }
     ctx.cap_a = bytes_a;
+    resized = true;
   }
 
   if (ctx.cap_b < bytes_b) {
@@ -591,6 +639,7 @@ runtime::Status ensureBuffers(std::size_t bytes_a, std::size_t bytes_b, std::siz
       return runtime::Status::kOutOfMemory;
     }
     ctx.cap_b = bytes_b;
+    resized = true;
   }
 
   if (ctx.cap_out < bytes_out) {
@@ -599,6 +648,17 @@ runtime::Status ensureBuffers(std::size_t bytes_a, std::size_t bytes_b, std::siz
       return runtime::Status::kOutOfMemory;
     }
     ctx.cap_out = bytes_out;
+    resized = true;
+  }
+
+  if (resized) {
+    // MPSMatrix objects are tied to buffer identity/shape and must be rebuilt when backing buffers grow.
+    ctx.mps_a_mat = nil;
+    ctx.mps_b_mat = nil;
+    ctx.mps_c_mat = nil;
+    ctx.mps_m = 0;
+    ctx.mps_k = 0;
+    ctx.mps_n = 0;
   }
 
   return runtime::Status::kSuccess;
@@ -652,7 +712,8 @@ runtime::Status runMatMulMps(
     uint32_t kk,
   uint32_t nn,
   bool wait_for_completion) {
-  if (ctx.mps_op == nil || ctx.mps_m != mm || ctx.mps_k != kk || ctx.mps_n != nn) {
+  if (ctx.mps_op == nil || ctx.mps_m != mm || ctx.mps_k != kk || ctx.mps_n != nn ||
+      ctx.mps_a_mat == nil || ctx.mps_b_mat == nil || ctx.mps_c_mat == nil) {
     ctx.mps_op = [[MPSMatrixMultiplication alloc] initWithDevice:ctx.device
                                                     transposeLeft:NO
                                                    transposeRight:NO
@@ -667,25 +728,26 @@ runtime::Status runMatMulMps(
     ctx.mps_m = mm;
     ctx.mps_k = kk;
     ctx.mps_n = nn;
+
+    MPSMatrixDescriptor* aDesc = [MPSMatrixDescriptor matrixDescriptorWithRows:mm
+                                                                        columns:kk
+                                                                       rowBytes:kk * sizeof(float)
+                                                                       dataType:MPSDataTypeFloat32];
+    MPSMatrixDescriptor* bDesc = [MPSMatrixDescriptor matrixDescriptorWithRows:kk
+                                                                        columns:nn
+                                                                       rowBytes:nn * sizeof(float)
+                                                                       dataType:MPSDataTypeFloat32];
+    MPSMatrixDescriptor* cDesc = [MPSMatrixDescriptor matrixDescriptorWithRows:mm
+                                                                        columns:nn
+                                                                       rowBytes:nn * sizeof(float)
+                                                                       dataType:MPSDataTypeFloat32];
+
+    ctx.mps_a_mat = [[MPSMatrix alloc] initWithBuffer:ctx.buf_a descriptor:aDesc];
+    ctx.mps_b_mat = [[MPSMatrix alloc] initWithBuffer:ctx.buf_b descriptor:bDesc];
+    ctx.mps_c_mat = [[MPSMatrix alloc] initWithBuffer:ctx.buf_out descriptor:cDesc];
   }
 
-  MPSMatrixDescriptor* aDesc = [MPSMatrixDescriptor matrixDescriptorWithRows:mm
-                                                                      columns:kk
-                                                                     rowBytes:kk * sizeof(float)
-                                                                     dataType:MPSDataTypeFloat32];
-  MPSMatrixDescriptor* bDesc = [MPSMatrixDescriptor matrixDescriptorWithRows:kk
-                                                                      columns:nn
-                                                                     rowBytes:nn * sizeof(float)
-                                                                     dataType:MPSDataTypeFloat32];
-  MPSMatrixDescriptor* cDesc = [MPSMatrixDescriptor matrixDescriptorWithRows:mm
-                                                                      columns:nn
-                                                                     rowBytes:nn * sizeof(float)
-                                                                     dataType:MPSDataTypeFloat32];
-
-  MPSMatrix* aMat = [[MPSMatrix alloc] initWithBuffer:ctx.buf_a descriptor:aDesc];
-  MPSMatrix* bMat = [[MPSMatrix alloc] initWithBuffer:ctx.buf_b descriptor:bDesc];
-  MPSMatrix* cMat = [[MPSMatrix alloc] initWithBuffer:ctx.buf_out descriptor:cDesc];
-  if (!aMat || !bMat || !cMat) {
+  if (!ctx.mps_a_mat || !ctx.mps_b_mat || !ctx.mps_c_mat) {
     return runtime::Status::kDriverError;
   }
 
@@ -693,7 +755,7 @@ runtime::Status runMatMulMps(
   if (!cmd) {
     return runtime::Status::kDriverError;
   }
-  [ctx.mps_op encodeToCommandBuffer:cmd leftMatrix:aMat rightMatrix:bMat resultMatrix:cMat];
+  [ctx.mps_op encodeToCommandBuffer:cmd leftMatrix:ctx.mps_a_mat rightMatrix:ctx.mps_b_mat resultMatrix:ctx.mps_c_mat];
   [cmd commit];
   if (wait_for_completion) {
     [cmd waitUntilCompleted];
@@ -843,39 +905,69 @@ runtime::Status autoTuneTile(MetalMatMulContext& ctx, uint32_t mm, uint32_t kk, 
   uint32_t best_tile = 16;
   bool best_use_mps = false;
 
-  for (uint32_t tile : candidates) {
-    id<MTLComputePipelineState> pipe = pipelineForTile(ctx, tile);
-    if (!pipe || pipe.maxTotalThreadsPerThreadgroup < (tile * tile)) {
-      continue;
-    }
+  const std::uint64_t ops = static_cast<std::uint64_t>(mm) * static_cast<std::uint64_t>(kk) * static_cast<std::uint64_t>(nn);
+  const bool is_large_gemm = (ops >= matMulLargeOpsThreshold());
 
-    runtime::Status warm = runMatMulKernel(ctx, tile, mm, kk, nn, true);
-    if (warm != runtime::Status::kSuccess) {
-      continue;
-    }
-
-    double sum_ms = 0.0;
-    bool ok = true;
-    for (int rep = 0; rep < 3; ++rep) {
-      auto start = std::chrono::high_resolution_clock::now();
-      runtime::Status st = runMatMulKernel(ctx, tile, mm, kk, nn, true);
-      auto end = std::chrono::high_resolution_clock::now();
-      if (st != runtime::Status::kSuccess) {
-        ok = false;
-        break;
+  if (is_large_gemm && matMulPreferMpsOnLarge()) {
+    runtime::Status warm = runMatMulMps(ctx, mm, kk, nn, true);
+    if (warm == runtime::Status::kSuccess) {
+      double sum_ms = 0.0;
+      bool ok = true;
+      for (int rep = 0; rep < 3; ++rep) {
+        auto start = std::chrono::high_resolution_clock::now();
+        runtime::Status st = runMatMulMps(ctx, mm, kk, nn, true);
+        auto end = std::chrono::high_resolution_clock::now();
+        if (st != runtime::Status::kSuccess) {
+          ok = false;
+          break;
+        }
+        std::chrono::duration<double, std::milli> elapsed = end - start;
+        sum_ms += elapsed.count();
       }
-      std::chrono::duration<double, std::milli> elapsed = end - start;
-      sum_ms += elapsed.count();
+      if (ok) {
+        best_ms = sum_ms / 3.0;
+        best_use_mps = true;
+      }
     }
-    if (!ok) {
-      continue;
-    }
+  }
 
-    const double avg_ms = sum_ms / 3.0;
-    if (avg_ms < best_ms) {
-      best_ms = avg_ms;
-      best_tile = tile;
-      best_use_mps = false;
+  const bool evaluate_kernel_candidates = (!is_large_gemm || matMulTryKernelOnLarge());
+
+  if (evaluate_kernel_candidates) {
+    for (uint32_t tile : candidates) {
+      id<MTLComputePipelineState> pipe = pipelineForTile(ctx, tile);
+      if (!pipe || pipe.maxTotalThreadsPerThreadgroup < (tile * tile)) {
+        continue;
+      }
+
+      runtime::Status warm = runMatMulKernel(ctx, tile, mm, kk, nn, true);
+      if (warm != runtime::Status::kSuccess) {
+        continue;
+      }
+
+      double sum_ms = 0.0;
+      bool ok = true;
+      for (int rep = 0; rep < 3; ++rep) {
+        auto start = std::chrono::high_resolution_clock::now();
+        runtime::Status st = runMatMulKernel(ctx, tile, mm, kk, nn, true);
+        auto end = std::chrono::high_resolution_clock::now();
+        if (st != runtime::Status::kSuccess) {
+          ok = false;
+          break;
+        }
+        std::chrono::duration<double, std::milli> elapsed = end - start;
+        sum_ms += elapsed.count();
+      }
+      if (!ok) {
+        continue;
+      }
+
+      const double avg_ms = sum_ms / 3.0;
+      if (avg_ms < best_ms) {
+        best_ms = avg_ms;
+        best_tile = tile;
+        best_use_mps = false;
+      }
     }
   }
 
@@ -898,7 +990,9 @@ runtime::Status autoTuneTile(MetalMatMulContext& ctx, uint32_t mm, uint32_t kk, 
       }
       if (ok) {
         const double avg_ms = sum_ms / 3.0;
-        if (avg_ms < best_ms) {
+        const double mps_hysteresis_pct = matMulMpsHysteresisPct();
+        const double mps_threshold = best_ms * (1.0 + mps_hysteresis_pct / 100.0);
+        if (avg_ms <= mps_threshold) {
           best_ms = avg_ms;
           best_use_mps = true;
         }

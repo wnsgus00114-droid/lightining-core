@@ -53,6 +53,15 @@ inline MatMulIoPolicy makeMetalResidentFinishPolicy() {
   return p;
 }
 
+inline MatMulIoPolicy makeMetalResidentSyncPolicy() {
+  MatMulIoPolicy p;
+  p.upload_a = false;
+  p.upload_b = false;
+  p.download_out = false;
+  p.synchronize = true;
+  return p;
+}
+
 inline MatrixElementwiseIoPolicy makeMetalElemwiseResidentStartPolicy() {
   MatrixElementwiseIoPolicy p;
   p.upload_a = true;

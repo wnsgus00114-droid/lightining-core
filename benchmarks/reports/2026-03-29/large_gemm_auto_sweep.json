@@ -1,0 +1,189 @@
+{
+  "backend": "metal",
+  "torch": "2.11.0",
+  "mps_available": true,
+  "all_rows": [
+    {
+      "shape": "m=1024,k=1024,n=1024",
+      "mode": "balanced_default",
+      "lc_one_shot_ms": 0.9767056762939319,
+      "lc_resident_steady_ms": 0.6516395874011021,
+      "lc_best_ms": 0.6516395874011021,
+      "torch_mps_ms": 1.9184853415936232,
+      "speedup_torch_over_lc_best": 2.9440896143910034
+    },
+    {
+      "shape": "m=1024,k=1024,n=1024",
+      "mode": "aggressive_mps",
+      "lc_one_shot_ms": 0.9762524859979749,
+      "lc_resident_steady_ms": 0.6504062582583476,
+      "lc_best_ms": 0.6504062582583476,
+      "torch_mps_ms": 1.9184853415936232,
+      "speedup_torch_over_lc_best": 2.949672327463341
+    },
+    {
+      "shape": "m=1024,k=1024,n=1024",
+      "mode": "kernel_favor",
+      "lc_one_shot_ms": 0.9807265305425972,
+      "lc_resident_steady_ms": 0.6493468691284459,
+      "lc_best_ms": 0.6493468691284459,
+      "torch_mps_ms": 1.9184853415936232,
+      "speedup_torch_over_lc_best": 2.9544846257110877
+    },
+    {
+      "shape": "m=1536,k=1536,n=1536",
+      "mode": "balanced_default",
+      "lc_one_shot_ms": 2.652510564075783,
+      "lc_resident_steady_ms": 2.1502371489380794,
+      "lc_best_ms": 2.1502371489380794,
+      "torch_mps_ms": 2.1030645119026303,
+      "speedup_torch_over_lc_best": 0.9780616584274224
+    },
+    {
+      "shape": "m=1536,k=1536,n=1536",
+      "mode": "aggressive_mps",
+      "lc_one_shot_ms": 3.1846431083977222,
+      "lc_resident_steady_ms": 2.131775700642417,
+      "lc_best_ms": 2.131775700642417,
+      "torch_mps_ms": 2.1030645119026303,
+      "speedup_torch_over_lc_best": 0.9865317965998324
+    },
+    {
+      "shape": "m=1536,k=1536,n=1536",
+      "mode": "kernel_favor",
+      "lc_one_shot_ms": 2.569908829173073,
+      "lc_resident_steady_ms": 2.149863541126251,
+      "lc_best_ms": 2.149863541126251,
+      "torch_mps_ms": 2.1030645119026303,
+      "speedup_torch_over_lc_best": 0.9782316280413295
+    },
+    {
+      "shape": "m=2048,k=2048,n=2048",
+      "mode": "balanced_default",
+      "lc_one_shot_ms": 5.651593703078106,
+      "lc_resident_steady_ms": 5.017934035276994,
+      "lc_best_ms": 5.017934035276994,
+      "torch_mps_ms": 4.974672815296799,
+      "speedup_torch_over_lc_best": 0.9913786790188829
+    },
+    {
+      "shape": "m=2048,k=2048,n=2048",
+      "mode": "aggressive_mps",
+      "lc_one_shot_ms": 5.624632642138749,
+      "lc_resident_steady_ms": 5.014387145638466,
+      "lc_best_ms": 5.014387145638466,
+      "torch_mps_ms": 4.974672815296799,
+      "speedup_torch_over_lc_best": 0.9920799233907955
+    },
+    {
+      "shape": "m=2048,k=2048,n=2048",
+      "mode": "kernel_favor",
+      "lc_one_shot_ms": 5.634768036543392,
+      "lc_resident_steady_ms": 5.039239575853571,
+      "lc_best_ms": 5.039239575853571,
+      "torch_mps_ms": 4.974672815296799,
+      "speedup_torch_over_lc_best": 0.9871872016432488
+    },
+    {
+      "shape": "m=3072,k=3072,n=3072",
+      "mode": "balanced_default",
+      "lc_one_shot_ms": 18.00121618725825,
+      "lc_resident_steady_ms": 17.056322586722672,
+      "lc_best_ms": 17.056322586722672,
+      "torch_mps_ms": 15.824560343753546,
+      "speedup_torch_over_lc_best": 0.9277826602594876
+    },
+    {
+      "shape": "m=3072,k=3072,n=3072",
+      "mode": "aggressive_mps",
+      "lc_one_shot_ms": 22.640408933511935,
+      "lc_resident_steady_ms": 17.137687849268936,
+      "lc_best_ms": 17.137687849268936,
+      "torch_mps_ms": 15.824560343753546,
+      "speedup_torch_over_lc_best": 0.9233777906877091
+    },
+    {
+      "shape": "m=3072,k=3072,n=3072",
+      "mode": "kernel_favor",
+      "lc_one_shot_ms": 17.99826035858132,
+      "lc_resident_steady_ms": 17.051102432499952,
+      "lc_best_ms": 17.051102432499952,
+      "torch_mps_ms": 15.824560343753546,
+      "speedup_torch_over_lc_best": 0.928066698701629
+    },
+    {
+      "shape": "m=4096,k=1024,n=4096",
+      "mode": "balanced_default",
+      "lc_one_shot_ms": 11.000474070897326,
+      "lc_resident_steady_ms": 9.9146250266737,
+      "lc_best_ms": 9.9146250266737,
+      "torch_mps_ms": 9.221247700043023,
+      "speedup_torch_over_lc_best": 0.9300651991613139
+    },
+    {
+      "shape": "m=4096,k=1024,n=4096",
+      "mode": "aggressive_mps",
+      "lc_one_shot_ms": 11.173718812642619,
+      "lc_resident_steady_ms": 9.95666841045022,
+      "lc_best_ms": 9.95666841045022,
+      "torch_mps_ms": 9.221247700043023,
+      "speedup_torch_over_lc_best": 0.9261378726205924
+    },
+    {
+      "shape": "m=4096,k=1024,n=4096",
+      "mode": "kernel_favor",
+      "lc_one_shot_ms": 10.989653674187139,
+      "lc_resident_steady_ms": 9.911921542758744,
+      "lc_best_ms": 9.911921542758744,
+      "torch_mps_ms": 9.221247700043023,
+      "speedup_torch_over_lc_best": 0.9303188751306954
+    }
+  ],
+  "best_rows_per_shape": [
+    {
+      "shape": "m=1024,k=1024,n=1024",
+      "mode": "kernel_favor",
+      "lc_one_shot_ms": 0.9807265305425972,
+      "lc_resident_steady_ms": 0.6493468691284459,
+      "lc_best_ms": 0.6493468691284459,
+      "torch_mps_ms": 1.9184853415936232,
+      "speedup_torch_over_lc_best": 2.9544846257110877
+    },
+    {
+      "shape": "m=1536,k=1536,n=1536",
+      "mode": "aggressive_mps",
+      "lc_one_shot_ms": 3.1846431083977222,
+      "lc_resident_steady_ms": 2.131775700642417,
+      "lc_best_ms": 2.131775700642417,
+      "torch_mps_ms": 2.1030645119026303,
+      "speedup_torch_over_lc_best": 0.9865317965998324
+    },
+    {
+      "shape": "m=2048,k=2048,n=2048",
+      "mode": "aggressive_mps",
+      "lc_one_shot_ms": 5.624632642138749,
+      "lc_resident_steady_ms": 5.014387145638466,
+      "lc_best_ms": 5.014387145638466,
+      "torch_mps_ms": 4.974672815296799,
+      "speedup_torch_over_lc_best": 0.9920799233907955
+    },
+    {
+      "shape": "m=3072,k=3072,n=3072",
+      "mode": "kernel_favor",
+      "lc_one_shot_ms": 17.99826035858132,
+      "lc_resident_steady_ms": 17.051102432499952,
+      "lc_best_ms": 17.051102432499952,
+      "torch_mps_ms": 15.824560343753546,
+      "speedup_torch_over_lc_best": 0.928066698701629
+    },
+    {
+      "shape": "m=4096,k=1024,n=4096",
+      "mode": "kernel_favor",
+      "lc_one_shot_ms": 10.989653674187139,
+      "lc_resident_steady_ms": 9.911921542758744,
+      "lc_best_ms": 9.911921542758744,
+      "torch_mps_ms": 9.221247700043023,
+      "speedup_torch_over_lc_best": 0.9303188751306954
+    }
+  ]
+}

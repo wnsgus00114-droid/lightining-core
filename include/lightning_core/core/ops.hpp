@@ -193,6 +193,17 @@ runtime::Status matMulMetalResidentFinish(
 }
 
 template <typename T>
+runtime::Status matMulMetalResidentSync(
+		const T* a,
+		const T* b,
+		T* out,
+		std::size_t m,
+		std::size_t k,
+		std::size_t n) {
+	return matMulWithPolicy(a, b, out, m, k, n, runtime::Device::kMetal, makeMetalResidentSyncPolicy());
+}
+
+template <typename T>
 runtime::Status matMulWithPolicy(
 		const T* a,
 		const T* b,
@@ -409,6 +420,10 @@ class MatMulMetalResidentSession {
 
 	runtime::Status finish(const T* a, const T* b, T* out) const {
 		return matMulMetalResidentFinish<T>(a, b, out, m_, k_, n_);
+	}
+
+	runtime::Status sync(const T* a, const T* b, T* out) const {
+		return matMulMetalResidentSync<T>(a, b, out, m_, k_, n_);
 	}
 
  private:

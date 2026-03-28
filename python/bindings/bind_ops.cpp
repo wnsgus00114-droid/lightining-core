@@ -68,6 +68,14 @@ void bindOps(py::module_& m) {
         throwIfNotSuccess(s.finish(a.data(), b.data(), out.data()));
         return out;
       })
+      .def("sync", [](const lc::ops::MatMulMetalResidentSession<float>& s,
+                       const std::vector<float>& a,
+                       const std::vector<float>& b,
+                       std::size_t out_size) {
+        std::vector<float> out(out_size, 0.0f);
+        throwIfNotSuccess(s.sync(a.data(), b.data(), out.data()));
+        return out;
+      })
       .def("start_into",
            [](const lc::ops::MatMulMetalResidentSession<float>& s,
               const py::array_t<float, py::array::c_style | py::array::forcecast>& a,
@@ -88,6 +96,13 @@ void bindOps(py::module_& m) {
               const py::array_t<float, py::array::c_style | py::array::forcecast>& b,
               py::array_t<float, py::array::c_style | py::array::forcecast>& out) {
              throwIfNotSuccess(s.finish(a.data(), b.data(), out.mutable_data()));
+         })
+       .def("sync_into",
+         [](const lc::ops::MatMulMetalResidentSession<float>& s,
+            const py::array_t<float, py::array::c_style | py::array::forcecast>& a,
+            const py::array_t<float, py::array::c_style | py::array::forcecast>& b,
+            py::array_t<float, py::array::c_style | py::array::forcecast>& out) {
+           throwIfNotSuccess(s.sync(a.data(), b.data(), out.mutable_data()));
            });
 
   py::class_<lc::ops::MatrixElemwiseMetalResidentSession<float>>(m, "MatrixElemwiseMetalResidentSession")
