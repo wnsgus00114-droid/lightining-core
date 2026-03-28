@@ -78,7 +78,9 @@ MLFeatureValue* makeDefaultFeatureValue(MLFeatureDescription* desc, std::size_t 
     }
     case MLFeatureTypeImage:
     case MLFeatureTypeSequence:
+#if defined(MLFeatureTypeState)
     case MLFeatureTypeState:
+#endif
       // 이미지/시퀀스/상태는 모델별 제약이 커서 기본값 생성이 어렵다.
       if (desc.isOptional) {
         return [MLFeatureValue undefinedFeatureValueWithType:desc.type];

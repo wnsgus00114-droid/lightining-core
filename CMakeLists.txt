@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.23)
-project(LightiningCore VERSION 0.1.0 LANGUAGES CXX)
+project(LightiningCore VERSION 0.1.1 LANGUAGES CXX)
 
 if(NOT APPLE)
   message(FATAL_ERROR "Lightining Core currently supports macOS only.")
