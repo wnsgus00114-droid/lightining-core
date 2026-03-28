@@ -14,7 +14,7 @@ python -c "import lightning_core; print(lightning_core.backend_name())"
 From GitHub:
 
 ```bash
-python3 -m pip install "git+https://github.com/wnsgus00114-droid/lightining-core.git@main"
+python3 -m pip install "git+https://github.com/wnsgus00114-droid/lightning-core.git@main"
 ```
 
 ## 2) Build once

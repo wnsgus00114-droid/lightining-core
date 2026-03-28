@@ -39,7 +39,9 @@ PyPI/TestPyPI trusted publishing must be configured before release publishing.
 
 ### Rename migration note
 
-Current live repository URL may remain lightining-core until GitHub rename is finalized.
+Repository rename is complete. Current live URL is:
+
+- https://github.com/wnsgus00114-droid/lightning-core
 
 Helper script:
 

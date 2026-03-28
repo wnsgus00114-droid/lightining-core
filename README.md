@@ -5,6 +5,38 @@
 
 Lightning Core is a macOS-first CUDA-style runtime focused on custom attention training/inference paths.
 
+## Why Lightning Core
+
+| Point | What it gives you |
+| --- | --- |
+| Metal-first runtime path | Optimized execution flow on Apple Silicon/macOS |
+| Attention fastpath focus | Practical tuning path for custom attention workloads |
+| Resident session policy | Reduced upload/download/sync overhead in repeated runs |
+| C++ + Python workflow | Native core with pybind11 module for quick iteration |
+
+## Core Architecture
+
+```mermaid
+flowchart LR
+	A[Python API: lightning_core] --> B[pybind11 bindings]
+	C[C++ API: lightning_core/*] --> D[Runtime Core]
+	B --> D
+	D --> E[Tensor and Ops]
+	E --> F[Metal Backend]
+	E --> G[CPU Fallback]
+	D --> H[Benchmark and Profile Artifacts]
+```
+
+## Performance Checkpoints
+
+| Checkpoint | Command | Artifact |
+| --- | --- | --- |
+| Attention shape sweep | `./build/benchmarks/bench_attention` with sweep env vars | `build/benchmarks/attention_shape_sweep.csv` |
+| Vector add crossover | `./build/benchmarks/bench_vector_add` with sweep mode | `build/benchmarks/vector_add_crossover.csv` |
+| Matrix ops sweep | `./benchmarks/sweep_matrix_ops.sh` | `build/benchmarks/matrix_ops_sweep.csv` |
+
+See [docs/advanced.md](docs/advanced.md) for full benchmark and tuning flow.
+
 ## Install and Use
 
 Install from PyPI:
@@ -16,8 +48,8 @@ python -m pip install -U lightning-core
 Install from source:
 
 ```bash
-git clone https://github.com/wnsgus00114-droid/lightining-core.git
-cd lightining-core
+git clone https://github.com/wnsgus00114-droid/lightning-core.git
+cd lightning-core
 python -m pip install .
 ```
 
@@ -105,11 +137,13 @@ Useful targets:
 - python module: lightning_core
 - c api example: lightning_core_c_api_example
 
-## Repository Rename Status
+## Repository
 
-Current GitHub live URL may still be lightining-core until rename is completed.
+Current GitHub repository URL:
 
-Use helper script after rename:
+- https://github.com/wnsgus00114-droid/lightning-core
+
+If you still have an older local clone URL, use:
 
 ```bash
 ./scripts/sync_remote_after_repo_rename.sh --dry-run
