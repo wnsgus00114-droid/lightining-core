@@ -5,6 +5,18 @@
 
 Lightning Core is a macOS-first CUDA-style runtime focused on custom attention training/inference paths.
 
+## Why This Project Exists
+
+Deep learning tooling is often CUDA-centric, while many local development environments are macOS + Apple Silicon.
+This project was created to provide a practical, CUDA-style runtime experience on macOS with a Metal backend,
+so custom attention and tensor/ops experiments can be built, profiled, and tuned without changing the entire workflow.
+
+In short, Lightning Core targets the gap between:
+
+- familiar CUDA-like execution mental model
+- native Metal execution path on macOS
+- fast iteration loop with both C++ and Python APIs
+
 ## Why Lightning Core
 
 | Point | What it gives you |
