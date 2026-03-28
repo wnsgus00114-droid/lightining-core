@@ -1,0 +1,72 @@
+{
+  "backend": "metal",
+  "torch": "2.11.0",
+  "mps_available": true,
+  "rows": [
+    {
+      "bench": "vector_add",
+      "shape": "n=4096",
+      "lightning_core_ms": 0.0008290691766887903,
+      "torch_cpu_ms": 0.0007438007742166519,
+      "torch_mps_ms": 0.31486247510959703,
+      "lc_vs_torch_mps_speedup": 379.77829107954847
+    },
+    {
+      "bench": "vector_add",
+      "shape": "n=16384",
+      "lightning_core_ms": 0.0030354363843798637,
+      "torch_cpu_ms": 0.0023729109670966864,
+      "torch_mps_ms": 0.1872721710242331,
+      "lc_vs_torch_mps_speedup": 61.695304170406
+    },
+    {
+      "bench": "vector_add",
+      "shape": "n=65536",
+      "lightning_core_ms": 0.008494901703670621,
+      "torch_cpu_ms": 0.015972915571182966,
+      "torch_mps_ms": 0.19137849643205604,
+      "lc_vs_torch_mps_speedup": 22.528629889779886
+    },
+    {
+      "bench": "vector_add",
+      "shape": "n=262144",
+      "lightning_core_ms": 0.028363493038341403,
+      "torch_cpu_ms": 0.023186486214399338,
+      "torch_mps_ms": 0.20578892047827443,
+      "lc_vs_torch_mps_speedup": 7.2554152692015625
+    },
+    {
+      "bench": "vector_add",
+      "shape": "n=1048576",
+      "lightning_core_ms": 0.11158967390656471,
+      "torch_cpu_ms": 0.05217081634327769,
+      "torch_mps_ms": 0.2507992787286639,
+      "lc_vs_torch_mps_speedup": 2.247513322233211
+    },
+    {
+      "bench": "matmul",
+      "shape": "m=256,k=256,n=256",
+      "lightning_core_ms": 0.5525812157429755,
+      "torch_cpu_ms": 0.025195861235260963,
+      "torch_mps_ms": 0.4161165561527014,
+      "lc_vs_torch_mps_speedup": 0.7530414431355761
+    },
+    {
+      "bench": "matmul",
+      "shape": "m=512,k=512,n=512",
+      "lightning_core_ms": 0.35082701360806823,
+      "torch_cpu_ms": 0.17507917946204543,
+      "torch_mps_ms": 0.2571610811476906,
+      "lc_vs_torch_mps_speedup": 0.7330139104823383
+    },
+    {
+      "bench": "matmul",
+      "shape": "m=1024,k=1024,n=1024",
+      "lightning_core_ms": 1.3727374840527773,
+      "torch_cpu_ms": 1.238270930480212,
+      "torch_mps_ms": 0.7816943883274993,
+      "lc_vs_torch_mps_speedup": 0.5694420072362836
+    }
+  ],
+  "avg_speedup_lc_vs_torch_mps": 59.44508138650291
+}

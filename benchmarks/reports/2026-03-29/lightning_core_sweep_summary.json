@@ -1,0 +1,15 @@
+{
+  "attention_best_speedup": 14.350263697256029,
+  "attention_best_shape": {
+    "seq": 2048,
+    "dim": 64
+  },
+  "transformer_best_speedup": 15.32131614300323,
+  "transformer_best_shape": {
+    "seq": 1024,
+    "dim": 64
+  },
+  "matrix_sub_best_speedup": 3.44612,
+  "matrix_div_best_speedup": 3.80546,
+  "vector_metal_wins_from_n": 65536
+}
