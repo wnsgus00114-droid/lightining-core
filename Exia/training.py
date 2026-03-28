@@ -5,6 +5,8 @@ from typing import Callable
 
 import numpy as np
 
+from .backend import configure_backend_from_env, get_backend
+
 try:
     import torch
 except Exception:
@@ -29,8 +31,12 @@ class Trainer:
         optimizer,
         loss_fn: Callable,
     ) -> None:
+        configure_backend_from_env(strict=False)
+        if get_backend() != "torch":
+            self._fit_standalone(model, dataloader, optimizer, loss_fn)
+            return
         if torch is None:
-            raise RuntimeError("fit() requires torch. Install with: pip install Exia[torch]")
+            raise RuntimeError("torch backend is selected but torch is not installed. Install with: pip install Exia[torch]")
         device = self.config.device or (
             "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
         )
@@ -55,6 +61,40 @@ class Trainer:
                 if step % self.config.log_every == 0:
                     avg = running / self.config.log_every
                     print(f"[epoch={epoch+1}] step={step} loss={avg:.6f}")
+                    running = 0.0
+
+    def _fit_standalone(self, model, dataloader, optimizer, loss_fn: Callable) -> None:
+        if not hasattr(model, "backward"):
+            raise RuntimeError("standalone model must implement backward(grad_output)")
+        if not hasattr(loss_fn, "backward"):
+            raise RuntimeError("standalone loss_fn must implement backward()")
+
+        if hasattr(model, "train"):
+            model.train()
+
+        step = 0
+        for epoch in range(self.config.epochs):
+            running = 0.0
+            for x, y in dataloader:
+                x_arr = np.asarray(x, dtype=np.float32)
+                y_arr = np.asarray(y)
+
+                if hasattr(optimizer, "zero_grad"):
+                    optimizer.zero_grad(set_to_none=True)
+                if hasattr(model, "zero_grad"):
+                    model.zero_grad()
+
+                logits = model(x_arr)
+                loss = float(loss_fn(logits, y_arr))
+                grad = loss_fn.backward()
+                model.backward(grad)
+                optimizer.step()
+
+                running += loss
+                step += 1
+                if step % self.config.log_every == 0:
+                    avg = running / self.config.log_every
+                    print(f"[standalone][epoch={epoch+1}] step={step} loss={avg:.6f}")
                     running = 0.0
 
     def fit_linear_regression(

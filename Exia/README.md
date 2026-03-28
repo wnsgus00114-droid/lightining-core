@@ -1,6 +1,6 @@
 # Exia
 
-Exia is a Lightning Core ready torch-style Python library for machine learning and deep learning.
+Exia is a torch-style Python library for machine learning and deep learning, built on top of Lightning Core.
 It is designed for fast experimentation with:
 
 - standalone Lightning Core workflows (no torch required)
