@@ -116,3 +116,8 @@ EXIA_BACKEND=torch python your_script.py
 ```
 
 If the value is invalid or torch is unavailable, Exia falls back to `lightning` backend.
+
+## Repository Sync
+
+This Exia source is maintained in the lightning-core monorepo and synchronized to the standalone Exia repository.
+Use `scripts/sync_exia_and_push.sh` from the lightning-core repository root to sync and push updates.
