@@ -2,11 +2,20 @@
 
 Use one of the paths below depending on your goal.
 
+## Quick Links by Task
+
+| Task Goal | Go To | Why |
+| --- | --- | --- |
+| Install / First Run | [Quickstart: Install](quickstart.md#1-install) | Set up, build, import, and run your first checks quickly. |
+| Performance / Tuning | [Advanced: Benchmark Suite](advanced.md#benchmark-suite) | Benchmark, tune runtime/session behavior, and inspect profiles. |
+| Contribute / Code Changes | [Contributor: Validation Checklist](contributor.md#5-validation-checklist-before-commit) | Follow contribution workflow, naming rules, and validation steps. |
+| Release / Deployment Ops | [Advanced: Python Packaging and Release](advanced.md#python-packaging-and-release) | Use release workflow and repository rename operation guidance. |
+
 ## Beginner Path
 
 Start here if you are using the project for the first time.
 
-- docs/quickstart.md
+- [docs/quickstart.md](quickstart.md)
 
 Covers:
 
@@ -20,7 +29,7 @@ Covers:
 
 Use this when you need tuning, benchmarking, and operations details.
 
-- docs/advanced.md
+- [docs/advanced.md](advanced.md)
 
 Covers:
 
@@ -34,7 +43,7 @@ Covers:
 
 Use this when you are changing code and preparing commits.
 
-- docs/contributor.md
+- [docs/contributor.md](contributor.md)
 
 Covers:
 
