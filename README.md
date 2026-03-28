@@ -2,6 +2,29 @@
 
 `Lightning Core` is a macOS-first CUDA-style runtime focused on custom attention training/inference paths.
 
+## Quick Start
+
+If you are new here, start in this order:
+
+1. Install Python package and run one import check.
+2. Run one C API sample.
+3. Ignore advanced model-wrapper sections until core runtime usage is clear.
+
+Python quick check:
+
+```bash
+python3 -m pip install .
+python -c "import lightning_core; print(lightning_core.backend_name())"
+```
+
+C API quick check:
+
+```bash
+cmake -S . -B build -DCJ_ENABLE_METAL=ON -DCJ_BUILD_EXAMPLES=ON
+cmake --build build --target lightning_core_c_api_example -j
+./build/lightning_core_c_api_example
+```
+
 ## Identity and Naming
 
 - Repository/package public name: `lightning-core` / `lightning_core`
@@ -48,19 +71,19 @@ Public-facing docs and examples now use only `lightning_core` naming.
 This project is currently an optimization-focused runtime prototype, not a full deep learning framework.
 
 - Implemented core focus: runtime, attention path, and selected matrix/vector ops
-- Model-family wrappers (Transformer/LSTM/CNN/GCN/GAT/VLM) are policy/fastpath helpers, not full model implementations
+- Model-family wrappers (Transformer/LSTM/CNN/GCN/GAT/VLM) are experimental policy/fastpath helpers, not full model implementations
 - Tensor API is intentionally minimal today (shape + host transfer + basic ops) and is still evolving
 - Python API now includes runtime visibility + basic attention forward in addition to tensor helpers
 
 If you need full framework-level features (autograd graph, broad op coverage, rich tensor views/layout APIs), treat this repository as experimental groundwork rather than a drop-in replacement.
 
-## Staged Implementation Status
+## Experimental Implementation Snapshot
 
-The following stage-1 upgrades are implemented:
+The following items are implemented, but still evolving and not frozen APIs:
 
 - Tensor view/slice/layout metadata layer
-- Python matmul/session/policy first-pass exposure
-- Public API naming integration stage-2 wrappers (`lightning_core` include path expansion)
+- Python matmul/session/policy exposure
+- Public API naming wrappers (`lightning_core` include path expansion)
 
 ## Build
 
@@ -450,6 +473,10 @@ lightning_core::attentionForwardWithPolicy(q, k, v, out, cfg, lightning_core::ru
 ```
 
 Model-family customization presets (Transformer/LSTM/RNN/DNN/CNN/GCN/GAT/VLM):
+
+> Warning: the following model-family examples are advanced policy/wrapper demonstrations.
+> They are not end-to-end framework model implementations.
+> If you want a production entrypoint, use runtime + tensor + ops + attention sections above first.
 
 ```cpp
 #include "lightning_core/model_customization.hpp"

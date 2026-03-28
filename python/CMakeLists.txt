@@ -61,7 +61,13 @@ find_package(pybind11 CONFIG QUIET)
 
 if(pybind11_FOUND)
   # 파이썬 import 가능한 확장 모듈 생성.
-  pybind11_add_module(lightning_core MODULE bindings/pybind_module.cpp)
+  pybind11_add_module(lightning_core MODULE
+    bindings/pybind_module.cpp
+    bindings/bind_runtime.cpp
+    bindings/bind_tensor.cpp
+    bindings/bind_ops.cpp
+    bindings/bind_attention.cpp
+  )
   target_link_libraries(lightning_core PRIVATE cudajun::cudajun)
   target_include_directories(lightning_core PRIVATE ${CMAKE_SOURCE_DIR}/include)
   install(TARGETS lightning_core LIBRARY DESTINATION .)
