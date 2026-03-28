@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "Exia"
+version = "0.1.0"
+description = "Exia: Lightning Core ready torch-like Python toolkit for ML/DL and Hugging Face workflows"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  { name = "JunHyeon Beak" }
+]
+dependencies = [
+  "numpy>=1.24.0",
+  "lightning-core>=0.1.3"
+]
+
+[project.optional-dependencies]
+torch = [
+  "torch>=2.2.0"
+]
+hf = [
+  "transformers>=4.40.0",
+  "datasets>=2.18.0"
+]
+full = [
+  "torch>=2.2.0",
+  "transformers>=4.40.0",
+  "datasets>=2.18.0"
+]
+dev = [
+  "pytest>=8.0.0"
+]
+
+[tool.setuptools]
+package-dir = { Exia = "." }
+packages = ["Exia"]
