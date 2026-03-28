@@ -1,5 +1,8 @@
 # Lightning Core
 
+[![PyPI version](https://img.shields.io/pypi/v/lightning-core.svg)](https://pypi.org/project/lightning-core/)
+[![PyPI downloads](https://img.shields.io/pypi/dm/lightning-core.svg)](https://pypi.org/project/lightning-core/)
+
 Lightning Core is a macOS-first CUDA-style runtime focused on custom attention training/inference paths.
 
 ## Install and Use
