@@ -177,7 +177,7 @@ The script automatically checks target repository availability and skips safely 
 
 ## Author
 
-- Junhyeon Baeg (Kwangwoon University)
+- JunHyeon Beak (Kwangwoon University)
 
 ## License
 

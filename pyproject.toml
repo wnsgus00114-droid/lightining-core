@@ -12,10 +12,10 @@ description = "Lightning Core: macOS-first CUDA-style runtime with Metal backend
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [
-  { name = "Junhyeon Baeg (Kwangwoon University)" }
+  { name = "JunHyeon Beak (Kwangwoon University)" }
 ]
 maintainers = [
-  { name = "Junhyeon Baeg (Kwangwoon University)" }
+  { name = "JunHyeon Beak (Kwangwoon University)" }
 ]
 license = { text = "Kwangwoon University License 1.0 (KWU-1.0)" }
 keywords = [
