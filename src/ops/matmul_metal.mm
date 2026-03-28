@@ -90,7 +90,7 @@ std::string resolveMatMulTuneCachePath() {
   if (env != nullptr && env[0] != '\0') {
     return std::string(env);
   }
-  return std::string(".cudajun_matmul_tune_cache.csv");
+  return std::string(".lightning_core_matmul_tune_cache.csv");
 }
 
 enum class MatMulSmallBatchMode {
@@ -138,7 +138,7 @@ std::string resolveMatMulSmallTuneCachePath() {
       suffix = std::string("_") + profile;
     }
   }
-  return std::string(".cudajun_matmul_mle2_tune_cache") + suffix + ".csv";
+  return std::string(".lightning_core_matmul_mle2_tune_cache") + suffix + ".csv";
 }
 
 void saveMatMulTuneCacheIfDirty(MetalMatMulContext& ctx) {

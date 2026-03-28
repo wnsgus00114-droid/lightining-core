@@ -65,7 +65,7 @@ inline std::string resolveGraphPolicyCachePath() {
       return std::string(raw);
     }
   }
-  return std::string(".cudajun_graph_policy_cache.csv");
+  return std::string(".lightning_core_graph_policy_cache.csv");
 }
 
 inline GraphPolicyCacheState& graphPolicyCacheState() {

@@ -182,7 +182,7 @@ std::string resolveTuneCachePath() {
   if (env != nullptr && env[0] != '\0') {
     return std::string(env);
   }
-  return std::string(".cudajun_attn_tune_cache.csv");
+  return std::string(".lightning_core_attn_tune_cache.csv");
 }
 
 void saveTuneCacheIfDirty(MetalAttentionContext& ctx) {

@@ -11,7 +11,7 @@ __pycache__/
 .DS_Store
 
 # Runtime/benchmark local caches
-.cudajun_*.csv
+.lightning_core_*.csv
 
 # VS Code
 .vscode/
