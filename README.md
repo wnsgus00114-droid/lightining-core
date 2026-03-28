@@ -175,6 +175,14 @@ git remote set-url origin https://github.com/wnsgus00114-droid/lightning-core.gi
 git remote -v
 ```
 
+Or run the helper script from repository root:
+
+```bash
+chmod +x scripts/sync_remote_after_repo_rename.sh
+./scripts/sync_remote_after_repo_rename.sh --dry-run
+./scripts/sync_remote_after_repo_rename.sh
+```
+
 After rename, verify project metadata URLs and release workflows still point to `lightning-core`.
 
 ## GitHub Actions: Wheel Build and Publish
