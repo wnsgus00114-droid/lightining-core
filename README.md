@@ -2,6 +2,35 @@
 
 Lightning Core is a macOS-first CUDA-style runtime focused on custom attention training/inference paths.
 
+## Install and Use
+
+Install from PyPI:
+
+```bash
+python -m pip install -U lightning-core
+```
+
+Install from source:
+
+```bash
+git clone https://github.com/wnsgus00114-droid/lightining-core.git
+cd lightining-core
+python -m pip install .
+```
+
+Quick Python usage:
+
+```python
+import numpy as np
+import lightning_core as lc
+
+print(lc.backend_name())
+a = np.arange(8, dtype=np.float32)
+b = np.arange(8, dtype=np.float32)
+out = lc.vector_add(a, b, "metal")
+print(out)
+```
+
 ## Quick Start (Beginner)
 
 Documentation entrypoint:
@@ -96,3 +125,13 @@ The script automatically checks target repository availability and skips safely 
 - benchmarks: benchmark binaries and sweep scripts
 - python: pybind11 bindings
 - docs: split docs (index/quickstart/advanced/contributor)
+
+## Author
+
+- Junhyeon Baeg (Kwangwoon University)
+
+## License
+
+This project is licensed under the Kwangwoon University License 1.0 (KWU-1.0).
+
+See [LICENSE](LICENSE).
