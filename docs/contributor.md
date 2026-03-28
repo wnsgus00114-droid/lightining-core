@@ -13,19 +13,19 @@ ctest --test-dir build --output-on-failure
 
 ## 2) Codebase map
 
-- Core implementation: src/
-- Canonical internal headers: include/lightning_core/core/
-- Public wrappers: include/lightning_core/
-- Legacy compatibility shims: include/cudajun/
-- Python bindings: python/bindings/
-- Tests: tests/
-- Benchmarks: benchmarks/
+- Core implementation: [src/](../src/)
+- Canonical internal headers: [include/lightning_core/core/](../include/lightning_core/core/)
+- Public wrappers: [include/lightning_core/](../include/lightning_core/)
+- Legacy compatibility shims: [include/cudajun/](../include/cudajun/)
+- Python bindings: [python/bindings/](../python/bindings/)
+- Tests: [tests/](../tests/)
+- Benchmarks: [benchmarks/](../benchmarks/)
 
 ## 3) Naming and compatibility policy
 
 - New code should use lightning_core naming.
 - Keep compatibility shims working for existing integrations.
-- Do not remove include/cudajun/ forwarding headers without explicit migration plan.
+- Do not remove [include/cudajun/](../include/cudajun/) forwarding headers without explicit migration plan.
 
 ## 4) Python binding policy
 
@@ -47,14 +47,14 @@ ctest --test-dir build --output-on-failure
 ## 6) Documentation policy
 
 - Keep README short and beginner-first.
-- Put advanced details in docs/advanced.md.
-- Update docs/index.md when adding/removing major guides.
+- Put advanced details in [docs/advanced.md](advanced.md).
+- Update [docs/index.md](index.md) when adding/removing major guides.
 
 ## 7) Roadmap and large refactors
 
 For staged work and migration direction, see:
 
-- ROADMAP.md
+- [ROADMAP.md](../ROADMAP.md)
 
 ## 8) Repository rename operations
 

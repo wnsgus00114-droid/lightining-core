@@ -69,4 +69,4 @@ Lightning Core is currently an optimization-focused runtime prototype, not a ful
 
 ## 8) Next
 
-For deeper tuning, benchmarking, model-family wrappers, and release workflows, see docs/advanced.md.
+For deeper tuning, benchmarking, model-family wrappers, and release workflows, see [docs/advanced.md](advanced.md).

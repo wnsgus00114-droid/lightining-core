@@ -13,7 +13,7 @@ This guide contains advanced/optional topics that are not required for first-tim
 
 Workflow file:
 
-- .github/workflows/python-wheel-publish.yml
+- [.github/workflows/python-wheel-publish.yml](../.github/workflows/python-wheel-publish.yml)
 
 Behavior:
 
@@ -74,7 +74,7 @@ export CJ_ATTN_BATCH=2
 
 Generated CSV:
 
-- build/benchmarks/attention_shape_sweep.csv
+- [build/benchmarks/attention_shape_sweep.csv](../build/benchmarks/attention_shape_sweep.csv)
 
 ### Vector add crossover sweep
 
@@ -85,8 +85,8 @@ export CJ_BENCH_SWEEP=1
 
 Generated files:
 
-- build/benchmarks/vector_add_crossover.csv
-- build/benchmarks/vector_add_crossover_hint.env
+- [build/benchmarks/vector_add_crossover.csv](../build/benchmarks/vector_add_crossover.csv)
+- [build/benchmarks/vector_add_crossover_hint.env](../build/benchmarks/vector_add_crossover_hint.env)
 
 Apply measured crossover:
 
@@ -103,7 +103,7 @@ source build/benchmarks/vector_add_crossover_hint.env
 
 Generated CSV:
 
-- build/benchmarks/matrix_ops_sweep.csv
+- [build/benchmarks/matrix_ops_sweep.csv](../build/benchmarks/matrix_ops_sweep.csv)
 
 ## Resident Sessions and Policy APIs
 
@@ -133,8 +133,8 @@ They are not end-to-end framework model implementations.
 Runtime profile autoload lookup order:
 
 - CJ_RUNTIME_PROFILE_ENV_FILE (if set)
-- build/benchmarks/model_runtime_profile.env
-- ../build/benchmarks/model_runtime_profile.env
+- [build/benchmarks/model_runtime_profile.env](../build/benchmarks/model_runtime_profile.env)
+- [../build/benchmarks/model_runtime_profile.env](../build/benchmarks/model_runtime_profile.env)
 
 Disable autoload:
 
@@ -159,14 +159,14 @@ source build/benchmarks/model_runtime_profile.env
 
 Canonical internal headers:
 
-- include/lightning_core/core/*
+- [include/lightning_core/core/](../include/lightning_core/core/)
 
 Compatibility headers:
 
-- include/cudajun/* forwards to canonical core headers
+- [include/cudajun/](../include/cudajun/) forwards to canonical core headers
 
 Public wrappers:
 
-- include/lightning_core/*
+- [include/lightning_core/](../include/lightning_core/)
 
 This keeps legacy integrations working while moving the project identity to lightning_core.
