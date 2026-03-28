@@ -55,14 +55,15 @@ Torch(MPS) vs Lightning Core direct operator comparison:
 
 | Bench | Shape | Lightning Core ms | Torch MPS ms | Speedup (Torch/LCore) |
 | --- | --- | ---: | ---: | ---: |
-| vector_add | n=4096 | 0.0008 | 0.3149 | 379.78x |
-| vector_add | n=16384 | 0.0030 | 0.1873 | 61.70x |
-| vector_add | n=65536 | 0.0085 | 0.1914 | 22.53x |
-| vector_add | n=262144 | 0.0284 | 0.2058 | 7.26x |
-| vector_add | n=1048576 | 0.1116 | 0.2508 | 2.25x |
-| matmul | m=256,k=256,n=256 | 0.5526 | 0.4161 | 0.75x |
-| matmul | m=512,k=512,n=512 | 0.3508 | 0.2572 | 0.73x |
-| matmul | m=1024,k=1024,n=1024 | 1.3727 | 0.7817 | 0.57x |
+| vector_add | n=4096 | 0.0008 | 0.3401 | 421.89x |
+| vector_add | n=16384 | 0.0031 | 0.3042 | 99.45x |
+| vector_add | n=65536 | 0.0083 | 0.1926 | 23.33x |
+| vector_add | n=262144 | 0.0285 | 0.2101 | 7.38x |
+| vector_add | n=1048576 | 0.1087 | 0.2559 | 2.35x |
+| matmul | m=256,k=256,n=256 | 0.2373 | 0.1943 | 0.82x |
+| matmul | m=512,k=512,n=512 | 0.2957 | 0.2617 | 0.89x |
+| matmul | m=1024,k=1024,n=1024 | 0.9845 | 1.2519 | 1.27x |
+| matmul | m=2048,k=2048,n=2048 | 5.7157 | 4.7575 | 0.83x |
 
 Lightning Core native benchmark sweep highlights (from build artifacts):
 
@@ -83,6 +84,7 @@ xychart-beta
 Why use Lightning Core:
 
 - Strong low-latency vector path and custom-op runtime control on Apple Silicon.
+- Dense matmul competitiveness improved with a 1024-shape crossover win vs Torch MPS in this run.
 - C++ benchmark/tuning pipeline with concrete artifact outputs.
 - Easy hybrid usage with higher-level frameworks when dense GEMM-heavy paths are preferable there.
 

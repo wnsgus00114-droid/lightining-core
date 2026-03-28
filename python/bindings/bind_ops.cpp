@@ -278,11 +278,63 @@ void bindOps(py::module_& m) {
            std::size_t k_inner,
            std::size_t n_cols,
            const std::string& device_name) {
-          auto out = matmulVector(toVector(a), toVector(b), m_rows, k_inner, n_cols, parseDevice(device_name), lc::ops::MatMulIoPolicy{});
-          return toNumpy(out);
+          if (static_cast<std::size_t>(a.size()) != m_rows * k_inner || static_cast<std::size_t>(b.size()) != k_inner * n_cols) {
+            throw std::invalid_argument("a or b shape mismatch");
+          }
+          py::array_t<float> out(m_rows * n_cols);
+          throwIfNotSuccess(lc::ops::matMulWithPolicy<float>(
+              a.data(), b.data(), out.mutable_data(), m_rows, k_inner, n_cols, parseDevice(device_name), lc::ops::MatMulIoPolicy{}));
+          return out;
         },
         py::arg("a"),
         py::arg("b"),
+        py::arg("m"),
+        py::arg("k"),
+        py::arg("n"),
+        py::arg("device") = "metal");
+
+  m.def("matmul_np",
+        [](const py::array_t<float, py::array::c_style | py::array::forcecast>& a,
+           const py::array_t<float, py::array::c_style | py::array::forcecast>& b,
+           std::size_t m_rows,
+           std::size_t k_inner,
+           std::size_t n_cols,
+           const std::string& device_name) {
+          if (static_cast<std::size_t>(a.size()) != m_rows * k_inner || static_cast<std::size_t>(b.size()) != k_inner * n_cols) {
+            throw std::invalid_argument("a or b shape mismatch");
+          }
+          py::array_t<float> out(m_rows * n_cols);
+          throwIfNotSuccess(lc::ops::matMulWithPolicy<float>(
+              a.data(), b.data(), out.mutable_data(), m_rows, k_inner, n_cols, parseDevice(device_name), lc::ops::MatMulIoPolicy{}));
+          return out;
+        },
+        py::arg("a"),
+        py::arg("b"),
+        py::arg("m"),
+        py::arg("k"),
+        py::arg("n"),
+        py::arg("device") = "metal");
+
+  m.def("matmul_np_into",
+        [](const py::array_t<float, py::array::c_style | py::array::forcecast>& a,
+           const py::array_t<float, py::array::c_style | py::array::forcecast>& b,
+           py::array_t<float, py::array::c_style | py::array::forcecast>& out,
+           std::size_t m_rows,
+           std::size_t k_inner,
+           std::size_t n_cols,
+           const std::string& device_name) {
+          if (static_cast<std::size_t>(a.size()) != m_rows * k_inner || static_cast<std::size_t>(b.size()) != k_inner * n_cols) {
+            throw std::invalid_argument("a or b shape mismatch");
+          }
+          if (static_cast<std::size_t>(out.size()) != m_rows * n_cols) {
+            throw std::invalid_argument("out shape mismatch");
+          }
+          throwIfNotSuccess(lc::ops::matMulWithPolicy<float>(
+              a.data(), b.data(), out.mutable_data(), m_rows, k_inner, n_cols, parseDevice(device_name), lc::ops::MatMulIoPolicy{}));
+        },
+        py::arg("a"),
+        py::arg("b"),
+        py::arg("out"),
         py::arg("m"),
         py::arg("k"),
         py::arg("n"),
@@ -300,6 +352,81 @@ void bindOps(py::module_& m) {
         },
         py::arg("a"),
         py::arg("b"),
+        py::arg("m"),
+        py::arg("k"),
+        py::arg("n"),
+        py::arg("device") = "metal",
+        py::arg("policy") = lc::ops::MatMulIoPolicy{});
+
+  m.def("matmul_with_policy",
+        [](const py::array_t<float, py::array::c_style | py::array::forcecast>& a,
+           const py::array_t<float, py::array::c_style | py::array::forcecast>& b,
+           std::size_t m_rows,
+           std::size_t k_inner,
+           std::size_t n_cols,
+           const std::string& device_name,
+           const lc::ops::MatMulIoPolicy& policy) {
+          if (static_cast<std::size_t>(a.size()) != m_rows * k_inner || static_cast<std::size_t>(b.size()) != k_inner * n_cols) {
+            throw std::invalid_argument("a or b shape mismatch");
+          }
+          py::array_t<float> out(m_rows * n_cols);
+          throwIfNotSuccess(lc::ops::matMulWithPolicy<float>(
+              a.data(), b.data(), out.mutable_data(), m_rows, k_inner, n_cols, parseDevice(device_name), policy));
+          return out;
+        },
+        py::arg("a"),
+        py::arg("b"),
+        py::arg("m"),
+        py::arg("k"),
+        py::arg("n"),
+        py::arg("device") = "metal",
+        py::arg("policy") = lc::ops::MatMulIoPolicy{});
+
+  m.def("matmul_np_with_policy",
+        [](const py::array_t<float, py::array::c_style | py::array::forcecast>& a,
+           const py::array_t<float, py::array::c_style | py::array::forcecast>& b,
+           std::size_t m_rows,
+           std::size_t k_inner,
+           std::size_t n_cols,
+           const std::string& device_name,
+           const lc::ops::MatMulIoPolicy& policy) {
+          if (static_cast<std::size_t>(a.size()) != m_rows * k_inner || static_cast<std::size_t>(b.size()) != k_inner * n_cols) {
+            throw std::invalid_argument("a or b shape mismatch");
+          }
+          py::array_t<float> out(m_rows * n_cols);
+          throwIfNotSuccess(lc::ops::matMulWithPolicy<float>(
+              a.data(), b.data(), out.mutable_data(), m_rows, k_inner, n_cols, parseDevice(device_name), policy));
+          return out;
+        },
+        py::arg("a"),
+        py::arg("b"),
+        py::arg("m"),
+        py::arg("k"),
+        py::arg("n"),
+        py::arg("device") = "metal",
+        py::arg("policy") = lc::ops::MatMulIoPolicy{});
+
+  m.def("matmul_np_into_with_policy",
+        [](const py::array_t<float, py::array::c_style | py::array::forcecast>& a,
+           const py::array_t<float, py::array::c_style | py::array::forcecast>& b,
+           py::array_t<float, py::array::c_style | py::array::forcecast>& out,
+           std::size_t m_rows,
+           std::size_t k_inner,
+           std::size_t n_cols,
+           const std::string& device_name,
+           const lc::ops::MatMulIoPolicy& policy) {
+          if (static_cast<std::size_t>(a.size()) != m_rows * k_inner || static_cast<std::size_t>(b.size()) != k_inner * n_cols) {
+            throw std::invalid_argument("a or b shape mismatch");
+          }
+          if (static_cast<std::size_t>(out.size()) != m_rows * n_cols) {
+            throw std::invalid_argument("out shape mismatch");
+          }
+          throwIfNotSuccess(lc::ops::matMulWithPolicy<float>(
+              a.data(), b.data(), out.mutable_data(), m_rows, k_inner, n_cols, parseDevice(device_name), policy));
+        },
+        py::arg("a"),
+        py::arg("b"),
+        py::arg("out"),
         py::arg("m"),
         py::arg("k"),
         py::arg("n"),

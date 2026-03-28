@@ -6,67 +6,75 @@
     {
       "bench": "vector_add",
       "shape": "n=4096",
-      "lightning_core_ms": 0.0008290691766887903,
-      "torch_cpu_ms": 0.0007438007742166519,
-      "torch_mps_ms": 0.31486247510959703,
-      "lc_vs_torch_mps_speedup": 379.77829107954847
+      "lightning_core_ms": 0.000806199386715889,
+      "torch_cpu_ms": 0.0008082599379122257,
+      "torch_mps_ms": 0.34012362981836003,
+      "lc_vs_torch_mps_speedup": 421.8852500048134
     },
     {
       "bench": "vector_add",
       "shape": "n=16384",
-      "lightning_core_ms": 0.0030354363843798637,
-      "torch_cpu_ms": 0.0023729109670966864,
-      "torch_mps_ms": 0.1872721710242331,
-      "lc_vs_torch_mps_speedup": 61.695304170406
+      "lightning_core_ms": 0.003059412119910121,
+      "torch_cpu_ms": 0.0023062049876898527,
+      "torch_mps_ms": 0.30424439270670217,
+      "lc_vs_torch_mps_speedup": 99.44537734119986
     },
     {
       "bench": "vector_add",
       "shape": "n=65536",
-      "lightning_core_ms": 0.008494901703670621,
-      "torch_cpu_ms": 0.015972915571182966,
-      "torch_mps_ms": 0.19137849643205604,
-      "lc_vs_torch_mps_speedup": 22.528629889779886
+      "lightning_core_ms": 0.008254102431237698,
+      "torch_cpu_ms": 0.016885349759832025,
+      "torch_mps_ms": 0.192579774496456,
+      "lc_vs_torch_mps_speedup": 23.331401094277282
     },
     {
       "bench": "vector_add",
       "shape": "n=262144",
-      "lightning_core_ms": 0.028363493038341403,
-      "torch_cpu_ms": 0.023186486214399338,
-      "torch_mps_ms": 0.20578892047827443,
-      "lc_vs_torch_mps_speedup": 7.2554152692015625
+      "lightning_core_ms": 0.028465595096349716,
+      "torch_cpu_ms": 0.020188651978969574,
+      "torch_mps_ms": 0.2100694109685719,
+      "lc_vs_torch_mps_speedup": 7.379765301148057
     },
     {
       "bench": "vector_add",
       "shape": "n=1048576",
-      "lightning_core_ms": 0.11158967390656471,
-      "torch_cpu_ms": 0.05217081634327769,
-      "torch_mps_ms": 0.2507992787286639,
-      "lc_vs_torch_mps_speedup": 2.247513322233211
+      "lightning_core_ms": 0.10868443641811609,
+      "torch_cpu_ms": 0.05002724356018007,
+      "torch_mps_ms": 0.25593255801747244,
+      "lc_vs_torch_mps_speedup": 2.3548225160121663
     },
     {
       "bench": "matmul",
       "shape": "m=256,k=256,n=256",
-      "lightning_core_ms": 0.5525812157429755,
-      "torch_cpu_ms": 0.025195861235260963,
-      "torch_mps_ms": 0.4161165561527014,
-      "lc_vs_torch_mps_speedup": 0.7530414431355761
+      "lightning_core_ms": 0.2372709452174604,
+      "torch_cpu_ms": 0.026485207490622997,
+      "torch_mps_ms": 0.19429995057483515,
+      "lc_vs_torch_mps_speedup": 0.818894830956896
     },
     {
       "bench": "matmul",
       "shape": "m=512,k=512,n=512",
-      "lightning_core_ms": 0.35082701360806823,
-      "torch_cpu_ms": 0.17507917946204543,
-      "torch_mps_ms": 0.2571610811476906,
-      "lc_vs_torch_mps_speedup": 0.7330139104823383
+      "lightning_core_ms": 0.29569576727226377,
+      "torch_cpu_ms": 0.17641246085986495,
+      "torch_mps_ms": 0.2617109411706527,
+      "lc_vs_torch_mps_speedup": 0.885068269948148
     },
     {
       "bench": "matmul",
       "shape": "m=1024,k=1024,n=1024",
-      "lightning_core_ms": 1.3727374840527773,
-      "torch_cpu_ms": 1.238270930480212,
-      "torch_mps_ms": 0.7816943883274993,
-      "lc_vs_torch_mps_speedup": 0.5694420072362836
+      "lightning_core_ms": 0.984541792422533,
+      "torch_cpu_ms": 1.2586812605150044,
+      "torch_mps_ms": 1.2519458231205742,
+      "lc_vs_torch_mps_speedup": 1.2716025188124063
+    },
+    {
+      "bench": "matmul",
+      "shape": "m=2048,k=2048,n=2048",
+      "lightning_core_ms": 5.715650005731732,
+      "torch_cpu_ms": 9.575022954959422,
+      "torch_mps_ms": 4.757543164305389,
+      "lc_vs_torch_mps_speedup": 0.8323713242648623
     }
   ],
-  "avg_speedup_lc_vs_torch_mps": 59.44508138650291
+  "avg_speedup_lc_vs_torch_mps": 62.02272813349256
 }
