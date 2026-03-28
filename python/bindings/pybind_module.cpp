@@ -6,6 +6,7 @@
 #include <pybind11/stl.h>
 
 #include "cudajun/attention.hpp"
+#include "cudajun/ops.hpp"
 #include "cudajun/runtime.hpp"
 #include "cudajun/tensor.hpp"
 
@@ -40,6 +41,19 @@ std::string toString(cudajun::Device device) {
 
 }  // namespace
 
+template <typename ViewType>
+void bindTensorViewType(py::module_& m, const char* name) {
+  py::class_<ViewType>(m, name)
+      .def("shape", &ViewType::shape)
+      .def("strides", &ViewType::strides)
+      .def("rank", &ViewType::rank)
+      .def("numel", &ViewType::numel)
+      .def("is_contiguous", &ViewType::isContiguous)
+      .def("dtype", &ViewType::dtypeName)
+      .def("offset_elements", &ViewType::offsetElements)
+      .def("device", [](const ViewType& t) { return toString(t.device()); });
+}
+
 template <typename TensorType, typename Scalar>
 void bindTensorType(py::module_& m, const char* name) {
   py::class_<TensorType>(m, name)
@@ -59,6 +73,25 @@ void bindTensorType(py::module_& m, const char* name) {
         if (status != cudajun::runtime::Status::kSuccess) {
           throw std::runtime_error(cudajun::runtime::getErrorString(status));
         }
+      })
+      .def("layout", [](const TensorType& t) {
+        return t.layout() == cudajun::Layout::kContiguous ? "contiguous" : "strided";
+      })
+      .def("view", [](const TensorType& t, const std::vector<std::int64_t>& shape) {
+        cudajun::TensorViewT<Scalar> v;
+        auto status = t.view(shape, &v);
+        if (status != cudajun::runtime::Status::kSuccess) {
+          throw std::runtime_error(cudajun::runtime::getErrorString(status));
+        }
+        return v;
+      })
+      .def("slice", [](const TensorType& t, std::size_t axis, std::int64_t start, std::int64_t end) {
+        cudajun::TensorViewT<Scalar> v;
+        auto status = t.slice(axis, start, end, &v);
+        if (status != cudajun::runtime::Status::kSuccess) {
+          throw std::runtime_error(cudajun::runtime::getErrorString(status));
+        }
+        return v;
       })
       .def("from_list", [](TensorType& t, const std::vector<Scalar>& values) {
         auto status = t.fromHost(values);
@@ -88,6 +121,50 @@ PYBIND11_MODULE(lightining_core, m) {
   // 모듈 docstring.
   m.doc() = "Lightining Core python bindings";
 
+  py::class_<cudajun::ops::MatMulIoPolicy>(m, "MatMulIoPolicy")
+      .def(py::init<>())
+      .def_readwrite("upload_a", &cudajun::ops::MatMulIoPolicy::upload_a)
+      .def_readwrite("upload_b", &cudajun::ops::MatMulIoPolicy::upload_b)
+      .def_readwrite("download_out", &cudajun::ops::MatMulIoPolicy::download_out)
+      .def_readwrite("synchronize", &cudajun::ops::MatMulIoPolicy::synchronize);
+
+  py::class_<cudajun::ops::MatMulMetalResidentSession<float>>(m, "MatMulMetalResidentSession")
+      .def(py::init<std::size_t, std::size_t, std::size_t>())
+      .def("start",
+           [](const cudajun::ops::MatMulMetalResidentSession<float>& s,
+              const std::vector<float>& a,
+              const std::vector<float>& b) {
+             std::vector<float> out(a.size(), 0.0f);
+             auto status = s.start(a.data(), b.data(), out.data());
+             if (status != cudajun::runtime::Status::kSuccess) {
+               throw std::runtime_error(cudajun::runtime::getErrorString(status));
+             }
+           })
+      .def("run",
+           [](const cudajun::ops::MatMulMetalResidentSession<float>& s,
+              const std::vector<float>& a,
+              const std::vector<float>& b) {
+             std::vector<float> out(a.size(), 0.0f);
+             auto status = s.run(a.data(), b.data(), out.data());
+             if (status != cudajun::runtime::Status::kSuccess) {
+               throw std::runtime_error(cudajun::runtime::getErrorString(status));
+             }
+           })
+      .def("finish",
+           [](const cudajun::ops::MatMulMetalResidentSession<float>& s,
+              const std::vector<float>& a,
+              const std::vector<float>& b,
+              std::size_t out_size) {
+             std::vector<float> out(out_size, 0.0f);
+             auto status = s.finish(a.data(), b.data(), out.data());
+             if (status != cudajun::runtime::Status::kSuccess) {
+               throw std::runtime_error(cudajun::runtime::getErrorString(status));
+             }
+             return out;
+           });
+
+  bindTensorViewType<cudajun::TensorView>(m, "TensorView");
+  bindTensorViewType<cudajun::Tensor64View>(m, "Tensor64View");
   bindTensorType<cudajun::Tensor, float>(m, "Tensor");
   bindTensorType<cudajun::Tensor64, double>(m, "Tensor64");
 
@@ -97,6 +174,58 @@ PYBIND11_MODULE(lightining_core, m) {
   m.def("backend_name", [] { return cudajun::runtime::backendName(); });
   m.def("memory_model_name",
         [] { return std::string(cudajun::runtime::memoryModelName(cudajun::runtime::deviceMemoryModel())); });
+
+  m.def("matmul",
+        [](const std::vector<float>& a,
+           const std::vector<float>& b,
+           std::size_t m_rows,
+           std::size_t k_inner,
+           std::size_t n_cols,
+           const std::string& device_name) {
+          if (a.size() != m_rows * k_inner || b.size() != k_inner * n_cols) {
+            throw std::invalid_argument("a or b shape mismatch");
+          }
+          std::vector<float> out(m_rows * n_cols, 0.0f);
+          auto status = cudajun::ops::matMul<float>(
+              a.data(), b.data(), out.data(), m_rows, k_inner, n_cols, parseDevice(device_name));
+          if (status != cudajun::runtime::Status::kSuccess) {
+            throw std::runtime_error(cudajun::runtime::getErrorString(status));
+          }
+          return out;
+        },
+        py::arg("a"),
+        py::arg("b"),
+        py::arg("m"),
+        py::arg("k"),
+        py::arg("n"),
+        py::arg("device") = "metal");
+
+  m.def("matmul_with_policy",
+        [](const std::vector<float>& a,
+           const std::vector<float>& b,
+           std::size_t m_rows,
+           std::size_t k_inner,
+           std::size_t n_cols,
+           const std::string& device_name,
+           const cudajun::ops::MatMulIoPolicy& policy) {
+          if (a.size() != m_rows * k_inner || b.size() != k_inner * n_cols) {
+            throw std::invalid_argument("a or b shape mismatch");
+          }
+          std::vector<float> out(m_rows * n_cols, 0.0f);
+          auto status = cudajun::ops::matMulWithPolicy<float>(
+              a.data(), b.data(), out.data(), m_rows, k_inner, n_cols, parseDevice(device_name), policy);
+          if (status != cudajun::runtime::Status::kSuccess) {
+            throw std::runtime_error(cudajun::runtime::getErrorString(status));
+          }
+          return out;
+        },
+        py::arg("a"),
+        py::arg("b"),
+        py::arg("m"),
+        py::arg("k"),
+        py::arg("n"),
+        py::arg("device") = "metal",
+        py::arg("policy") = cudajun::ops::MatMulIoPolicy{});
 
   m.def("attention_forward",
         [](const std::vector<float>& q,

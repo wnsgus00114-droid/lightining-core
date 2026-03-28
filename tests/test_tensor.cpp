@@ -75,6 +75,34 @@ int runCase(cudajun::Device device) {
     return 1;
   }
 
+  cudajun::TensorViewT<T> v;
+  if (a.view({4}, &v) != cudajun::runtime::Status::kSuccess) {
+    std::cerr << "view should succeed\n";
+    return 1;
+  }
+  if (v.rank() != 1 || !v.isContiguous() || v.numel() != 4) {
+    std::cerr << "view metadata invalid\n";
+    return 1;
+  }
+
+  cudajun::TensorViewT<T> sview;
+  if (a.slice(0, 0, 1, &sview) != cudajun::runtime::Status::kSuccess) {
+    std::cerr << "slice should succeed\n";
+    return 1;
+  }
+  if (sview.rank() != 2 || sview.shape()[0] != 1 || sview.shape()[1] != 2) {
+    std::cerr << "slice shape invalid\n";
+    return 1;
+  }
+  if (sview.offsetElements() != 0) {
+    std::cerr << "slice offset invalid\n";
+    return 1;
+  }
+  if (a.slice(0, 1, 3, &sview) != cudajun::runtime::Status::kInvalidValue) {
+    std::cerr << "slice out-of-range should fail\n";
+    return 1;
+  }
+
   return 0;
 }
 

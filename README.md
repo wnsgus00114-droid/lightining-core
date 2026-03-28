@@ -54,6 +54,14 @@ This project is currently an optimization-focused runtime prototype, not a full 
 
 If you need full framework-level features (autograd graph, broad op coverage, rich tensor views/layout APIs), treat this repository as experimental groundwork rather than a drop-in replacement.
 
+## Staged Implementation Status
+
+The following stage-1 upgrades are implemented:
+
+- Tensor view/slice/layout metadata layer
+- Python matmul/session/policy first-pass exposure
+- Public API naming integration stage-2 wrappers (`lightining_core` include path expansion)
+
 ## Build
 
 ```bash
@@ -124,8 +132,11 @@ python -c "import lightining_core; print(lightining_core.backend_name())"
 Python API highlights:
 
 - `Tensor` / `Tensor64` now expose `shape`, `strides`, `rank`, `is_contiguous`, `dtype`, `reshape`
+- `Tensor` / `Tensor64` also expose `view(...)` and `slice(axis, start, end)` returning tensor view metadata objects
 - Runtime helpers: `backend_name`, `cuda_available`, `metal_available`, `memory_model_name`
 - Attention helper: `attention_forward(q, k, v, seq_len, head_dim, causal=False, device='metal')`
+- Matmul helpers: `matmul(...)`, `matmul_with_policy(...)`
+- Policy/session helpers: `MatMulIoPolicy`, `MatMulMetalResidentSession`
 
 ## Install for macOS Users (Terminal)
 
@@ -243,6 +254,12 @@ Migration status:
 - Step 3 (planned): evaluate internal symbol/target rename with compatibility shims
 
 Detailed technical roadmap is tracked in `ROADMAP.md`.
+
+Stage-2 naming integration status:
+
+- Added lightining_core model wrapper headers under `include/lightining_core/models/*`
+- Added umbrella header `include/lightining_core/lightining_core.hpp`
+- Existing `cudajun` namespace remains supported for compatibility
 
 Ops modularization status:
 

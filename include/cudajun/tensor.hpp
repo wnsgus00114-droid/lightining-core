@@ -13,6 +13,91 @@ namespace cudajun {
 
 using Device = runtime::Device;
 
+enum class Layout {
+  kContiguous = 0,
+  kStrided
+};
+
+template <typename T>
+class TensorT;
+
+template <typename T>
+class TensorViewT {
+ public:
+  TensorViewT() = default;
+
+  const std::vector<std::int64_t>& shape() const {
+    return shape_;
+  }
+
+  const std::vector<std::int64_t>& strides() const {
+    return strides_;
+  }
+
+  std::size_t rank() const {
+    return shape_.size();
+  }
+
+  std::size_t numel() const {
+    if (shape_.empty()) {
+      return 0;
+    }
+    std::size_t total = 1;
+    for (std::int64_t dim : shape_) {
+      total *= static_cast<std::size_t>(dim);
+    }
+    return total;
+  }
+
+  bool isContiguous() const {
+    return layout_ == Layout::kContiguous;
+  }
+
+  Layout layout() const {
+    return layout_;
+  }
+
+  Device device() const {
+    return device_;
+  }
+
+  std::size_t offsetElements() const {
+    return offset_elements_;
+  }
+
+  const char* dtypeName() const {
+    if constexpr (std::is_same_v<T, float>) {
+      return "float32";
+    }
+    if constexpr (std::is_same_v<T, double>) {
+      return "float64";
+    }
+    return "longdouble";
+  }
+
+ private:
+  template <typename U>
+  friend class TensorT;
+
+  TensorViewT(
+      const std::vector<std::int64_t>& shape,
+      const std::vector<std::int64_t>& strides,
+      Device device,
+      std::size_t offset_elements,
+      Layout layout)
+      : shape_(shape),
+        strides_(strides),
+        device_(device),
+        offset_elements_(offset_elements),
+        layout_(layout) {}
+
+  std::vector<std::int64_t> shape_;
+  std::vector<std::int64_t> strides_;
+  Device device_ = Device::kCPU;
+  std::size_t offset_elements_ = 0;
+  Layout layout_ = Layout::kContiguous;
+};
+
 // float 계열 전용 텐서 템플릿.
 template <typename T>
 class TensorT {
@@ -81,6 +166,10 @@ class TensorT {
     return strides_ == computeDefaultStrides(shape_);
   }
 
+  Layout layout() const {
+    return isContiguous() ? Layout::kContiguous : Layout::kStrided;
+  }
+
   const char* dtypeName() const {
     if constexpr (std::is_same_v<T, float>) {
       return "float32";
@@ -108,6 +197,37 @@ class TensorT {
     }
     shape_ = new_shape;
     strides_ = computeDefaultStrides(new_shape);
+    return runtime::Status::kSuccess;
+  }
+
+  runtime::Status view(const std::vector<std::int64_t>& new_shape, TensorViewT<T>* out) const {
+    if (out == nullptr || !isContiguous() || !isShapeValid(new_shape)) {
+      return runtime::Status::kInvalidValue;
+    }
+    std::size_t new_numel = 1;
+    for (std::int64_t d : new_shape) {
+      new_numel *= static_cast<std::size_t>(d);
+    }
+    if (new_numel != numel()) {
+      return runtime::Status::kInvalidValue;
+    }
+    *out = TensorViewT<T>(new_shape, computeDefaultStrides(new_shape), device_, 0, Layout::kContiguous);
+    return runtime::Status::kSuccess;
+  }
+
+  runtime::Status slice(
+      std::size_t axis,
+      std::int64_t start,
+      std::int64_t end,
+      TensorViewT<T>* out) const {
+    if (out == nullptr || axis >= shape_.size() || start < 0 || end <= start || end > shape_[axis]) {
+      return runtime::Status::kInvalidValue;
+    }
+    std::vector<std::int64_t> sliced_shape = shape_;
+    sliced_shape[axis] = end - start;
+    std::vector<std::int64_t> sliced_strides = strides_;
+    const std::size_t offset = static_cast<std::size_t>(start * strides_[axis]);
+    *out = TensorViewT<T>(sliced_shape, sliced_strides, device_, offset, Layout::kStrided);
     return runtime::Status::kSuccess;
   }
 
@@ -225,5 +345,8 @@ class TensorT {
 using Tensor = TensorT<float>;
 using Tensor64 = TensorT<double>;
 using TensorLong = TensorT<long double>;
+using TensorView = TensorViewT<float>;
+using Tensor64View = TensorViewT<double>;
+using TensorLongView = TensorViewT<long double>;
 
 }  // namespace cudajun
