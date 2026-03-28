@@ -18,8 +18,14 @@ Workflow file:
 Behavior:
 
 - push/pull_request: build macOS wheel and sdist artifacts
-- v* tag: publish to PyPI
-- workflow_dispatch: manual publish target (none/testpypi/pypi)
+- v* tag: publish to PyPI (release only)
+- workflow_dispatch: manual publish target (none/testpypi)
+
+Safety rules in workflow:
+
+- PyPI publish is tag-only to avoid accidental release from main
+- twine check validates built distributions before publish
+- skip-existing avoids hard failures on rerun with already-uploaded files
 
 ### Trusted publishing checklist
 
