@@ -5,7 +5,7 @@
 #include <iostream>
 #include <vector>
 
-#include "cudajun/models/lstm_rnn_fastpath.hpp"
+#include "lightning_core/models/lstm_rnn_fastpath.hpp"
 
 namespace {
 
@@ -36,7 +36,7 @@ int readIntEnv(const char* key, int defaultValue) {
 }
 
 double runRecurrentProxy(
-    const cudajun::models::LstmRnnFastPath& fp,
+    const lightning_core::models::LstmRnnFastPath& fp,
     std::size_t batch,
     std::size_t input_dim,
     std::size_t hidden_dim,
@@ -53,15 +53,15 @@ double runRecurrentProxy(
   std::vector<float> hh(batch * hidden_dim, 0.0f);
   std::vector<float> out(batch * hidden_dim, 0.0f);
 
-  auto do_step = [&](cudajun::LoopStage stage) -> bool {
-    if (fp.projectInput(x.data(), wx.data(), hx.data(), batch, stage) != cudajun::runtime::Status::kSuccess) {
+  auto do_step = [&](lightning_core::LoopStage stage) -> bool {
+    if (fp.projectInput(x.data(), wx.data(), hx.data(), batch, stage) != lightning_core::runtime::Status::kSuccess) {
       return false;
     }
-    if (fp.projectHidden(h.data(), wh.data(), hh.data(), batch, stage) != cudajun::runtime::Status::kSuccess) {
+    if (fp.projectHidden(h.data(), wh.data(), hh.data(), batch, stage) != lightning_core::runtime::Status::kSuccess) {
       return false;
     }
     if (fp.fuseRecurrent(hx.data(), hh.data(), out.data(), batch * hidden_dim, stage) !=
-        cudajun::runtime::Status::kSuccess) {
+        lightning_core::runtime::Status::kSuccess) {
       return false;
     }
     h.swap(out);
@@ -70,7 +70,7 @@ double runRecurrentProxy(
 
   for (int i = 0; i < warmup; ++i) {
     for (int t = 0; t < steps; ++t) {
-      if (!do_step(cudajun::LoopStage::kOneShot)) {
+      if (!do_step(lightning_core::LoopStage::kOneShot)) {
         return -1.0;
       }
     }
@@ -86,7 +86,7 @@ double runRecurrentProxy(
     if (resident_window == 1) {
       for (int i = 0; i < iters; ++i) {
         for (int t = 0; t < steps; ++t) {
-          if (!do_step(cudajun::LoopStage::kOneShot)) {
+          if (!do_step(lightning_core::LoopStage::kOneShot)) {
             return -1.0;
           }
         }
@@ -96,15 +96,15 @@ double runRecurrentProxy(
         int pos = idx % resident_window;
         int left = total - idx;
         if (pos == 0) {
-          if (!do_step(cudajun::LoopStage::kStart)) {
+          if (!do_step(lightning_core::LoopStage::kStart)) {
             return -1.0;
           }
         } else if (left == 1 || pos == resident_window - 1) {
-          if (!do_step(cudajun::LoopStage::kFinish)) {
+          if (!do_step(lightning_core::LoopStage::kFinish)) {
             return -1.0;
           }
         } else {
-          if (!do_step(cudajun::LoopStage::kRun)) {
+          if (!do_step(lightning_core::LoopStage::kRun)) {
             return -1.0;
           }
         }
@@ -115,19 +115,19 @@ double runRecurrentProxy(
     return elapsed.count() / static_cast<double>(iters * steps);
   }
 
-  if (!do_step(cudajun::LoopStage::kStart)) {
+  if (!do_step(lightning_core::LoopStage::kStart)) {
     return -1.0;
   }
   auto start = std::chrono::high_resolution_clock::now();
   for (int i = 0; i < iters; ++i) {
     for (int t = 0; t < steps; ++t) {
-      if (!do_step(cudajun::LoopStage::kRun)) {
+      if (!do_step(lightning_core::LoopStage::kRun)) {
         return -1.0;
       }
     }
   }
   auto end = std::chrono::high_resolution_clock::now();
-  if (!do_step(cudajun::LoopStage::kFinish)) {
+  if (!do_step(lightning_core::LoopStage::kFinish)) {
     return -1.0;
   }
 
@@ -136,7 +136,7 @@ double runRecurrentProxy(
 }
 
 int autoTuneResidentWindow(
-    const cudajun::models::LstmRnnFastPath& fp,
+    const lightning_core::models::LstmRnnFastPath& fp,
     std::size_t batch,
     std::size_t input_dim,
     std::size_t hidden_dim,
@@ -207,14 +207,14 @@ void runSweepCsv(std::size_t input_dim, std::size_t hidden_dim, int warmup, int 
   int best_window = 1;
 
   for (std::size_t batch : batches) {
-    cudajun::models::LstmRnnFastPathConfig cfg;
+    lightning_core::models::LstmRnnFastPathConfig cfg;
     cfg.input_dim = input_dim;
     cfg.hidden_dim = hidden_dim;
     cfg.training = true;
     cfg.lstm_mode = true;
 
-    cudajun::models::LstmRnnFastPath cpu(cfg, cudajun::runtime::Device::kCPU);
-    cudajun::models::LstmRnnFastPath metal(cfg, cudajun::runtime::Device::kMetal);
+    lightning_core::models::LstmRnnFastPath cpu(cfg, lightning_core::runtime::Device::kCPU);
+    lightning_core::models::LstmRnnFastPath metal(cfg, lightning_core::runtime::Device::kMetal);
 
     int tuned_window = autoTuneResidentWindow(metal, batch, input_dim, hidden_dim, steps, iters * steps);
 
@@ -247,7 +247,7 @@ void runSweepCsv(std::size_t input_dim, std::size_t hidden_dim, int warmup, int 
 }  // namespace
 
 int main() {
-  cudajun::runtime::preloadRuntimeProfileEnv();
+  lightning_core::runtime::preloadRuntimeProfileEnv();
 
   if (std::getenv("CJ_MATMUL_SMALL_TUNE_PROFILE") == nullptr) {
 #if defined(_WIN32)
@@ -266,14 +266,14 @@ int main() {
   int resident_window = readIntEnv("CJ_LSTM_RESIDENT_WINDOW", 0);
   const int sweep = readIntEnv("CJ_LSTM_SWEEP", 0);
 
-  cudajun::models::LstmRnnFastPathConfig cfg;
+  lightning_core::models::LstmRnnFastPathConfig cfg;
   cfg.input_dim = input_dim;
   cfg.hidden_dim = hidden_dim;
   cfg.training = true;
   cfg.lstm_mode = true;
 
-  cudajun::models::LstmRnnFastPath cpu(cfg, cudajun::runtime::Device::kCPU);
-  cudajun::models::LstmRnnFastPath metal(cfg, cudajun::runtime::Device::kMetal);
+  lightning_core::models::LstmRnnFastPath cpu(cfg, lightning_core::runtime::Device::kCPU);
+  lightning_core::models::LstmRnnFastPath metal(cfg, lightning_core::runtime::Device::kMetal);
 
   if (resident_window <= 0) {
     resident_window = autoTuneResidentWindow(metal, batch, input_dim, hidden_dim, steps, iters * steps);

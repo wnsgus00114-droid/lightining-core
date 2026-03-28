@@ -5,8 +5,8 @@
 #include <iostream>
 #include <vector>
 
-#include "cudajun/attention.hpp"
-#include "cudajun/runtime.hpp"
+#include "lightning_core/attention.hpp"
+#include "lightning_core/runtime.hpp"
 
 namespace {
 
@@ -53,7 +53,7 @@ bool tryReadPositiveIntEnv(const char* key, int* out_value) {
   return true;
 }
 
-int autoLossEveryForShape(const cudajun::AttentionConfig& cfg) {
+int autoLossEveryForShape(const lightning_core::AttentionConfig& cfg) {
   // Empirical defaults from higher-iteration validation.
   if (cfg.seq_len == 256 && cfg.head_dim == 64) {
     return 32;
@@ -76,7 +76,7 @@ int autoLossEveryForShape(const cudajun::AttentionConfig& cfg) {
   return 4;
 }
 
-void prewarmTrainAutotuneMultiShape(const cudajun::AttentionConfig& cfg) {
+void prewarmTrainAutotuneMultiShape(const lightning_core::AttentionConfig& cfg) {
   std::vector<std::size_t> seq_candidates;
   if (cfg.seq_len >= 256) {
     seq_candidates.push_back(cfg.seq_len / 2);
@@ -87,7 +87,7 @@ void prewarmTrainAutotuneMultiShape(const cudajun::AttentionConfig& cfg) {
   }
 
   for (std::size_t seq : seq_candidates) {
-    cudajun::AttentionConfig c{seq, cfg.head_dim, cfg.causal};
+    lightning_core::AttentionConfig c{seq, cfg.head_dim, cfg.causal};
     std::size_t sd = c.seq_len * c.head_dim;
     std::vector<float> q(sd, 0.1f);
     std::vector<float> k(sd, 0.2f);
@@ -96,8 +96,8 @@ void prewarmTrainAutotuneMultiShape(const cudajun::AttentionConfig& cfg) {
     std::vector<float> out(sd, 0.0f);
     float loss = 0.0f;
 
-    cudajun::AttentionSession session(c, cudajun::runtime::Device::kMetal);
-    cudajun::AttentionIoPolicy policy;
+    lightning_core::AttentionSession session(c, lightning_core::runtime::Device::kMetal);
+    lightning_core::AttentionIoPolicy policy;
     policy.upload_q = true;
     policy.upload_k = true;
     policy.upload_v = true;
@@ -114,8 +114,8 @@ void prewarmTrainAutotuneMultiShape(const cudajun::AttentionConfig& cfg) {
 }
 
 double runAttentionForward(
-    cudajun::runtime::Device device,
-    const cudajun::AttentionConfig& cfg,
+    lightning_core::runtime::Device device,
+    const lightning_core::AttentionConfig& cfg,
     int warmup,
     int iters,
     int batch,
@@ -128,9 +128,9 @@ double runAttentionForward(
   std::vector<float> v(s * d, 0.3f);
   std::vector<float> out(s * d, 0.0f);
 
-  cudajun::AttentionSession session(cfg, device);
-  cudajun::AttentionIoPolicy policy;
-  if (device == cudajun::runtime::Device::kMetal && resident_fastpath) {
+  lightning_core::AttentionSession session(cfg, device);
+  lightning_core::AttentionIoPolicy policy;
+  if (device == lightning_core::runtime::Device::kMetal && resident_fastpath) {
     policy.upload_q = true;
     policy.upload_k = true;
     policy.upload_v = true;
@@ -141,7 +141,7 @@ double runAttentionForward(
 
   for (int i = 0; i < warmup; ++i) {
     for (int bidx = 0; bidx < batch; ++bidx) {
-      if (device == cudajun::runtime::Device::kMetal && resident_fastpath) {
+      if (device == lightning_core::runtime::Device::kMetal && resident_fastpath) {
         policy.upload_q = (i == 0 && bidx == 0);
         policy.upload_k = (i == 0 && bidx == 0);
         policy.upload_v = (i == 0 && bidx == 0);
@@ -150,7 +150,7 @@ double runAttentionForward(
         session.setDefaultPolicy(policy);
       }
       auto st = session.forward(q.data(), k.data(), v.data(), out.data());
-      if (st != cudajun::runtime::Status::kSuccess) {
+      if (st != lightning_core::runtime::Status::kSuccess) {
         return -1.0;
       }
     }
@@ -159,7 +159,7 @@ double runAttentionForward(
   auto start = std::chrono::high_resolution_clock::now();
   for (int i = 0; i < iters; ++i) {
     for (int bidx = 0; bidx < batch; ++bidx) {
-      if (device == cudajun::runtime::Device::kMetal && resident_fastpath) {
+      if (device == lightning_core::runtime::Device::kMetal && resident_fastpath) {
         policy.upload_q = false;
         policy.upload_k = false;
         policy.upload_v = false;
@@ -168,14 +168,14 @@ double runAttentionForward(
         session.setDefaultPolicy(policy);
       }
       auto st = session.forward(q.data(), k.data(), v.data(), out.data());
-      if (st != cudajun::runtime::Status::kSuccess) {
+      if (st != lightning_core::runtime::Status::kSuccess) {
         return -1.0;
       }
     }
   }
   auto end = std::chrono::high_resolution_clock::now();
   std::chrono::duration<double, std::milli> elapsed = end - start;
-  if (device == cudajun::runtime::Device::kMetal && resident_fastpath) {
+  if (device == lightning_core::runtime::Device::kMetal && resident_fastpath) {
     policy.upload_q = false;
     policy.upload_k = false;
     policy.upload_v = false;
@@ -183,7 +183,7 @@ double runAttentionForward(
     policy.synchronize = true;
     session.setDefaultPolicy(policy);
     auto st = session.forward(q.data(), k.data(), v.data(), out.data());
-    if (st != cudajun::runtime::Status::kSuccess) {
+    if (st != lightning_core::runtime::Status::kSuccess) {
       return -1.0;
     }
   }
@@ -191,8 +191,8 @@ double runAttentionForward(
 }
 
 double runAttentionTrain(
-    cudajun::runtime::Device device,
-    const cudajun::AttentionConfig& cfg,
+    lightning_core::runtime::Device device,
+    const lightning_core::AttentionConfig& cfg,
     int warmup,
     int iters,
   int batch,
@@ -210,9 +210,9 @@ double runAttentionTrain(
 
   float loss = 0.0f;
   std::size_t step_counter = 0;
-  cudajun::AttentionSession session(cfg, device);
-  cudajun::AttentionIoPolicy policy;
-  if (device == cudajun::runtime::Device::kMetal && resident_fastpath) {
+  lightning_core::AttentionSession session(cfg, device);
+  lightning_core::AttentionIoPolicy policy;
+  if (device == lightning_core::runtime::Device::kMetal && resident_fastpath) {
     policy.upload_q = true;
     policy.upload_k = true;
     policy.upload_v = true;
@@ -225,7 +225,7 @@ double runAttentionTrain(
 
   for (int i = 0; i < warmup; ++i) {
     for (int bidx = 0; bidx < batch; ++bidx) {
-      if (device == cudajun::runtime::Device::kMetal && resident_fastpath) {
+      if (device == lightning_core::runtime::Device::kMetal && resident_fastpath) {
         policy.upload_q = (i == 0 && bidx == 0);
         policy.upload_k = (i == 0 && bidx == 0);
         policy.upload_v = (i == 0 && bidx == 0);
@@ -238,7 +238,7 @@ double runAttentionTrain(
       bool take_loss = compute_loss && (loss_every <= 1 || (step_counter % static_cast<std::size_t>(loss_every) == 0));
       float* loss_ptr = take_loss ? &loss : nullptr;
       auto st = session.trainStep(q.data(), k.data(), v.data(), target.data(), out.data(), 0.001f, loss_ptr);
-      if (st != cudajun::runtime::Status::kSuccess) {
+      if (st != lightning_core::runtime::Status::kSuccess) {
         return -1.0;
       }
       ++step_counter;
@@ -248,7 +248,7 @@ double runAttentionTrain(
   auto start = std::chrono::high_resolution_clock::now();
   for (int i = 0; i < iters; ++i) {
     for (int bidx = 0; bidx < batch; ++bidx) {
-      if (device == cudajun::runtime::Device::kMetal && resident_fastpath) {
+      if (device == lightning_core::runtime::Device::kMetal && resident_fastpath) {
         policy.upload_q = false;
         policy.upload_k = false;
         policy.upload_v = false;
@@ -261,14 +261,14 @@ double runAttentionTrain(
       bool take_loss = compute_loss && (loss_every <= 1 || (step_counter % static_cast<std::size_t>(loss_every) == 0));
       float* loss_ptr = take_loss ? &loss : nullptr;
       auto st = session.trainStep(q.data(), k.data(), v.data(), target.data(), out.data(), 0.001f, loss_ptr);
-      if (st != cudajun::runtime::Status::kSuccess) {
+      if (st != lightning_core::runtime::Status::kSuccess) {
         return -1.0;
       }
       ++step_counter;
     }
   }
   auto end = std::chrono::high_resolution_clock::now();
-  if (device == cudajun::runtime::Device::kMetal && resident_fastpath) {
+  if (device == lightning_core::runtime::Device::kMetal && resident_fastpath) {
     policy.upload_q = false;
     policy.upload_k = false;
     policy.upload_v = false;
@@ -279,7 +279,7 @@ double runAttentionTrain(
     session.setDefaultPolicy(policy);
     float* loss_ptr = compute_loss ? &loss : nullptr;
     auto st = session.trainStep(q.data(), k.data(), v.data(), target.data(), out.data(), 0.001f, loss_ptr);
-    if (st != cudajun::runtime::Status::kSuccess) {
+    if (st != lightning_core::runtime::Status::kSuccess) {
       return -1.0;
     }
   }
@@ -295,9 +295,9 @@ void printResult(const char* label, double value) {
   }
 }
 
-void printDevicePlan(const char* label, cudajun::runtime::Device device) {
-  std::cout << "[plan] " << label << " impl=" << cudajun::attentionImplementationName(device)
-            << " fallback=" << (cudajun::attentionUsesFallback(device) ? "yes" : "no") << "\n";
+void printDevicePlan(const char* label, lightning_core::runtime::Device device) {
+  std::cout << "[plan] " << label << " impl=" << lightning_core::attentionImplementationName(device)
+            << " fallback=" << (lightning_core::attentionUsesFallback(device) ? "yes" : "no") << "\n";
 }
 
 void runAttentionShapeSweepCsv(int warmup, int iters, int batch, bool compute_loss, int loss_every) {
@@ -312,17 +312,17 @@ void runAttentionShapeSweepCsv(int warmup, int iters, int batch, bool compute_lo
 
   for (std::size_t seq : seqs) {
     for (std::size_t dim : dims) {
-      cudajun::AttentionConfig cfg{seq, dim, true};
-      double cpu_fwd = runAttentionForward(cudajun::runtime::Device::kCPU, cfg, warmup, iters, batch, false);
-      double metal_fwd_e2e = runAttentionForward(cudajun::runtime::Device::kMetal, cfg, warmup, iters, batch, false);
-      double metal_fwd_enqueue = runAttentionForward(cudajun::runtime::Device::kMetal, cfg, warmup, iters, batch, true);
+      lightning_core::AttentionConfig cfg{seq, dim, true};
+      double cpu_fwd = runAttentionForward(lightning_core::runtime::Device::kCPU, cfg, warmup, iters, batch, false);
+      double metal_fwd_e2e = runAttentionForward(lightning_core::runtime::Device::kMetal, cfg, warmup, iters, batch, false);
+      double metal_fwd_enqueue = runAttentionForward(lightning_core::runtime::Device::kMetal, cfg, warmup, iters, batch, true);
 
       double cpu_train = runAttentionTrain(
-          cudajun::runtime::Device::kCPU, cfg, warmup, iters, batch, false, compute_loss, loss_every);
+          lightning_core::runtime::Device::kCPU, cfg, warmup, iters, batch, false, compute_loss, loss_every);
       double metal_train_e2e = runAttentionTrain(
-          cudajun::runtime::Device::kMetal, cfg, warmup, iters, batch, false, compute_loss, loss_every);
+          lightning_core::runtime::Device::kMetal, cfg, warmup, iters, batch, false, compute_loss, loss_every);
         double metal_train_enqueue = runAttentionTrain(
-          cudajun::runtime::Device::kMetal, cfg, warmup, iters, batch, true, compute_loss, loss_every);
+          lightning_core::runtime::Device::kMetal, cfg, warmup, iters, batch, true, compute_loss, loss_every);
 
         csv << seq << "," << dim << "," << cpu_fwd << "," << metal_fwd_e2e << "," << metal_fwd_enqueue << ","
           << cpu_train << "," << metal_train_e2e << "," << metal_train_enqueue << "\n";
@@ -334,7 +334,7 @@ void runAttentionShapeSweepCsv(int warmup, int iters, int batch, bool compute_lo
 }  // namespace
 
 int main() {
-  cudajun::runtime::preloadRuntimeProfileEnv();
+  lightning_core::runtime::preloadRuntimeProfileEnv();
 
   std::size_t seq_len = readSizeEnv("CJ_ATTN_SEQ", 1024);
   std::size_t head_dim = readSizeEnv("CJ_ATTN_DIM", 64);
@@ -344,7 +344,7 @@ int main() {
   int train_compute_loss = readIntEnv("CJ_ATTN_TRAIN_COMPUTE_LOSS", 0);
   int run_sweep = readIntEnv("CJ_ATTN_SWEEP", 0);
 
-  cudajun::AttentionConfig cfg{seq_len, head_dim, true};
+  lightning_core::AttentionConfig cfg{seq_len, head_dim, true};
   int train_loss_every = 4;
   bool user_set_loss_every = tryReadPositiveIntEnv("CJ_ATTN_LOSS_EVERY", &train_loss_every);
   if (!user_set_loss_every && train_compute_loss != 0) {
@@ -366,23 +366,23 @@ int main() {
     std::cout << "[plan] train loss_every=" << train_loss_every << "\n";
     std::cout << "[plan] train loss_every source=" << (user_set_loss_every ? "env" : "auto") << "\n";
   }
-  printDevicePlan("CPU", cudajun::runtime::Device::kCPU);
-  printDevicePlan("Metal", cudajun::runtime::Device::kMetal);
+  printDevicePlan("CPU", lightning_core::runtime::Device::kCPU);
+  printDevicePlan("Metal", lightning_core::runtime::Device::kMetal);
 
-    double cpu_fwd = runAttentionForward(cudajun::runtime::Device::kCPU, cfg, warmup, iters, batch, false);
+    double cpu_fwd = runAttentionForward(lightning_core::runtime::Device::kCPU, cfg, warmup, iters, batch, false);
     double cpu_train = runAttentionTrain(
-      cudajun::runtime::Device::kCPU, cfg, warmup, iters, batch, false, train_compute_loss != 0, train_loss_every);
+      lightning_core::runtime::Device::kCPU, cfg, warmup, iters, batch, false, train_compute_loss != 0, train_loss_every);
   printResult("CPU forward", cpu_fwd);
   printResult("CPU train", cpu_train);
 
     double metal_fwd_e2e =
-      runAttentionForward(cudajun::runtime::Device::kMetal, cfg, warmup, iters, batch, false);
+      runAttentionForward(lightning_core::runtime::Device::kMetal, cfg, warmup, iters, batch, false);
     double metal_train_e2e =
       runAttentionTrain(
-          cudajun::runtime::Device::kMetal, cfg, warmup, iters, batch, false, train_compute_loss != 0, train_loss_every);
-    double metal_fwd_enqueue = runAttentionForward(cudajun::runtime::Device::kMetal, cfg, warmup, iters, batch, true);
+          lightning_core::runtime::Device::kMetal, cfg, warmup, iters, batch, false, train_compute_loss != 0, train_loss_every);
+    double metal_fwd_enqueue = runAttentionForward(lightning_core::runtime::Device::kMetal, cfg, warmup, iters, batch, true);
     double metal_train_enqueue = runAttentionTrain(
-      cudajun::runtime::Device::kMetal, cfg, warmup, iters, batch, true, train_compute_loss != 0, train_loss_every);
+      lightning_core::runtime::Device::kMetal, cfg, warmup, iters, batch, true, train_compute_loss != 0, train_loss_every);
 
     printResult("Metal forward (e2e)", metal_fwd_e2e);
     printResult("Metal train (e2e)", metal_train_e2e);

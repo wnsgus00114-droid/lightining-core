@@ -1,10 +1,10 @@
 #include <iostream>
 #include <vector>
 
-#include "cudajun/models/vlm_fastpath.hpp"
+#include "lightning_core/models/vlm_fastpath.hpp"
 
 int main() {
-  cudajun::models::VlmFastPathConfig cfg;
+  lightning_core::models::VlmFastPathConfig cfg;
   cfg.image_tokens = 2;
   cfg.text_tokens = 2;
   cfg.vision_dim = 4;
@@ -14,7 +14,7 @@ int main() {
   cfg.patch_size = 2;
   cfg.training = false;
 
-  cudajun::models::VlmFastPath vlm(cfg, cudajun::runtime::Device::kCPU);
+  lightning_core::models::VlmFastPath vlm(cfg, lightning_core::runtime::Device::kCPU);
 
   std::vector<float> image_tokens(cfg.image_tokens * cfg.vision_dim, 1.0f);
   std::vector<float> text_tokens(cfg.text_tokens * cfg.text_dim, 1.0f);
@@ -27,16 +27,16 @@ int main() {
   std::vector<float> image_proj(cfg.image_tokens * cfg.fused_dim, 0.0f);
   std::vector<float> text_proj(cfg.text_tokens * cfg.fused_dim, 0.0f);
 
-  if (vlm.projectVision(image_tokens.data(), w_vision.data(), image_proj.data()) != cudajun::runtime::Status::kSuccess) {
+  if (vlm.projectVision(image_tokens.data(), w_vision.data(), image_proj.data()) != lightning_core::runtime::Status::kSuccess) {
     std::cerr << "VLM projectVision failed\n";
     return 1;
   }
   if (vlm.patchEmbedFromImage(image_nhwc.data(), 2, 4, w_patch.data(), image_proj.data()) !=
-      cudajun::runtime::Status::kSuccess) {
+      lightning_core::runtime::Status::kSuccess) {
     std::cerr << "VLM patchEmbedFromImage failed\n";
     return 1;
   }
-  if (vlm.projectText(text_tokens.data(), w_text.data(), text_proj.data()) != cudajun::runtime::Status::kSuccess) {
+  if (vlm.projectText(text_tokens.data(), w_text.data(), text_proj.data()) != lightning_core::runtime::Status::kSuccess) {
     std::cerr << "VLM projectText failed\n";
     return 1;
   }
@@ -47,19 +47,19 @@ int main() {
   std::vector<float> v(total * cfg.fused_dim, 0.3f);
   std::vector<float> out(total * cfg.fused_dim, 0.0f);
 
-  if (vlm.runFusionAttention(q.data(), k.data(), v.data(), out.data()) != cudajun::runtime::Status::kSuccess) {
+  if (vlm.runFusionAttention(q.data(), k.data(), v.data(), out.data()) != lightning_core::runtime::Status::kSuccess) {
     std::cerr << "VLM fusion attention failed\n";
     return 1;
   }
 
   std::vector<float> out_text(cfg.text_tokens * cfg.fused_dim, 0.0f);
   if (vlm.runCrossAttentionFast(image_proj.data(), text_proj.data(), out_text.data()) !=
-      cudajun::runtime::Status::kSuccess) {
+      lightning_core::runtime::Status::kSuccess) {
     std::cerr << "VLM cross attention fast path failed\n";
     return 1;
   }
 
-  auto p = vlm.fusionPolicy(cudajun::LoopStage::kRun);
+  auto p = vlm.fusionPolicy(lightning_core::LoopStage::kRun);
   if (p.upload_q || p.upload_k || p.upload_v || p.download_out || p.synchronize) {
     std::cerr << "VLM run fusion policy mismatch\n";
     return 1;

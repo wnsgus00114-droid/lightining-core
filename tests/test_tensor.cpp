@@ -3,7 +3,7 @@
 #include <type_traits>
 #include <vector>
 
-#include "cudajun/tensor.hpp"
+#include "lightning_core/tensor.hpp"
 
 template <typename T>
 bool nearlyEqual(T a, T b) {
@@ -15,8 +15,8 @@ bool nearlyEqual(T a, T b) {
 }
 
 template <typename T>
-int runCase(cudajun::Device device) {
-  using TensorT = cudajun::TensorT<T>;
+int runCase(lightning_core::Device device) {
+  using TensorT = lightning_core::TensorT<T>;
 
   TensorT a({2, 2}, device);
   TensorT b({2, 2}, device);
@@ -33,23 +33,23 @@ int runCase(cudajun::Device device) {
   }
 
   if (a.fromHost({static_cast<T>(1), static_cast<T>(2), static_cast<T>(3), static_cast<T>(4)}) !=
-      cudajun::runtime::Status::kSuccess) {
+      lightning_core::runtime::Status::kSuccess) {
     std::cerr << "fromHost failed for tensor a\n";
     return 1;
   }
   if (b.fromHost({static_cast<T>(10), static_cast<T>(20), static_cast<T>(30), static_cast<T>(40)}) !=
-      cudajun::runtime::Status::kSuccess) {
+      lightning_core::runtime::Status::kSuccess) {
     std::cerr << "fromHost failed for tensor b\n";
     return 1;
   }
 
-  if (a.add(b, &out) != cudajun::runtime::Status::kSuccess) {
+  if (a.add(b, &out) != lightning_core::runtime::Status::kSuccess) {
     std::cerr << "Tensor::add failed\n";
     return 1;
   }
 
   std::vector<T> values;
-  if (out.toHost(&values) != cudajun::runtime::Status::kSuccess) {
+  if (out.toHost(&values) != lightning_core::runtime::Status::kSuccess) {
     std::cerr << "toHost failed\n";
     return 1;
   }
@@ -62,7 +62,7 @@ int runCase(cudajun::Device device) {
     }
   }
 
-  if (out.reshape({4}) != cudajun::runtime::Status::kSuccess) {
+  if (out.reshape({4}) != lightning_core::runtime::Status::kSuccess) {
     std::cerr << "reshape to 1D failed\n";
     return 1;
   }
@@ -70,13 +70,13 @@ int runCase(cudajun::Device device) {
     std::cerr << "reshape state invalid\n";
     return 1;
   }
-  if (out.reshape({3}) != cudajun::runtime::Status::kInvalidValue) {
+  if (out.reshape({3}) != lightning_core::runtime::Status::kInvalidValue) {
     std::cerr << "reshape mismatch should fail\n";
     return 1;
   }
 
-  cudajun::TensorViewT<T> v;
-  if (a.view({4}, &v) != cudajun::runtime::Status::kSuccess) {
+  lightning_core::TensorViewT<T> v;
+  if (a.view({4}, &v) != lightning_core::runtime::Status::kSuccess) {
     std::cerr << "view should succeed\n";
     return 1;
   }
@@ -85,8 +85,8 @@ int runCase(cudajun::Device device) {
     return 1;
   }
 
-  cudajun::TensorViewT<T> sview;
-  if (a.slice(0, 0, 1, &sview) != cudajun::runtime::Status::kSuccess) {
+  lightning_core::TensorViewT<T> sview;
+  if (a.slice(0, 0, 1, &sview) != lightning_core::runtime::Status::kSuccess) {
     std::cerr << "slice should succeed\n";
     return 1;
   }
@@ -98,13 +98,13 @@ int runCase(cudajun::Device device) {
     std::cerr << "slice offset invalid\n";
     return 1;
   }
-  if (a.slice(0, 1, 3, &sview) != cudajun::runtime::Status::kInvalidValue) {
+  if (a.slice(0, 1, 3, &sview) != lightning_core::runtime::Status::kInvalidValue) {
     std::cerr << "slice out-of-range should fail\n";
     return 1;
   }
 
   std::vector<T> slice_values;
-  if (a.toHostView(sview, &slice_values) != cudajun::runtime::Status::kSuccess) {
+  if (a.toHostView(sview, &slice_values) != lightning_core::runtime::Status::kSuccess) {
     std::cerr << "toHostView failed\n";
     return 1;
   }
@@ -121,7 +121,7 @@ int runCase(cudajun::Device device) {
   }
 
   std::vector<T> copy_values;
-  if (a.sliceCopy(1, 0, 1, &copy_values) != cudajun::runtime::Status::kSuccess) {
+  if (a.sliceCopy(1, 0, 1, &copy_values) != lightning_core::runtime::Status::kSuccess) {
     std::cerr << "sliceCopy failed\n";
     return 1;
   }
@@ -134,7 +134,7 @@ int runCase(cudajun::Device device) {
   }
 
   std::vector<T> strided_values;
-  if (a.readStrided({2}, {2}, 0, &strided_values) != cudajun::runtime::Status::kSuccess) {
+  if (a.readStrided({2}, {2}, 0, &strided_values) != lightning_core::runtime::Status::kSuccess) {
     std::cerr << "readStrided failed\n";
     return 1;
   }
@@ -149,7 +149,7 @@ int runCase(cudajun::Device device) {
 }
 
 int main() {
-  using Device = cudajun::Device;
+  using Device = lightning_core::Device;
 
   if (runCase<float>(Device::kCPU) != 0) {
     return 1;
@@ -161,7 +161,7 @@ int main() {
     return 1;
   }
 
-  if (cudajun::runtime::isMetalAvailable()) {
+  if (lightning_core::runtime::isMetalAvailable()) {
     if (runCase<float>(Device::kMetal) != 0) {
       return 1;
     }

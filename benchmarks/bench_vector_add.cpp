@@ -6,9 +6,9 @@
 #include <string>
 #include <vector>
 
-#include "cudajun/apple_ml.hpp"
-#include "cudajun/ops.hpp"
-#include "cudajun/runtime.hpp"
+#include "lightning_core/apple_ml.hpp"
+#include "lightning_core/ops.hpp"
+#include "lightning_core/runtime.hpp"
 
 namespace {
 
@@ -39,7 +39,7 @@ int readIntEnv(const char* key, int defaultValue) {
 }
 
 template <typename T>
-double runHostBenchmark(std::size_t n, int iters, int batch, cudajun::runtime::Device device) {
+double runHostBenchmark(std::size_t n, int iters, int batch, lightning_core::runtime::Device device) {
   // 입력/출력 버퍼 준비.
   std::vector<T> a(n, static_cast<T>(1));
   std::vector<T> b(n, static_cast<T>(2));
@@ -49,7 +49,7 @@ double runHostBenchmark(std::size_t n, int iters, int batch, cudajun::runtime::D
   auto start = std::chrono::high_resolution_clock::now();
   for (int i = 0; i < iters; ++i) {
     for (int bidx = 0; bidx < batch; ++bidx) {
-      cudajun::ops::vectorAdd<T>(a.data(), b.data(), out.data(), n, device);
+      lightning_core::ops::vectorAdd<T>(a.data(), b.data(), out.data(), n, device);
     }
   }
   auto end = std::chrono::high_resolution_clock::now();
@@ -62,22 +62,22 @@ double runMetalResidentBenchmark(std::size_t n, int iters, int batch) {
   std::vector<float> b(n, 2.0f);
   std::vector<float> out(n, 0.0f);
 
-  if (cudajun::ops::vectorAddMetalResidentStart<float>(a.data(), b.data(), out.data(), n) !=
-      cudajun::runtime::Status::kSuccess) {
+  if (lightning_core::ops::vectorAddMetalResidentStart<float>(a.data(), b.data(), out.data(), n) !=
+      lightning_core::runtime::Status::kSuccess) {
     return -1.0;
   }
 
   auto start = std::chrono::high_resolution_clock::now();
   for (int i = 0; i < iters; ++i) {
     for (int bidx = 0; bidx < batch; ++bidx) {
-      if (cudajun::ops::vectorAddMetalResidentRun<float>(a.data(), b.data(), out.data(), n) !=
-          cudajun::runtime::Status::kSuccess) {
+      if (lightning_core::ops::vectorAddMetalResidentRun<float>(a.data(), b.data(), out.data(), n) !=
+          lightning_core::runtime::Status::kSuccess) {
         return -1.0;
       }
     }
   }
-  if (cudajun::ops::vectorAddMetalResidentFinish<float>(a.data(), b.data(), out.data(), n) !=
-      cudajun::runtime::Status::kSuccess) {
+  if (lightning_core::ops::vectorAddMetalResidentFinish<float>(a.data(), b.data(), out.data(), n) !=
+      lightning_core::runtime::Status::kSuccess) {
     return -1.0;
   }
   auto end = std::chrono::high_resolution_clock::now();
@@ -91,24 +91,24 @@ double runMetalResidentEnqueueOnlyBenchmark(std::size_t n, int iters, int batch)
   std::vector<float> b(n, 2.0f);
   std::vector<float> out(n, 0.0f);
 
-  if (cudajun::ops::vectorAddMetalResidentStart<float>(a.data(), b.data(), out.data(), n) !=
-      cudajun::runtime::Status::kSuccess) {
+  if (lightning_core::ops::vectorAddMetalResidentStart<float>(a.data(), b.data(), out.data(), n) !=
+      lightning_core::runtime::Status::kSuccess) {
     return -1.0;
   }
 
   auto start = std::chrono::high_resolution_clock::now();
   for (int i = 0; i < iters; ++i) {
     for (int bidx = 0; bidx < batch; ++bidx) {
-      if (cudajun::ops::vectorAddMetalResidentRun<float>(a.data(), b.data(), out.data(), n) !=
-          cudajun::runtime::Status::kSuccess) {
+      if (lightning_core::ops::vectorAddMetalResidentRun<float>(a.data(), b.data(), out.data(), n) !=
+          lightning_core::runtime::Status::kSuccess) {
         return -1.0;
       }
     }
   }
   auto end = std::chrono::high_resolution_clock::now();
 
-  if (cudajun::ops::vectorAddMetalResidentFinish<float>(a.data(), b.data(), out.data(), n) !=
-      cudajun::runtime::Status::kSuccess) {
+  if (lightning_core::ops::vectorAddMetalResidentFinish<float>(a.data(), b.data(), out.data(), n) !=
+      lightning_core::runtime::Status::kSuccess) {
     return -1.0;
   }
 
@@ -127,7 +127,7 @@ double runCudaBenchmark(std::size_t n, int iters, int batch) {
   T* dev_b = nullptr;
   T* dev_out = nullptr;
 
-  using namespace cudajun::runtime;
+  using namespace lightning_core::runtime;
   // 디바이스 메모리 할당.
   if (mallocDevice(reinterpret_cast<void**>(&dev_a), n * sizeof(T)) != Status::kSuccess ||
       mallocDevice(reinterpret_cast<void**>(&dev_b), n * sizeof(T)) != Status::kSuccess ||
@@ -151,7 +151,7 @@ double runCudaBenchmark(std::size_t n, int iters, int batch) {
   auto start = std::chrono::high_resolution_clock::now();
   for (int i = 0; i < iters; ++i) {
     for (int bidx = 0; bidx < batch; ++bidx) {
-      if (cudajun::ops::vectorAdd<T>(dev_a, dev_b, dev_out, n, cudajun::runtime::Device::kCUDA) != Status::kSuccess) {
+      if (lightning_core::ops::vectorAdd<T>(dev_a, dev_b, dev_out, n, lightning_core::runtime::Device::kCUDA) != Status::kSuccess) {
         freeDevice(dev_a);
         freeDevice(dev_b);
         freeDevice(dev_out);
@@ -177,7 +177,7 @@ void report(const std::string& label, double value) {
 }
 
 void runVectorAddSweepAndWriteCsv(int iters, int batch) {
-  if (!cudajun::runtime::isMetalAvailable()) {
+  if (!lightning_core::runtime::isMetalAvailable()) {
     return;
   }
 
@@ -193,8 +193,8 @@ void runVectorAddSweepAndWriteCsv(int iters, int batch) {
 
   std::size_t crossover_n = sizes.back();
   for (std::size_t n : sizes) {
-    double cpu = runHostBenchmark<float>(n, iters, batch, cudajun::runtime::Device::kCPU);
-    double metal_e2e = runHostBenchmark<float>(n, iters, batch, cudajun::runtime::Device::kMetal);
+    double cpu = runHostBenchmark<float>(n, iters, batch, lightning_core::runtime::Device::kCPU);
+    double metal_e2e = runHostBenchmark<float>(n, iters, batch, lightning_core::runtime::Device::kMetal);
     double metal_enqueue = runMetalResidentEnqueueOnlyBenchmark(n, iters, batch);
 
     const char* rec = (cpu <= metal_e2e) ? "cpu" : "metal";
@@ -217,7 +217,7 @@ void runVectorAddSweepAndWriteCsv(int iters, int batch) {
 }  // namespace
 
 int main() {
-  cudajun::runtime::preloadRuntimeProfileEnv();
+  lightning_core::runtime::preloadRuntimeProfileEnv();
 
   // 큰 텐서/배치 비교를 위해 환경변수로 조정 가능.
   // 예: CJ_BENCH_N=16777216 CJ_BENCH_ITERS=50 CJ_BENCH_BATCH=8
@@ -228,18 +228,18 @@ int main() {
 
   std::cout << "[bench] vector_add n=" << n << " iterations=" << iters << " batch=" << batch << "\n";
   std::cout << "preferred(training)="
-            << static_cast<int>(cudajun::runtime::preferredDeviceFor(cudajun::runtime::WorkloadKind::kTraining))
+            << static_cast<int>(lightning_core::runtime::preferredDeviceFor(lightning_core::runtime::WorkloadKind::kTraining))
             << ", preferred(inference)="
-            << static_cast<int>(cudajun::runtime::preferredDeviceFor(cudajun::runtime::WorkloadKind::kInference))
+            << static_cast<int>(lightning_core::runtime::preferredDeviceFor(lightning_core::runtime::WorkloadKind::kInference))
             << "\n";
 
-  double cpu_f32 = runHostBenchmark<float>(n, iters, batch, cudajun::runtime::Device::kCPU);
-  double cpu_f64 = runHostBenchmark<double>(n, iters, batch, cudajun::runtime::Device::kCPU);
+  double cpu_f32 = runHostBenchmark<float>(n, iters, batch, lightning_core::runtime::Device::kCPU);
+  double cpu_f64 = runHostBenchmark<double>(n, iters, batch, lightning_core::runtime::Device::kCPU);
   report("CPU float32", cpu_f32);
   report("CPU float64", cpu_f64);
 
   // CUDA 가능할 때만 비교 측정.
-  if (cudajun::runtime::isCudaAvailable()) {
+  if (lightning_core::runtime::isCudaAvailable()) {
     double cuda_f32 = runCudaBenchmark<float>(n, iters, batch);
     double cuda_f64 = runCudaBenchmark<double>(n, iters, batch);
     if (cuda_f32 > 0.0) {
@@ -254,8 +254,8 @@ int main() {
     std::cout << "CUDA unavailable; skipped CUDA benchmark.\n";
   }
 
-  if (cudajun::runtime::isMetalAvailable()) {
-    double metal_f32_e2e = runHostBenchmark<float>(n, iters, batch, cudajun::runtime::Device::kMetal);
+  if (lightning_core::runtime::isMetalAvailable()) {
+    double metal_f32_e2e = runHostBenchmark<float>(n, iters, batch, lightning_core::runtime::Device::kMetal);
     double metal_f32_resident_e2e = runMetalResidentBenchmark(n, iters, batch);
     double metal_f32_enqueue = runMetalResidentEnqueueOnlyBenchmark(n, iters, batch);
     report("Metal float32 (e2e)", metal_f32_e2e);
@@ -281,14 +281,14 @@ int main() {
   }
 
   double mps_add_ms = -1.0;
-  if (cudajun::apple::benchmarkMpsGraphVectorAdd(n, iters * batch, &mps_add_ms) == cudajun::runtime::Status::kSuccess) {
+  if (lightning_core::apple::benchmarkMpsGraphVectorAdd(n, iters * batch, &mps_add_ms) == lightning_core::runtime::Status::kSuccess) {
     report("MPSGraph add float32", mps_add_ms);
   } else {
     std::cout << "MPSGraph add benchmark unavailable.\n";
   }
 
   double mps_train_ms = -1.0;
-  if (cudajun::apple::benchmarkMpsGraphTrainStep(n, iters * batch, &mps_train_ms) == cudajun::runtime::Status::kSuccess) {
+  if (lightning_core::apple::benchmarkMpsGraphTrainStep(n, iters * batch, &mps_train_ms) == lightning_core::runtime::Status::kSuccess) {
     report("MPSGraph train-step float32", mps_train_ms);
   } else {
     std::cout << "MPSGraph train benchmark unavailable.\n";
@@ -297,8 +297,8 @@ int main() {
   const char* coreml_model = std::getenv("CJ_COREML_MODEL");
   if (coreml_model != nullptr) {
     double coreml_ms = -1.0;
-    if (cudajun::apple::benchmarkCoreMLInference(coreml_model, 1024, iters * batch, &coreml_ms) ==
-        cudajun::runtime::Status::kSuccess) {
+    if (lightning_core::apple::benchmarkCoreMLInference(coreml_model, 1024, iters * batch, &coreml_ms) ==
+        lightning_core::runtime::Status::kSuccess) {
       report("CoreML inference", coreml_ms);
     } else {
       std::cout << "CoreML inference benchmark failed. Check CJ_COREML_MODEL path/input shape.\n";

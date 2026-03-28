@@ -3,8 +3,8 @@
 #include <iostream>
 #include <vector>
 
-#include "cudajun/ops.hpp"
-#include "cudajun/runtime.hpp"
+#include "lightning_core/ops.hpp"
+#include "lightning_core/runtime.hpp"
 
 namespace {
 
@@ -35,7 +35,7 @@ int readIntEnv(const char* key, int defaultValue) {
 }
 
 double runMatMul(
-    cudajun::runtime::Device device,
+    lightning_core::runtime::Device device,
     std::size_t m,
     std::size_t k,
     std::size_t n,
@@ -48,8 +48,8 @@ double runMatMul(
 
   for (int i = 0; i < warmup; ++i) {
     for (int bidx = 0; bidx < batch; ++bidx) {
-      auto st = cudajun::ops::matMul<float>(a.data(), b.data(), out.data(), m, k, n, device);
-      if (st != cudajun::runtime::Status::kSuccess) {
+      auto st = lightning_core::ops::matMul<float>(a.data(), b.data(), out.data(), m, k, n, device);
+      if (st != lightning_core::runtime::Status::kSuccess) {
         return -1.0;
       }
     }
@@ -58,8 +58,8 @@ double runMatMul(
   auto start = std::chrono::high_resolution_clock::now();
   for (int i = 0; i < iters; ++i) {
     for (int bidx = 0; bidx < batch; ++bidx) {
-      auto st = cudajun::ops::matMul<float>(a.data(), b.data(), out.data(), m, k, n, device);
-      if (st != cudajun::runtime::Status::kSuccess) {
+      auto st = lightning_core::ops::matMul<float>(a.data(), b.data(), out.data(), m, k, n, device);
+      if (st != lightning_core::runtime::Status::kSuccess) {
         return -1.0;
       }
     }
@@ -81,7 +81,7 @@ void printResult(const char* label, double value) {
 }  // namespace
 
 int main() {
-  cudajun::runtime::preloadRuntimeProfileEnv();
+  lightning_core::runtime::preloadRuntimeProfileEnv();
 
   const std::size_t m = readSizeEnv("CJ_MM_M", 1024);
   const std::size_t k = readSizeEnv("CJ_MM_K", 1024);
@@ -93,10 +93,10 @@ int main() {
   std::cout << "[bench] matmul m=" << m << " k=" << k << " n=" << n
             << " warmup=" << warmup << " iters=" << iters << " batch=" << batch << "\n";
 
-  double cpu_ms = runMatMul(cudajun::runtime::Device::kCPU, m, k, n, warmup, iters, batch);
+  double cpu_ms = runMatMul(lightning_core::runtime::Device::kCPU, m, k, n, warmup, iters, batch);
   printResult("CPU matmul", cpu_ms);
 
-  double metal_ms = runMatMul(cudajun::runtime::Device::kMetal, m, k, n, warmup, iters, batch);
+  double metal_ms = runMatMul(lightning_core::runtime::Device::kMetal, m, k, n, warmup, iters, batch);
   printResult("Metal matmul", metal_ms);
 
   if (cpu_ms > 0.0 && metal_ms > 0.0) {

@@ -3,7 +3,7 @@
 #include <thread>
 #include <vector>
 
-#include "cudajun/attention.hpp"
+#include "lightning_core/attention.hpp"
 
 namespace {
 

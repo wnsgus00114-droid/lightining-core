@@ -5,8 +5,8 @@
 #include <iostream>
 #include <vector>
 
-#include "cudajun/models/vlm_fastpath.hpp"
-#include "cudajun/runtime.hpp"
+#include "lightning_core/models/vlm_fastpath.hpp"
+#include "lightning_core/runtime.hpp"
 
 namespace {
 
@@ -37,14 +37,14 @@ int readIntEnv(const char* key, int defaultValue) {
 }
 
 int autoTuneResidentWindow(
-    const cudajun::models::VlmFastPath& fp,
-    const cudajun::models::VlmFastPathConfig& cfg,
+    const lightning_core::models::VlmFastPath& fp,
+    const lightning_core::models::VlmFastPathConfig& cfg,
     int batch,
     int max_window);
 
 double runVlmProxy(
-    const cudajun::models::VlmFastPath& fp,
-    const cudajun::models::VlmFastPathConfig& cfg,
+    const lightning_core::models::VlmFastPath& fp,
+    const lightning_core::models::VlmFastPathConfig& cfg,
     int warmup,
     int iters,
     int batch,
@@ -70,21 +70,21 @@ double runVlmProxy(
   std::vector<float> out(total * cfg.fused_dim, 0.0f);
   std::vector<float> out_text(cfg.text_tokens * cfg.fused_dim, 0.0f);
 
-  auto do_step = [&](cudajun::LoopStage stage) -> bool {
+  auto do_step = [&](lightning_core::LoopStage stage) -> bool {
     if (fp.patchEmbedFromImage(image_nhwc.data(), image_h, image_w, w_vision.data(), image_proj.data(), stage) !=
-        cudajun::runtime::Status::kSuccess) {
+        lightning_core::runtime::Status::kSuccess) {
       return false;
     }
     if (fp.projectText(text_tokens.data(), w_text.data(), text_proj.data(), stage) !=
-        cudajun::runtime::Status::kSuccess) {
+        lightning_core::runtime::Status::kSuccess) {
       return false;
     }
     if (fp.runCrossAttentionFast(image_proj.data(), text_proj.data(), out_text.data(), stage) !=
-        cudajun::runtime::Status::kSuccess) {
+        lightning_core::runtime::Status::kSuccess) {
       return false;
     }
     if (fp.runFusionAttention(q.data(), k.data(), v.data(), out.data(), stage) !=
-        cudajun::runtime::Status::kSuccess) {
+        lightning_core::runtime::Status::kSuccess) {
       return false;
     }
     return true;
@@ -92,7 +92,7 @@ double runVlmProxy(
 
   for (int i = 0; i < warmup; ++i) {
     for (int bidx = 0; bidx < batch; ++bidx) {
-      if (!do_step(cudajun::LoopStage::kOneShot)) {
+      if (!do_step(lightning_core::LoopStage::kOneShot)) {
         return -1.0;
       }
     }
@@ -107,7 +107,7 @@ double runVlmProxy(
     if (resident_window == 1) {
       for (int i = 0; i < iters; ++i) {
         for (int bidx = 0; bidx < batch; ++bidx) {
-          if (!do_step(cudajun::LoopStage::kOneShot)) {
+          if (!do_step(lightning_core::LoopStage::kOneShot)) {
             return -1.0;
           }
         }
@@ -123,11 +123,11 @@ double runVlmProxy(
         }
         int pos = idx % resident_window;
         int left = total_steps - idx;
-        cudajun::LoopStage stage = cudajun::LoopStage::kRun;
+        lightning_core::LoopStage stage = lightning_core::LoopStage::kRun;
         if (pos == 0) {
-          stage = cudajun::LoopStage::kStart;
+          stage = lightning_core::LoopStage::kStart;
         } else if (left == 1 || pos == resident_window - 1) {
-          stage = cudajun::LoopStage::kFinish;
+          stage = lightning_core::LoopStage::kFinish;
         }
         if (!do_step(stage)) {
           return -1.0;
@@ -139,19 +139,19 @@ double runVlmProxy(
     return elapsed.count() / static_cast<double>(iters * batch);
   }
 
-  if (!do_step(cudajun::LoopStage::kStart)) {
+  if (!do_step(lightning_core::LoopStage::kStart)) {
     return -1.0;
   }
   auto start = std::chrono::high_resolution_clock::now();
   for (int i = 0; i < iters; ++i) {
     for (int bidx = 0; bidx < batch; ++bidx) {
-      if (!do_step(cudajun::LoopStage::kRun)) {
+      if (!do_step(lightning_core::LoopStage::kRun)) {
         return -1.0;
       }
     }
   }
   auto end = std::chrono::high_resolution_clock::now();
-  if (!do_step(cudajun::LoopStage::kFinish)) {
+  if (!do_step(lightning_core::LoopStage::kFinish)) {
     return -1.0;
   }
 
@@ -160,8 +160,8 @@ double runVlmProxy(
 }
 
 int autoTuneResidentWindow(
-    const cudajun::models::VlmFastPath& fp,
-    const cudajun::models::VlmFastPathConfig& cfg,
+    const lightning_core::models::VlmFastPath& fp,
+    const lightning_core::models::VlmFastPathConfig& cfg,
     int batch,
     int max_window) {
   std::vector<int> candidates = {1, 2, 4, 8, 16, 32, 64, 128};
@@ -224,7 +224,7 @@ void runSweepCsv(int warmup, int iters, int batch) {
   for (std::size_t img : img_tokens) {
     for (std::size_t txt : txt_tokens) {
       for (std::size_t dim : fused_dims) {
-        cudajun::models::VlmFastPathConfig cfg;
+        lightning_core::models::VlmFastPathConfig cfg;
         cfg.image_tokens = img;
         cfg.text_tokens = txt;
         cfg.image_channels = 3;
@@ -234,8 +234,8 @@ void runSweepCsv(int warmup, int iters, int batch) {
         cfg.fused_dim = dim;
         cfg.training = true;
 
-        cudajun::models::VlmFastPath cpu(cfg, cudajun::runtime::Device::kCPU);
-        cudajun::models::VlmFastPath metal(cfg, cudajun::runtime::Device::kMetal);
+        lightning_core::models::VlmFastPath cpu(cfg, lightning_core::runtime::Device::kCPU);
+        lightning_core::models::VlmFastPath metal(cfg, lightning_core::runtime::Device::kMetal);
 
         int w = autoTuneResidentWindow(metal, cfg, batch, (iters * batch > 128) ? iters * batch : 128);
 
@@ -272,9 +272,9 @@ void runSweepCsv(int warmup, int iters, int batch) {
 }  // namespace
 
 int main() {
-  cudajun::runtime::preloadRuntimeProfileEnv();
+  lightning_core::runtime::preloadRuntimeProfileEnv();
 
-  cudajun::models::VlmFastPathConfig cfg;
+  lightning_core::models::VlmFastPathConfig cfg;
   cfg.image_tokens = readSizeEnv("CJ_VLM_IMG_TOKENS", 256);
   cfg.text_tokens = readSizeEnv("CJ_VLM_TEXT_TOKENS", 128);
   cfg.vision_dim = readSizeEnv("CJ_VLM_VISION_DIM", 0);
@@ -299,8 +299,8 @@ int main() {
   }
   const int sweep = readIntEnv("CJ_VLM_SWEEP", 0);
 
-  cudajun::models::VlmFastPath cpu(cfg, cudajun::runtime::Device::kCPU);
-  cudajun::models::VlmFastPath metal(cfg, cudajun::runtime::Device::kMetal);
+  lightning_core::models::VlmFastPath cpu(cfg, lightning_core::runtime::Device::kCPU);
+  lightning_core::models::VlmFastPath metal(cfg, lightning_core::runtime::Device::kMetal);
 
   if (resident_window <= 0) {
     resident_window = autoTuneResidentWindow(metal, cfg, batch, (iters * batch > 128) ? iters * batch : 128);

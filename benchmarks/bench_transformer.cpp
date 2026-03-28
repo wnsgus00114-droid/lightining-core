@@ -5,7 +5,7 @@
 #include <iostream>
 #include <vector>
 
-#include "cudajun/models/transformer_fastpath.hpp"
+#include "lightning_core/models/transformer_fastpath.hpp"
 
 namespace {
 
@@ -36,7 +36,7 @@ int readIntEnv(const char* key, int defaultValue) {
 }
 
 double runForward(
-    const cudajun::models::TransformerFastPath& fp,
+    const lightning_core::models::TransformerFastPath& fp,
     std::size_t seq,
     std::size_t dim,
     int warmup,
@@ -51,8 +51,8 @@ double runForward(
 
   for (int i = 0; i < warmup; ++i) {
     for (int bidx = 0; bidx < batch; ++bidx) {
-      auto st = fp.attentionForward(q.data(), k.data(), v.data(), out.data(), cudajun::LoopStage::kOneShot);
-      if (st != cudajun::runtime::Status::kSuccess) {
+      auto st = fp.attentionForward(q.data(), k.data(), v.data(), out.data(), lightning_core::LoopStage::kOneShot);
+      if (st != lightning_core::runtime::Status::kSuccess) {
         return -1.0;
       }
     }
@@ -67,8 +67,8 @@ double runForward(
     if (resident_window == 1) {
       for (int i = 0; i < iters; ++i) {
         for (int bidx = 0; bidx < batch; ++bidx) {
-          auto st = fp.attentionForward(q.data(), k.data(), v.data(), out.data(), cudajun::LoopStage::kOneShot);
-          if (st != cudajun::runtime::Status::kSuccess) {
+          auto st = fp.attentionForward(q.data(), k.data(), v.data(), out.data(), lightning_core::LoopStage::kOneShot);
+          if (st != lightning_core::runtime::Status::kSuccess) {
             return -1.0;
           }
         }
@@ -78,14 +78,14 @@ double runForward(
       for (int idx = 0; idx < total; ++idx) {
         const int pos = idx % resident_window;
         const int left = total - idx;
-        cudajun::LoopStage stage = cudajun::LoopStage::kRun;
+        lightning_core::LoopStage stage = lightning_core::LoopStage::kRun;
         if (pos == 0) {
-          stage = cudajun::LoopStage::kStart;
+          stage = lightning_core::LoopStage::kStart;
         } else if (left == 1 || pos == resident_window - 1) {
-          stage = cudajun::LoopStage::kFinish;
+          stage = lightning_core::LoopStage::kFinish;
         }
         auto st = fp.attentionForward(q.data(), k.data(), v.data(), out.data(), stage);
-        if (st != cudajun::runtime::Status::kSuccess) {
+        if (st != lightning_core::runtime::Status::kSuccess) {
           return -1.0;
         }
       }
@@ -95,22 +95,22 @@ double runForward(
     return elapsed.count() / static_cast<double>(iters * batch);
   }
 
-  if (fp.attentionForward(q.data(), k.data(), v.data(), out.data(), cudajun::LoopStage::kStart) !=
-      cudajun::runtime::Status::kSuccess) {
+  if (fp.attentionForward(q.data(), k.data(), v.data(), out.data(), lightning_core::LoopStage::kStart) !=
+      lightning_core::runtime::Status::kSuccess) {
     return -1.0;
   }
   auto start = std::chrono::high_resolution_clock::now();
   for (int i = 0; i < iters; ++i) {
     for (int bidx = 0; bidx < batch; ++bidx) {
-      auto st = fp.attentionForward(q.data(), k.data(), v.data(), out.data(), cudajun::LoopStage::kRun);
-      if (st != cudajun::runtime::Status::kSuccess) {
+      auto st = fp.attentionForward(q.data(), k.data(), v.data(), out.data(), lightning_core::LoopStage::kRun);
+      if (st != lightning_core::runtime::Status::kSuccess) {
         return -1.0;
       }
     }
   }
   auto end = std::chrono::high_resolution_clock::now();
-  if (fp.attentionForward(q.data(), k.data(), v.data(), out.data(), cudajun::LoopStage::kFinish) !=
-      cudajun::runtime::Status::kSuccess) {
+  if (fp.attentionForward(q.data(), k.data(), v.data(), out.data(), lightning_core::LoopStage::kFinish) !=
+      lightning_core::runtime::Status::kSuccess) {
     return -1.0;
   }
   std::chrono::duration<double, std::milli> elapsed = end - start;
@@ -118,7 +118,7 @@ double runForward(
 }
 
 int autoTuneResidentWindow(
-    const cudajun::models::TransformerFastPath& fp,
+    const lightning_core::models::TransformerFastPath& fp,
     std::size_t seq,
     std::size_t dim,
     int batch,
@@ -191,13 +191,13 @@ void runSweepCsv(int warmup, int iters, int batch) {
 
   for (std::size_t seq : seqs) {
     for (std::size_t dim : dims) {
-      cudajun::models::TransformerFastPathConfig cfg;
+      lightning_core::models::TransformerFastPathConfig cfg;
       cfg.seq_len = seq;
       cfg.head_dim = dim;
       cfg.causal = true;
       cfg.training = true;
-      cudajun::models::TransformerFastPath cpu(cfg, cudajun::runtime::Device::kCPU);
-      cudajun::models::TransformerFastPath metal(cfg, cudajun::runtime::Device::kMetal);
+      lightning_core::models::TransformerFastPath cpu(cfg, lightning_core::runtime::Device::kCPU);
+      lightning_core::models::TransformerFastPath metal(cfg, lightning_core::runtime::Device::kMetal);
 
       int tuned_window = autoTuneResidentWindow(metal, seq, dim, batch, iters * batch);
 
@@ -230,7 +230,7 @@ void runSweepCsv(int warmup, int iters, int batch) {
 }  // namespace
 
 int main() {
-  cudajun::runtime::preloadRuntimeProfileEnv();
+  lightning_core::runtime::preloadRuntimeProfileEnv();
 
   const std::size_t seq = readSizeEnv("CJ_TR_SEQ", 1024);
   const std::size_t dim = readSizeEnv("CJ_TR_DIM", 64);
@@ -240,14 +240,14 @@ int main() {
   int resident_window = readIntEnv("CJ_TR_RESIDENT_WINDOW", 0);
   const int sweep = readIntEnv("CJ_TR_SWEEP", 0);
 
-  cudajun::models::TransformerFastPathConfig cfg;
+  lightning_core::models::TransformerFastPathConfig cfg;
   cfg.seq_len = seq;
   cfg.head_dim = dim;
   cfg.causal = true;
   cfg.training = true;
 
-  cudajun::models::TransformerFastPath cpu(cfg, cudajun::runtime::Device::kCPU);
-  cudajun::models::TransformerFastPath metal(cfg, cudajun::runtime::Device::kMetal);
+  lightning_core::models::TransformerFastPath cpu(cfg, lightning_core::runtime::Device::kCPU);
+  lightning_core::models::TransformerFastPath metal(cfg, lightning_core::runtime::Device::kMetal);
 
   if (resident_window <= 0) {
     resident_window = autoTuneResidentWindow(metal, seq, dim, batch, iters * batch);

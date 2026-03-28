@@ -2,8 +2,8 @@
 #include <iostream>
 #include <vector>
 
-#include "cudajun/ops.hpp"
-#include "cudajun/runtime.hpp"
+#include "lightning_core/ops.hpp"
+#include "lightning_core/runtime.hpp"
 
 namespace {
 
@@ -11,7 +11,7 @@ bool nearlyEqual(float a, float b) {
   return std::fabs(a - b) < 1e-4f;
 }
 
-int runCase(cudajun::runtime::Device device) {
+int runCase(lightning_core::runtime::Device device) {
   // A(2x3) * B(3x2) = C(2x2)
   const std::size_t m = 2;
   const std::size_t k = 3;
@@ -28,8 +28,8 @@ int runCase(cudajun::runtime::Device device) {
   };
   std::vector<float> c(m * n, 0.0f);
 
-  const auto st = cudajun::ops::matMul<float>(a.data(), b.data(), c.data(), m, k, n, device);
-  if (st != cudajun::runtime::Status::kSuccess) {
+  const auto st = lightning_core::ops::matMul<float>(a.data(), b.data(), c.data(), m, k, n, device);
+  if (st != lightning_core::runtime::Status::kSuccess) {
     std::cerr << "matMul failed\n";
     return 1;
   }
@@ -50,7 +50,7 @@ int runCase(cudajun::runtime::Device device) {
 }
 
 int runPolicyCaseMetal() {
-  if (!cudajun::runtime::isMetalAvailable()) {
+  if (!lightning_core::runtime::isMetalAvailable()) {
     return 0;
   }
 
@@ -69,22 +69,22 @@ int runPolicyCaseMetal() {
   };
   std::vector<float> c(m * n, 0.0f);
 
-  cudajun::ops::MatMulMetalResidentSession<float> resident(m, k, n);
+  lightning_core::ops::MatMulMetalResidentSession<float> resident(m, k, n);
 
   auto st = resident.start(a.data(), b.data(), c.data());
-  if (st != cudajun::runtime::Status::kSuccess) {
+  if (st != lightning_core::runtime::Status::kSuccess) {
     std::cerr << "MatMulMetalResidentSession.start failed\n";
     return 1;
   }
 
   st = resident.run(a.data(), b.data(), c.data());
-  if (st != cudajun::runtime::Status::kSuccess) {
+  if (st != lightning_core::runtime::Status::kSuccess) {
     std::cerr << "MatMulMetalResidentSession.run failed\n";
     return 1;
   }
 
   st = resident.finish(a.data(), b.data(), c.data());
-  if (st != cudajun::runtime::Status::kSuccess) {
+  if (st != lightning_core::runtime::Status::kSuccess) {
     std::cerr << "MatMulMetalResidentSession.finish failed\n";
     return 1;
   }
@@ -110,23 +110,23 @@ int runPolicyFallbackSafetyCase() {
   const std::size_t n = 2;
   std::vector<float> c(m * n, 0.0f);
 
-  cudajun::ops::MatMulIoPolicy p;
+  lightning_core::ops::MatMulIoPolicy p;
   p.upload_a = false;
   p.upload_b = false;
   p.download_out = true;
   p.synchronize = true;
 
-  auto st = cudajun::ops::matMulWithPolicy<float>(
+  auto st = lightning_core::ops::matMulWithPolicy<float>(
       nullptr,
       nullptr,
       c.data(),
       m,
       k,
       n,
-      cudajun::runtime::Device::kCUDA,
+      lightning_core::runtime::Device::kCUDA,
       p);
 
-  if (st == cudajun::runtime::Status::kSuccess) {
+  if (st == lightning_core::runtime::Status::kSuccess) {
     std::cerr << "Fallback safety case unexpectedly succeeded\n";
     return 1;
   }
@@ -137,12 +137,12 @@ int runPolicyFallbackSafetyCase() {
 }  // namespace
 
 int main() {
-  if (runCase(cudajun::runtime::Device::kCPU) != 0) {
+  if (runCase(lightning_core::runtime::Device::kCPU) != 0) {
     return 1;
   }
 
-  if (cudajun::runtime::isMetalAvailable()) {
-    if (runCase(cudajun::runtime::Device::kMetal) != 0) {
+  if (lightning_core::runtime::isMetalAvailable()) {
+    if (runCase(lightning_core::runtime::Device::kMetal) != 0) {
       return 1;
     }
   }

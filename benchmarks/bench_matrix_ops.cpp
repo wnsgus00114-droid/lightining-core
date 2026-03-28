@@ -3,8 +3,8 @@
 #include <iostream>
 #include <vector>
 
-#include "cudajun/ops.hpp"
-#include "cudajun/runtime.hpp"
+#include "lightning_core/ops.hpp"
+#include "lightning_core/runtime.hpp"
 
 namespace {
 
@@ -39,7 +39,7 @@ double runTimed(int warmup, int iters, int batch, RunFn&& fn) {
   for (int i = 0; i < warmup; ++i) {
     for (int b = 0; b < batch; ++b) {
       auto st = fn(i, b, true);
-      if (st != cudajun::runtime::Status::kSuccess) {
+      if (st != lightning_core::runtime::Status::kSuccess) {
         return -1.0;
       }
     }
@@ -49,7 +49,7 @@ double runTimed(int warmup, int iters, int batch, RunFn&& fn) {
   for (int i = 0; i < iters; ++i) {
     for (int b = 0; b < batch; ++b) {
       auto st = fn(i, b, false);
-      if (st != cudajun::runtime::Status::kSuccess) {
+      if (st != lightning_core::runtime::Status::kSuccess) {
         return -1.0;
       }
     }
@@ -61,7 +61,7 @@ double runTimed(int warmup, int iters, int batch, RunFn&& fn) {
 }
 
 double runMatrixSub(
-    cudajun::runtime::Device device,
+    lightning_core::runtime::Device device,
     std::size_t rows,
     std::size_t cols,
     int warmup,
@@ -73,8 +73,8 @@ double runMatrixSub(
   std::vector<float> b(n, 2.0f);
   std::vector<float> out(n, 0.0f);
 
-  if (device == cudajun::runtime::Device::kMetal && resident_fastpath) {
-    cudajun::ops::MatrixElemwiseMetalResidentSession<float> session(rows, cols);
+  if (device == lightning_core::runtime::Device::kMetal && resident_fastpath) {
+    lightning_core::ops::MatrixElemwiseMetalResidentSession<float> session(rows, cols);
     auto fn = [&](int i, int bidx, bool is_warmup) {
       (void)is_warmup;
       if (i == 0 && bidx == 0) {
@@ -89,7 +89,7 @@ double runMatrixSub(
     }
 
     auto st = session.subFinish(a.data(), b.data(), out.data());
-    if (st != cudajun::runtime::Status::kSuccess) {
+    if (st != lightning_core::runtime::Status::kSuccess) {
       return -1.0;
     }
 
@@ -100,13 +100,13 @@ double runMatrixSub(
     (void)i;
     (void)bidx;
     (void)is_warmup;
-    return cudajun::ops::matrixSub<float>(a.data(), b.data(), out.data(), rows, cols, device);
+    return lightning_core::ops::matrixSub<float>(a.data(), b.data(), out.data(), rows, cols, device);
   };
   return runTimed(warmup, iters, batch, fn);
 }
 
 double runMatrixDiv(
-    cudajun::runtime::Device device,
+    lightning_core::runtime::Device device,
     std::size_t rows,
     std::size_t cols,
     int warmup,
@@ -118,8 +118,8 @@ double runMatrixDiv(
   std::vector<float> b(n, 2.0f);
   std::vector<float> out(n, 0.0f);
 
-  if (device == cudajun::runtime::Device::kMetal && resident_fastpath) {
-    cudajun::ops::MatrixElemwiseMetalResidentSession<float> session(rows, cols);
+  if (device == lightning_core::runtime::Device::kMetal && resident_fastpath) {
+    lightning_core::ops::MatrixElemwiseMetalResidentSession<float> session(rows, cols);
     auto fn = [&](int i, int bidx, bool is_warmup) {
       (void)is_warmup;
       if (i == 0 && bidx == 0) {
@@ -134,7 +134,7 @@ double runMatrixDiv(
     }
 
     auto st = session.divFinish(a.data(), b.data(), out.data());
-    if (st != cudajun::runtime::Status::kSuccess) {
+    if (st != lightning_core::runtime::Status::kSuccess) {
       return -1.0;
     }
 
@@ -145,7 +145,7 @@ double runMatrixDiv(
     (void)i;
     (void)bidx;
     (void)is_warmup;
-    return cudajun::ops::matrixDiv<float>(a.data(), b.data(), out.data(), rows, cols, device);
+    return lightning_core::ops::matrixDiv<float>(a.data(), b.data(), out.data(), rows, cols, device);
   };
   return runTimed(warmup, iters, batch, fn);
 }
@@ -167,7 +167,7 @@ void printSpeedup(const char* label, double cpu_ms, double metal_ms) {
 }  // namespace
 
 int main() {
-  cudajun::runtime::preloadRuntimeProfileEnv();
+  lightning_core::runtime::preloadRuntimeProfileEnv();
 
   const std::size_t rows = readSizeEnv("CJ_ME_ROWS", 4096);
   const std::size_t cols = readSizeEnv("CJ_ME_COLS", 512);
@@ -178,9 +178,9 @@ int main() {
   std::cout << "[bench] matrix_ops rows=" << rows << " cols=" << cols
             << " warmup=" << warmup << " iters=" << iters << " batch=" << batch << "\n";
 
-  double cpu_sub = runMatrixSub(cudajun::runtime::Device::kCPU, rows, cols, warmup, iters, batch, false);
-  double metal_sub_off = runMatrixSub(cudajun::runtime::Device::kMetal, rows, cols, warmup, iters, batch, false);
-  double metal_sub_on = runMatrixSub(cudajun::runtime::Device::kMetal, rows, cols, warmup, iters, batch, true);
+  double cpu_sub = runMatrixSub(lightning_core::runtime::Device::kCPU, rows, cols, warmup, iters, batch, false);
+  double metal_sub_off = runMatrixSub(lightning_core::runtime::Device::kMetal, rows, cols, warmup, iters, batch, false);
+  double metal_sub_on = runMatrixSub(lightning_core::runtime::Device::kMetal, rows, cols, warmup, iters, batch, true);
 
   printResult("CPU matrixSub", cpu_sub);
   printResult("Metal matrixSub (resident=off)", metal_sub_off);
@@ -191,9 +191,9 @@ int main() {
     std::cout << "Resident gain matrixSub (off/on): " << (metal_sub_off / metal_sub_on) << "x\n";
   }
 
-  double cpu_div = runMatrixDiv(cudajun::runtime::Device::kCPU, rows, cols, warmup, iters, batch, false);
-  double metal_div_off = runMatrixDiv(cudajun::runtime::Device::kMetal, rows, cols, warmup, iters, batch, false);
-  double metal_div_on = runMatrixDiv(cudajun::runtime::Device::kMetal, rows, cols, warmup, iters, batch, true);
+  double cpu_div = runMatrixDiv(lightning_core::runtime::Device::kCPU, rows, cols, warmup, iters, batch, false);
+  double metal_div_off = runMatrixDiv(lightning_core::runtime::Device::kMetal, rows, cols, warmup, iters, batch, false);
+  double metal_div_on = runMatrixDiv(lightning_core::runtime::Device::kMetal, rows, cols, warmup, iters, batch, true);
 
   printResult("CPU matrixDiv", cpu_div);
   printResult("Metal matrixDiv (resident=off)", metal_div_off);

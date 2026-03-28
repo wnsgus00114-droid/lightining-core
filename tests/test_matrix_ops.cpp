@@ -3,8 +3,8 @@
 #include <limits>
 #include <vector>
 
-#include "cudajun/ops.hpp"
-#include "cudajun/runtime.hpp"
+#include "lightning_core/ops.hpp"
+#include "lightning_core/runtime.hpp"
 
 namespace {
 
@@ -26,9 +26,9 @@ int runSubCaseCpu() {
   };
   std::vector<float> out(rows * cols, 0.0f);
 
-  auto st = cudajun::ops::matrixSub<float>(
-      a.data(), b.data(), out.data(), rows, cols, cudajun::runtime::Device::kCPU);
-  if (st != cudajun::runtime::Status::kSuccess) {
+  auto st = lightning_core::ops::matrixSub<float>(
+      a.data(), b.data(), out.data(), rows, cols, lightning_core::runtime::Device::kCPU);
+  if (st != lightning_core::runtime::Status::kSuccess) {
     std::cerr << "matrixSub CPU failed\n";
     return 1;
   }
@@ -62,9 +62,9 @@ int runDivCaseCpu() {
   };
   std::vector<float> out(rows * cols, 0.0f);
 
-  auto st = cudajun::ops::matrixDiv<float>(
-      a.data(), b.data(), out.data(), rows, cols, cudajun::runtime::Device::kCPU);
-  if (st != cudajun::runtime::Status::kSuccess) {
+  auto st = lightning_core::ops::matrixDiv<float>(
+      a.data(), b.data(), out.data(), rows, cols, lightning_core::runtime::Device::kCPU);
+  if (st != lightning_core::runtime::Status::kSuccess) {
     std::cerr << "matrixDiv CPU failed\n";
     return 1;
   }
@@ -89,22 +89,22 @@ int runPolicyFallbackSafetyCaseCuda() {
   const std::size_t cols = 3;
   std::vector<float> out(rows * cols, 0.0f);
 
-  cudajun::ops::MatrixElementwiseIoPolicy p;
+  lightning_core::ops::MatrixElementwiseIoPolicy p;
   p.upload_a = false;
   p.upload_b = false;
   p.download_out = true;
   p.synchronize = true;
 
-  auto sub_st = cudajun::ops::matrixSubWithPolicy<float>(
+  auto sub_st = lightning_core::ops::matrixSubWithPolicy<float>(
       nullptr,
       nullptr,
       out.data(),
       rows,
       cols,
-      cudajun::runtime::Device::kCUDA,
+      lightning_core::runtime::Device::kCUDA,
       p);
 
-  if (sub_st == cudajun::runtime::Status::kSuccess) {
+  if (sub_st == lightning_core::runtime::Status::kSuccess) {
     std::cerr << "matrixSub fallback safety unexpectedly succeeded\n";
     return 1;
   }
@@ -113,7 +113,7 @@ int runPolicyFallbackSafetyCaseCuda() {
 }
 
 int runMetalPolicyCase() {
-  if (!cudajun::runtime::isMetalAvailable()) {
+  if (!lightning_core::runtime::isMetalAvailable()) {
     return 0;
   }
 
@@ -131,22 +131,22 @@ int runMetalPolicyCase() {
   std::vector<float> sub_out(rows * cols, 0.0f);
   std::vector<float> div_out(rows * cols, 0.0f);
 
-  cudajun::ops::MatrixElemwiseMetalResidentSession<float> resident(rows, cols);
+  lightning_core::ops::MatrixElemwiseMetalResidentSession<float> resident(rows, cols);
 
   auto st = resident.subStart(a.data(), b.data(), sub_out.data());
-  if (st != cudajun::runtime::Status::kSuccess) {
+  if (st != lightning_core::runtime::Status::kSuccess) {
     std::cerr << "MatrixElemwiseMetalResidentSession.subStart failed\n";
     return 1;
   }
 
   st = resident.subRun(a.data(), b.data(), sub_out.data());
-  if (st != cudajun::runtime::Status::kSuccess) {
+  if (st != lightning_core::runtime::Status::kSuccess) {
     std::cerr << "MatrixElemwiseMetalResidentSession.subRun failed\n";
     return 1;
   }
 
   st = resident.subFinish(a.data(), b.data(), sub_out.data());
-  if (st != cudajun::runtime::Status::kSuccess) {
+  if (st != lightning_core::runtime::Status::kSuccess) {
     std::cerr << "MatrixElemwiseMetalResidentSession.subFinish failed\n";
     return 1;
   }
@@ -163,19 +163,19 @@ int runMetalPolicyCase() {
   }
 
   st = resident.divStart(a.data(), b.data(), div_out.data());
-  if (st != cudajun::runtime::Status::kSuccess) {
+  if (st != lightning_core::runtime::Status::kSuccess) {
     std::cerr << "MatrixElemwiseMetalResidentSession.divStart failed\n";
     return 1;
   }
 
   st = resident.divRun(a.data(), b.data(), div_out.data());
-  if (st != cudajun::runtime::Status::kSuccess) {
+  if (st != lightning_core::runtime::Status::kSuccess) {
     std::cerr << "MatrixElemwiseMetalResidentSession.divRun failed\n";
     return 1;
   }
 
   st = resident.divFinish(a.data(), b.data(), div_out.data());
-  if (st != cudajun::runtime::Status::kSuccess) {
+  if (st != lightning_core::runtime::Status::kSuccess) {
     std::cerr << "MatrixElemwiseMetalResidentSession.divFinish failed\n";
     return 1;
   }
@@ -208,22 +208,22 @@ int runPolicyValidCaseCpu() {
   };
   std::vector<float> out(rows * cols, 0.0f);
 
-  cudajun::ops::MatrixElementwiseIoPolicy p;
+  lightning_core::ops::MatrixElementwiseIoPolicy p;
   p.upload_a = true;
   p.upload_b = true;
   p.download_out = true;
   p.synchronize = true;
 
-  auto st = cudajun::ops::matrixDivWithPolicy<float>(
+  auto st = lightning_core::ops::matrixDivWithPolicy<float>(
       a.data(),
       b.data(),
       out.data(),
       rows,
       cols,
-      cudajun::runtime::Device::kCPU,
+      lightning_core::runtime::Device::kCPU,
       p);
 
-  if (st != cudajun::runtime::Status::kSuccess) {
+  if (st != lightning_core::runtime::Status::kSuccess) {
     std::cerr << "matrixDivWithPolicy CPU failed\n";
     return 1;
   }

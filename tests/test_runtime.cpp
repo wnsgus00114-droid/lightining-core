@@ -1,10 +1,10 @@
 #include <iostream>
 
-#include "cudajun/runtime.hpp"
+#include "lightning_core/runtime.hpp"
 
 int main() {
   // runtime 네임스페이스 심볼을 자주 쓰니까 짧게 가져온다.
-  using namespace cudajun::runtime;
+  using namespace lightning_core::runtime;
 
   // 1) 디바이스 조회 테스트: CUDA가 없으면 NotSupported여도 정상 시나리오.
   int device_count = -1;
