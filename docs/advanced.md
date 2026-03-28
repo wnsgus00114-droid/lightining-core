@@ -31,6 +31,12 @@ Safety rules in workflow:
 
 PyPI/TestPyPI trusted publishing must be configured before release publishing.
 
+### Post-release quick check
+
+- PyPI page: confirm new version appears on https://pypi.org/project/lightning-core/
+- Install check: `python -m pip install -U lightning-core && python -c "import lightning_core; print(lightning_core.backend_name())"`
+- Tag check: `git fetch --tags && git tag -l | grep '^v' | tail -n 5`
+
 ### Rename migration note
 
 Current live repository URL may remain lightining-core until GitHub rename is finalized.
