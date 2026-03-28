@@ -4,6 +4,10 @@ Lightning Core is a macOS-first CUDA-style runtime focused on custom attention t
 
 ## Quick Start (Beginner)
 
+Documentation entrypoint:
+
+- docs/index.md
+
 Use this path first:
 
 1. Install and import-check
@@ -48,6 +52,10 @@ For advanced usage and operations, see:
 
 - docs/advanced.md
 
+For contributor workflow and coding conventions, see:
+
+- docs/contributor.md
+
 Includes:
 
 - benchmark sweeps and generated artifacts
@@ -87,4 +95,4 @@ The script automatically checks target repository availability and skips safely 
 - tests: C++ unit tests
 - benchmarks: benchmark binaries and sweep scripts
 - python: pybind11 bindings
-- docs: split docs (quickstart/advanced)
+- docs: split docs (index/quickstart/advanced/contributor)
