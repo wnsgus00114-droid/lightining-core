@@ -53,6 +53,13 @@ lcDeviceKind toDeviceKind(cudajun::runtime::Device device) {
   }
 }
 
+lcMemoryModel toLcMemoryModel(cudajun::runtime::MemoryModel model) {
+  if (model == cudajun::runtime::MemoryModel::kNativeDevice) {
+    return LC_MEMORY_NATIVE_DEVICE;
+  }
+  return LC_MEMORY_HOST_MANAGED_COMPAT;
+}
+
 }  // namespace
 
 extern "C" {
@@ -99,6 +106,17 @@ int lcIsCudaAvailable(void) {
 
 int lcIsMetalAvailable(void) {
   return cudajun::runtime::isMetalAvailable() ? 1 : 0;
+}
+
+lcMemoryModel lcGetMemoryModel(void) {
+  return toLcMemoryModel(cudajun::runtime::deviceMemoryModel());
+}
+
+const char* lcGetMemoryModelName(lcMemoryModel model) {
+  if (model == LC_MEMORY_NATIVE_DEVICE) {
+    return cudajun::runtime::memoryModelName(cudajun::runtime::MemoryModel::kNativeDevice);
+  }
+  return cudajun::runtime::memoryModelName(cudajun::runtime::MemoryModel::kHostManagedCompat);
 }
 
 const char* lcBackendName(void) {

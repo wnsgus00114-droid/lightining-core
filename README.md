@@ -50,7 +50,7 @@ This project is currently an optimization-focused runtime prototype, not a full 
 - Implemented core focus: runtime, attention path, and selected matrix/vector ops
 - Model-family wrappers (Transformer/LSTM/CNN/GCN/GAT/VLM) are policy/fastpath helpers, not full model implementations
 - Tensor API is intentionally minimal today (shape + host transfer + basic ops) and is still evolving
-- Python API currently exposes a small subset for runtime/tensor usage
+- Python API now includes runtime visibility + basic attention forward in addition to tensor helpers
 
 If you need full framework-level features (autograd graph, broad op coverage, rich tensor views/layout APIs), treat this repository as experimental groundwork rather than a drop-in replacement.
 
@@ -89,6 +89,12 @@ Core runtime calls:
 - `lcGetDeviceCount`
 - `lcGetPreferredDeviceForInference` / `lcGetPreferredDeviceForTraining`
 - `lcBackendName` / `lcGetErrorString`
+- `lcGetMemoryModel` / `lcGetMemoryModelName`
+
+Memory model note:
+
+- `native-device`: backend provides true device memory semantics
+- `host-managed-compat`: compatibility mode for device-like API surface (current macOS Metal runtime path)
 
 C example source:
 
@@ -114,6 +120,12 @@ Quick import check:
 ```bash
 python -c "import lightining_core; print(lightining_core.backend_name())"
 ```
+
+Python API highlights:
+
+- `Tensor` / `Tensor64` now expose `shape`, `strides`, `rank`, `is_contiguous`, `dtype`, `reshape`
+- Runtime helpers: `backend_name`, `cuda_available`, `metal_available`, `memory_model_name`
+- Attention helper: `attention_forward(q, k, v, seq_len, head_dim, causal=False, device='metal')`
 
 ## Install for macOS Users (Terminal)
 
@@ -231,6 +243,11 @@ Migration status:
 - Step 3 (planned): evaluate internal symbol/target rename with compatibility shims
 
 Detailed technical roadmap is tracked in `ROADMAP.md`.
+
+Ops modularization status:
+
+- `ops.hpp` is being split incrementally.
+- Policy helpers are now in `include/cudajun/ops/policy.hpp` and re-exported via `ops.hpp`.
 
 ## Test
 

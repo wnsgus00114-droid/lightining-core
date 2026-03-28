@@ -17,6 +17,7 @@ int main() {
   }
 
   std::cout << "Metal available: " << (isMetalAvailable() ? "yes" : "no") << "\n";
+  std::cout << "Memory model: " << memoryModelName(deviceMemoryModel()) << "\n";
   std::cout << "Preferred(training): " << static_cast<int>(preferredDeviceFor(WorkloadKind::kTraining)) << "\n";
   std::cout << "Preferred(inference): " << static_cast<int>(preferredDeviceFor(WorkloadKind::kInference)) << "\n";
 

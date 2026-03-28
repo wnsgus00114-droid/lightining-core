@@ -305,6 +305,26 @@ std::string backendName() {
   return "cpu";
 }
 
+MemoryModel deviceMemoryModel() {
+#if CJ_HAS_CUDA
+  return MemoryModel::kNativeDevice;
+#elif defined(CJ_HAS_METAL) && CJ_HAS_METAL
+  return MemoryModel::kHostManagedCompat;
+#else
+  return MemoryModel::kHostManagedCompat;
+#endif
+}
+
+const char* memoryModelName(MemoryModel model) {
+  switch (model) {
+    case MemoryModel::kNativeDevice:
+      return "native-device";
+    case MemoryModel::kHostManagedCompat:
+    default:
+      return "host-managed-compat";
+  }
+}
+
 
 void preloadRuntimeProfileEnv() {
   ensureRuntimeProfileLoaded();

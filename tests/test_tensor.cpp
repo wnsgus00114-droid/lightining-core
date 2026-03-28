@@ -18,9 +18,19 @@ template <typename T>
 int runCase(cudajun::Device device) {
   using TensorT = cudajun::TensorT<T>;
 
-  TensorT a({4}, device);
-  TensorT b({4}, device);
-  TensorT out({4}, device);
+  TensorT a({2, 2}, device);
+  TensorT b({2, 2}, device);
+  TensorT out({2, 2}, device);
+
+  if (a.rank() != 2 || !a.isContiguous()) {
+    std::cerr << "rank/contiguous check failed\n";
+    return 1;
+  }
+  const auto& s = a.strides();
+  if (s.size() != 2 || s[0] != 2 || s[1] != 1) {
+    std::cerr << "stride check failed\n";
+    return 1;
+  }
 
   if (a.fromHost({static_cast<T>(1), static_cast<T>(2), static_cast<T>(3), static_cast<T>(4)}) !=
       cudajun::runtime::Status::kSuccess) {
@@ -50,6 +60,19 @@ int runCase(cudajun::Device device) {
       std::cerr << "Mismatch at " << i << "\n";
       return 1;
     }
+  }
+
+  if (out.reshape({4}) != cudajun::runtime::Status::kSuccess) {
+    std::cerr << "reshape to 1D failed\n";
+    return 1;
+  }
+  if (out.rank() != 1 || out.numel() != 4) {
+    std::cerr << "reshape state invalid\n";
+    return 1;
+  }
+  if (out.reshape({3}) != cudajun::runtime::Status::kInvalidValue) {
+    std::cerr << "reshape mismatch should fail\n";
+    return 1;
   }
 
   return 0;

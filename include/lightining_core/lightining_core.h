@@ -29,6 +29,11 @@ typedef enum lcDeviceKind {
   LC_DEVICE_METAL
 } lcDeviceKind;
 
+typedef enum lcMemoryModel {
+  LC_MEMORY_NATIVE_DEVICE = 0,
+  LC_MEMORY_HOST_MANAGED_COMPAT
+} lcMemoryModel;
+
 lcError_t lcMalloc(void** ptr, size_t size_bytes);
 lcError_t lcFree(void* ptr);
 lcError_t lcMemcpy(void* dst, const void* src, size_t size_bytes, lcMemcpyKind kind);
@@ -38,6 +43,8 @@ lcError_t lcGetPreferredDeviceForInference(lcDeviceKind* device);
 lcError_t lcGetPreferredDeviceForTraining(lcDeviceKind* device);
 int lcIsCudaAvailable(void);
 int lcIsMetalAvailable(void);
+lcMemoryModel lcGetMemoryModel(void);
+const char* lcGetMemoryModelName(lcMemoryModel model);
 const char* lcBackendName(void);
 const char* lcGetErrorString(lcError_t error);
 

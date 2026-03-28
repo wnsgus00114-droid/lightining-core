@@ -38,6 +38,12 @@ enum class MemcpyKind {
   kDeviceToDevice
 };
 
+// 실제 백엔드에서 device allocation이 어떤 방식으로 구현되는지 설명한다.
+enum class MemoryModel {
+  kNativeDevice = 0,
+  kHostManagedCompat
+};
+
 // 디바이스 메모리 할당.
 // CUDA 환경이면 cudaMalloc, 아니면 NotSupported를 반환한다.
 Status mallocDevice(void** ptr, std::size_t size_bytes);
@@ -67,6 +73,12 @@ Device preferredDeviceFor(WorkloadKind workload);
 
 // 현재 백엔드 이름("metal"/"cuda"/"cpu").
 std::string backendName();
+
+// 현재 빌드/런타임의 device memory 모델.
+MemoryModel deviceMemoryModel();
+
+// 메모리 모델 설명 문자열.
+const char* memoryModelName(MemoryModel model);
 
 // Load runtime tuning profile env file once (if configured/found).
 // Existing environment variables are kept as-is.

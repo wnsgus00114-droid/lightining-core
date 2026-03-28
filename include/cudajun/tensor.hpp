@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <numeric>
 #include <type_traits>
 #include <vector>
 
@@ -19,7 +20,7 @@ class TensorT {
 
  public:
   TensorT(const std::vector<std::int64_t>& shape, Device device = Device::kCPU)
-      : shape_(shape), device_(device), cuda_storage_(nullptr) {
+      : shape_(shape), strides_(computeDefaultStrides(shape)), device_(device), device_storage_(nullptr) {
     allocateStorage();
   }
 
@@ -32,10 +33,11 @@ class TensorT {
 
   TensorT(TensorT&& other) noexcept
       : shape_(std::move(other.shape_)),
+        strides_(std::move(other.strides_)),
         device_(other.device_),
         cpu_storage_(std::move(other.cpu_storage_)),
-        cuda_storage_(other.cuda_storage_) {
-    other.cuda_storage_ = nullptr;
+        device_storage_(other.device_storage_) {
+    other.device_storage_ = nullptr;
   }
 
   TensorT& operator=(TensorT&& other) noexcept {
@@ -44,15 +46,16 @@ class TensorT {
     }
     releaseStorage();
     shape_ = std::move(other.shape_);
+    strides_ = std::move(other.strides_);
     device_ = other.device_;
     cpu_storage_ = std::move(other.cpu_storage_);
-    cuda_storage_ = other.cuda_storage_;
-    other.cuda_storage_ = nullptr;
+    device_storage_ = other.device_storage_;
+    other.device_storage_ = nullptr;
     return *this;
   }
 
   std::size_t numel() const {
-    if (shape_.empty()) {
+    if (shape_.empty() || !isShapeValid(shape_)) {
       return 0;
     }
     std::size_t total = 1;
@@ -66,21 +69,58 @@ class TensorT {
     return shape_;
   }
 
+  const std::vector<std::int64_t>& strides() const {
+    return strides_;
+  }
+
+  std::size_t rank() const {
+    return shape_.size();
+  }
+
+  bool isContiguous() const {
+    return strides_ == computeDefaultStrides(shape_);
+  }
+
+  const char* dtypeName() const {
+    if constexpr (std::is_same_v<T, float>) {
+      return "float32";
+    }
+    if constexpr (std::is_same_v<T, double>) {
+      return "float64";
+    }
+    return "longdouble";
+  }
+
   Device device() const {
     return device_;
+  }
+
+  runtime::Status reshape(const std::vector<std::int64_t>& new_shape) {
+    if (!isShapeValid(new_shape)) {
+      return runtime::Status::kInvalidValue;
+    }
+    std::size_t new_numel = 1;
+    for (std::int64_t d : new_shape) {
+      new_numel *= static_cast<std::size_t>(d);
+    }
+    if (new_numel != numel()) {
+      return runtime::Status::kInvalidValue;
+    }
+    shape_ = new_shape;
+    strides_ = computeDefaultStrides(new_shape);
+    return runtime::Status::kSuccess;
   }
 
   runtime::Status fromHost(const std::vector<T>& values) {
     if (values.size() != numel()) {
       return runtime::Status::kInvalidValue;
     }
-    // Metal 경로는 현재 Host staging 방식으로 운영한다.
-    if (device_ == Device::kCPU || device_ == Device::kMetal) {
+    if (device_ == Device::kCPU) {
       cpu_storage_ = values;
       return runtime::Status::kSuccess;
     }
     return runtime::memcpy(
-        cuda_storage_, values.data(), sizeof(T) * values.size(), runtime::MemcpyKind::kHostToDevice);
+        device_storage_, values.data(), sizeof(T) * values.size(), runtime::MemcpyKind::kHostToDevice);
   }
 
   runtime::Status toHost(std::vector<T>* out) const {
@@ -88,12 +128,12 @@ class TensorT {
       return runtime::Status::kInvalidValue;
     }
     out->resize(numel());
-    if (device_ == Device::kCPU || device_ == Device::kMetal) {
+    if (device_ == Device::kCPU) {
       *out = cpu_storage_;
       return runtime::Status::kSuccess;
     }
     return runtime::memcpy(
-        out->data(), cuda_storage_, sizeof(T) * out->size(), runtime::MemcpyKind::kDeviceToHost);
+        out->data(), device_storage_, sizeof(T) * out->size(), runtime::MemcpyKind::kDeviceToHost);
   }
 
   runtime::Status add(const TensorT& other, TensorT* out) const {
@@ -104,14 +144,14 @@ class TensorT {
       return runtime::Status::kInvalidValue;
     }
 
-    if (device_ == Device::kCPU || device_ == Device::kMetal) {
+    if (device_ == Device::kCPU) {
       return ops::vectorAdd<T>(
           cpu_storage_.data(), other.cpu_storage_.data(), out->cpu_storage_.data(), numel(), device_);
     }
     return ops::vectorAdd<T>(
-        static_cast<const T*>(cuda_storage_),
-        static_cast<const T*>(other.cuda_storage_),
-        static_cast<T*>(out->cuda_storage_),
+      static_cast<const T*>(device_storage_),
+      static_cast<const T*>(other.device_storage_),
+      static_cast<T*>(out->device_storage_),
         numel(),
         device_);
   }
@@ -125,36 +165,60 @@ class TensorT {
   }
 
   void* rawDevicePtr() {
-    return cuda_storage_;
+    return device_storage_;
   }
 
   const void* rawDevicePtr() const {
-    return cuda_storage_;
+    return device_storage_;
   }
 
  private:
+  static bool isShapeValid(const std::vector<std::int64_t>& shape) {
+    if (shape.empty()) {
+      return false;
+    }
+    for (std::int64_t d : shape) {
+      if (d <= 0) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  static std::vector<std::int64_t> computeDefaultStrides(const std::vector<std::int64_t>& shape) {
+    std::vector<std::int64_t> s(shape.size(), 1);
+    if (shape.empty()) {
+      return s;
+    }
+    for (std::size_t i = shape.size(); i > 1; --i) {
+      s[i - 2] = s[i - 1] * shape[i - 1];
+    }
+    return s;
+  }
+
   runtime::Status allocateStorage() {
-    if (device_ == Device::kCPU || device_ == Device::kMetal) {
+    if (!isShapeValid(shape_)) {
+      return runtime::Status::kInvalidValue;
+    }
+    if (device_ == Device::kCPU) {
       cpu_storage_.assign(numel(), static_cast<T>(0));
       return runtime::Status::kSuccess;
     }
-    if (numel() == 0) {
-      return runtime::Status::kInvalidValue;
-    }
-    return runtime::mallocDevice(&cuda_storage_, sizeof(T) * numel());
+    return runtime::mallocDevice(&device_storage_, sizeof(T) * numel());
   }
 
   void releaseStorage() {
-    if (device_ == Device::kCUDA && cuda_storage_ != nullptr) {
-      runtime::freeDevice(cuda_storage_);
-      cuda_storage_ = nullptr;
+    if (device_ != Device::kCPU && device_storage_ != nullptr) {
+      runtime::freeDevice(device_storage_);
+      device_storage_ = nullptr;
     }
   }
 
   std::vector<std::int64_t> shape_;
+  std::vector<std::int64_t> strides_;
   Device device_;
   std::vector<T> cpu_storage_;
-  void* cuda_storage_;
+  void* device_storage_;
 };
 
 // 기존 코드 호환용 기본 타입 alias.

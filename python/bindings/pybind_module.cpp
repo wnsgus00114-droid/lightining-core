@@ -5,6 +5,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include "cudajun/attention.hpp"
 #include "cudajun/runtime.hpp"
 #include "cudajun/tensor.hpp"
 
@@ -47,8 +48,18 @@ void bindTensorType(py::module_& m, const char* name) {
            }),
            py::arg("shape"), py::arg("device") = "cpu")
       .def("shape", &TensorType::shape)
+      .def("strides", &TensorType::strides)
+      .def("rank", &TensorType::rank)
+      .def("is_contiguous", &TensorType::isContiguous)
+      .def("dtype", &TensorType::dtypeName)
       .def("device", [](const TensorType& t) { return toString(t.device()); })
       .def("numel", &TensorType::numel)
+      .def("reshape", [](TensorType& t, const std::vector<std::int64_t>& shape) {
+        auto status = t.reshape(shape);
+        if (status != cudajun::runtime::Status::kSuccess) {
+          throw std::runtime_error(cudajun::runtime::getErrorString(status));
+        }
+      })
       .def("from_list", [](TensorType& t, const std::vector<Scalar>& values) {
         auto status = t.fromHost(values);
         if (status != cudajun::runtime::Status::kSuccess) {
@@ -82,5 +93,37 @@ PYBIND11_MODULE(lightining_core, m) {
 
   // 런타임 상태 유틸 함수.
   m.def("cuda_available", [] { return cudajun::runtime::isCudaAvailable(); });
+  m.def("metal_available", [] { return cudajun::runtime::isMetalAvailable(); });
   m.def("backend_name", [] { return cudajun::runtime::backendName(); });
+  m.def("memory_model_name",
+        [] { return std::string(cudajun::runtime::memoryModelName(cudajun::runtime::deviceMemoryModel())); });
+
+  m.def("attention_forward",
+        [](const std::vector<float>& q,
+           const std::vector<float>& k,
+           const std::vector<float>& v,
+           std::size_t seq_len,
+           std::size_t head_dim,
+           bool causal,
+           const std::string& device_name) {
+          const std::size_t expected = seq_len * head_dim;
+          if (q.size() != expected || k.size() != expected || v.size() != expected) {
+            throw std::invalid_argument("q/k/v length must match seq_len * head_dim");
+          }
+          cudajun::AttentionConfig cfg{seq_len, head_dim, causal};
+          std::vector<float> out(expected, 0.0f);
+          const auto status = cudajun::attentionForward(
+              q.data(), k.data(), v.data(), out.data(), cfg, parseDevice(device_name));
+          if (status != cudajun::runtime::Status::kSuccess) {
+            throw std::runtime_error(cudajun::runtime::getErrorString(status));
+          }
+          return out;
+        },
+        py::arg("q"),
+        py::arg("k"),
+        py::arg("v"),
+        py::arg("seq_len"),
+        py::arg("head_dim"),
+        py::arg("causal") = false,
+        py::arg("device") = "metal");
 }
