@@ -183,6 +183,18 @@ chmod +x scripts/sync_remote_after_repo_rename.sh
 ./scripts/sync_remote_after_repo_rename.sh
 ```
 
+By default, the script checks target repo availability using `git ls-remote` and skips safely if rename is not ready.
+
+Useful options:
+
+```bash
+# Skip availability check
+./scripts/sync_remote_after_repo_rename.sh --no-check-target
+
+# Force update even when target is not reachable yet
+./scripts/sync_remote_after_repo_rename.sh --force
+```
+
 After rename, verify project metadata URLs and release workflows still point to `lightning-core`.
 
 ## GitHub Actions: Wheel Build and Publish
