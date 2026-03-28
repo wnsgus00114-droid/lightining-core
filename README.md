@@ -2,6 +2,14 @@
 
 `Lightining Core` is a macOS-first CUDA-style runtime focused on custom attention training/inference paths.
 
+## Identity and Naming
+
+- Repository/package public name: `lightining-core` / `lightining_core`
+- Internal compatibility namespace currently remains `cudajun`
+- Compatibility alias is provided as `lightining_core` for user-facing C++ includes
+
+This mixed naming is currently intentional for compatibility, and will be phased toward a single public identity in future releases.
+
 ## Goals
 
 - CUDA-like runtime API on macOS (Metal-first)
@@ -34,6 +42,17 @@
 - CPU path includes SIMD dot-product optimization (ARM NEON)
 - Metal path uses native custom kernels (scores -> softmax -> output -> grad/update)
 - CPU path is kept as exception/fallback path when device execution is unavailable
+
+## Current Scope (Important)
+
+This project is currently an optimization-focused runtime prototype, not a full deep learning framework.
+
+- Implemented core focus: runtime, attention path, and selected matrix/vector ops
+- Model-family wrappers (Transformer/LSTM/CNN/GCN/GAT/VLM) are policy/fastpath helpers, not full model implementations
+- Tensor API is intentionally minimal today (shape + host transfer + basic ops) and is still evolving
+- Python API currently exposes a small subset for runtime/tensor usage
+
+If you need full framework-level features (autograd graph, broad op coverage, rich tensor views/layout APIs), treat this repository as experimental groundwork rather than a drop-in replacement.
 
 ## Build
 
@@ -204,6 +223,14 @@ to:
 #include "lightining_core/tensor.hpp"
 lightining_core::Tensor t(shape, lightining_core::Device::kMetal);
 ```
+
+Migration status:
+
+- Step 1 (done): public wrapper headers with `lightining_core` alias
+- Step 2 (planned): progressively remove `cudajun` naming from public-facing APIs
+- Step 3 (planned): evaluate internal symbol/target rename with compatibility shims
+
+Detailed technical roadmap is tracked in `ROADMAP.md`.
 
 ## Test
 
