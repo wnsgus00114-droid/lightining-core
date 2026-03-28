@@ -154,11 +154,28 @@ Immediate install from GitHub (works now, no PyPI needed):
 python3 -m pip install "git+https://github.com/wnsgus00114-droid/lightning-core.git@main"
 ```
 
+If the repository rename is not yet applied on GitHub, use the current temporary URL:
+
+```bash
+python3 -m pip install "git+https://github.com/wnsgus00114-droid/lightining-core.git@main"
+```
+
 Install a specific release tag:
 
 ```bash
 python3 -m pip install "git+https://github.com/wnsgus00114-droid/lightning-core.git@v0.1.1"
 ```
+
+## Repository Rename Preparation (`lightining-core` -> `lightning-core`)
+
+When the GitHub repository rename is completed, update local remotes:
+
+```bash
+git remote set-url origin https://github.com/wnsgus00114-droid/lightning-core.git
+git remote -v
+```
+
+After rename, verify project metadata URLs and release workflows still point to `lightning-core`.
 
 ## GitHub Actions: Wheel Build and Publish
 
