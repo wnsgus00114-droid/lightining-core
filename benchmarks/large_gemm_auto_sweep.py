@@ -84,9 +84,7 @@ def _lc_resident_steady_ms(
     session.start_into(a, b, out)
 
     def _run_batch() -> None:
-        for _ in range(loops_per_sample):
-            session.run_into(a, b, out)
-        session.sync_into(a, b, out)
+        session.run_batch_sync_into(a, b, out, loops_per_sample)
 
     batch_ms = _time_ms(_run_batch, warmup=warmup, iters=iters)
     return batch_ms / float(loops_per_sample)
@@ -108,24 +106,24 @@ def bench_large_gemm_sweep() -> dict:
 
     modes = [
         {
-            "name": "balanced_default",
+            "name": "runtime_default_promoted",
             "env": {
-                "CJ_MATMUL_PREFER_MPS_ON_LARGE": "1",
-                "CJ_MATMUL_TRY_KERNEL_ON_LARGE": "1",
-                "CJ_MATMUL_MPS_HYST_PCT": "2.0",
+                "CJ_MATMUL_DISABLE_PROMOTED_BUCKETS": "0",
             },
         },
         {
-            "name": "aggressive_mps",
+            "name": "aggressive_mps_no_bucket",
             "env": {
+                "CJ_MATMUL_DISABLE_PROMOTED_BUCKETS": "1",
                 "CJ_MATMUL_PREFER_MPS_ON_LARGE": "1",
                 "CJ_MATMUL_TRY_KERNEL_ON_LARGE": "0",
                 "CJ_MATMUL_MPS_HYST_PCT": "5.0",
             },
         },
         {
-            "name": "kernel_favor",
+            "name": "kernel_favor_no_bucket",
             "env": {
+                "CJ_MATMUL_DISABLE_PROMOTED_BUCKETS": "1",
                 "CJ_MATMUL_PREFER_MPS_ON_LARGE": "0",
                 "CJ_MATMUL_TRY_KERNEL_ON_LARGE": "1",
                 "CJ_MATMUL_MPS_HYST_PCT": "0.0",
@@ -155,6 +153,7 @@ def bench_large_gemm_sweep() -> dict:
             mode_name = mode["name"]
             tune_file = str(tune_root / f"{mode_name}_{m}x{k}x{n}.csv")
             with _env(CJ_MATMUL_TUNE_CACHE_FILE=tune_file, **mode["env"]):
+                lc.matmul_reset_tuning()
                 lc_one_shot_ms = _lc_one_shot_ms(a, b, out, m, k, n)
                 lc_resident_ms = _lc_resident_steady_ms(a, b, out, m, k, n)
 

@@ -76,6 +76,16 @@ void bindOps(py::module_& m) {
         throwIfNotSuccess(s.sync(a.data(), b.data(), out.data()));
         return out;
       })
+      .def("run_batch_sync",
+           [](const lc::ops::MatMulMetalResidentSession<float>& s,
+              const std::vector<float>& a,
+              const std::vector<float>& b,
+              std::size_t out_size,
+              std::size_t repeat_count) {
+             std::vector<float> out(out_size, 0.0f);
+             throwIfNotSuccess(s.runBatchSync(a.data(), b.data(), out.data(), repeat_count));
+             return out;
+           })
       .def("start_into",
            [](const lc::ops::MatMulMetalResidentSession<float>& s,
               const py::array_t<float, py::array::c_style | py::array::forcecast>& a,
@@ -103,6 +113,14 @@ void bindOps(py::module_& m) {
             const py::array_t<float, py::array::c_style | py::array::forcecast>& b,
             py::array_t<float, py::array::c_style | py::array::forcecast>& out) {
            throwIfNotSuccess(s.sync(a.data(), b.data(), out.mutable_data()));
+          })
+      .def("run_batch_sync_into",
+          [](const lc::ops::MatMulMetalResidentSession<float>& s,
+            const py::array_t<float, py::array::c_style | py::array::forcecast>& a,
+            const py::array_t<float, py::array::c_style | py::array::forcecast>& b,
+            py::array_t<float, py::array::c_style | py::array::forcecast>& out,
+            std::size_t repeat_count) {
+           throwIfNotSuccess(s.runBatchSync(a.data(), b.data(), out.mutable_data(), repeat_count));
            });
 
   py::class_<lc::ops::MatrixElemwiseMetalResidentSession<float>>(m, "MatrixElemwiseMetalResidentSession")
@@ -447,6 +465,8 @@ void bindOps(py::module_& m) {
         py::arg("n"),
         py::arg("device") = "metal",
         py::arg("policy") = lc::ops::MatMulIoPolicy{});
+
+        m.def("matmul_reset_tuning", []() { throwIfNotSuccess(lc::ops::matMulMetalResetTuning()); });
 
   m.def("vector_add",
         [](const std::vector<float>& a, const std::vector<float>& b, const std::string& device_name) {

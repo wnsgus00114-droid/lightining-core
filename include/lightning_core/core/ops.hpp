@@ -9,6 +9,10 @@
 
 namespace lightning_core::ops {
 
+inline runtime::Status matMulMetalResetTuning() {
+	return detail::matMulMetalResetTuning();
+}
+
 template <typename T>
 runtime::Status matMulWithPolicy(
 		const T* a,
@@ -201,6 +205,36 @@ runtime::Status matMulMetalResidentSync(
 		std::size_t k,
 		std::size_t n) {
 	return matMulWithPolicy(a, b, out, m, k, n, runtime::Device::kMetal, makeMetalResidentSyncPolicy());
+}
+
+template <typename T>
+runtime::Status matMulMetalResidentBatchSync(
+		const T* a,
+		const T* b,
+		T* out,
+		std::size_t m,
+		std::size_t k,
+		std::size_t n,
+		std::size_t repeat_count) {
+	if (repeat_count == 0) {
+		return runtime::Status::kInvalidValue;
+	}
+	if constexpr (std::is_same_v<T, float>) {
+		return detail::matMulMetalWithPolicyBatched(
+				a,
+				b,
+				out,
+				m,
+				k,
+				n,
+				false,
+				false,
+				false,
+				true,
+				repeat_count);
+	} else {
+		return runtime::Status::kNotSupported;
+	}
 }
 
 template <typename T>
@@ -424,6 +458,10 @@ class MatMulMetalResidentSession {
 
 	runtime::Status sync(const T* a, const T* b, T* out) const {
 		return matMulMetalResidentSync<T>(a, b, out, m_, k_, n_);
+	}
+
+	runtime::Status runBatchSync(const T* a, const T* b, T* out, std::size_t repeat_count) const {
+		return matMulMetalResidentBatchSync<T>(a, b, out, m_, k_, n_, repeat_count);
 	}
 
  private:

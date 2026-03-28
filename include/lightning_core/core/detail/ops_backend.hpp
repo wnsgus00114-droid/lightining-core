@@ -251,6 +251,19 @@ runtime::Status matMulMetalWithPolicy(
     bool upload_b,
     bool download_out,
     bool synchronize);
+runtime::Status matMulMetalWithPolicyBatched(
+    const float* a,
+    const float* b,
+    float* out,
+    std::size_t m,
+    std::size_t k,
+    std::size_t n,
+    bool upload_a,
+    bool upload_b,
+    bool download_out,
+    bool synchronize,
+    std::size_t repeat_count);
+runtime::Status matMulMetalResetTuning();
 runtime::Status matMulMetalWithPolicy(
     const double* a,
     const double* b,

@@ -6,7 +6,9 @@
 #import <Metal/Metal.h>
 #import <MetalPerformanceShaders/MetalPerformanceShaders.h>
 
+#include <algorithm>
 #include <chrono>
+#include <climits>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -45,6 +47,7 @@ struct MatMulTuneKeyHash {
 struct MatMulTuneValue {
   uint32_t best_tile = 16;
   bool use_mps = false;
+  bool use_vec2_kernel = false;
 };
 
 struct MatMulSmallTuneValue {
@@ -59,6 +62,7 @@ struct MetalMatMulContext {
   id<MTLComputePipelineState> pipeline_t8 = nil;
   id<MTLComputePipelineState> pipeline_t12 = nil;
   id<MTLComputePipelineState> pipeline_t16 = nil;
+  id<MTLComputePipelineState> pipeline_t16x2 = nil;
   id<MTLComputePipelineState> pipeline_t32 = nil;
   id<MTLBuffer> buf_a = nil;
   id<MTLBuffer> buf_b = nil;
@@ -71,6 +75,7 @@ struct MetalMatMulContext {
   std::size_t tuned_n = 0;
   uint32_t best_tile = 0;
   bool use_mps = false;
+  bool use_vec2 = false;
   uint32_t mps_m = 0;
   uint32_t mps_k = 0;
   uint32_t mps_n = 0;
@@ -102,6 +107,70 @@ enum class MatMulSmallBatchMode {
   kForceKernel,
   kForceMps,
 };
+
+bool matMulDisablePromotedBuckets() {
+  const char* env = std::getenv("CJ_MATMUL_DISABLE_PROMOTED_BUCKETS");
+  if (env == nullptr || env[0] == '\0') {
+    return false;
+  }
+  return (std::strcmp(env, "0") != 0 && std::strcmp(env, "false") != 0 && std::strcmp(env, "off") != 0);
+}
+
+bool promotedShapeBucketPolicy(
+    uint32_t mm,
+    uint32_t kk,
+    uint32_t nn,
+    uint32_t* best_tile_out,
+    bool* use_mps_out,
+    bool* use_vec2_out) {
+  if (best_tile_out == nullptr || use_mps_out == nullptr || use_vec2_out == nullptr) {
+    return false;
+  }
+  if (matMulDisablePromotedBuckets()) {
+    return false;
+  }
+
+  const uint32_t max_dim = std::max(mm, std::max(kk, nn));
+  const bool square_like =
+      (mm > 0 && kk > 0 && nn > 0 &&
+       (std::max(mm, std::max(kk, nn)) - std::min(mm, std::min(kk, nn)) <= 512));
+
+  // Promoted defaults from the latest large-gemm sweep (2026-03-29).
+  if (square_like && max_dim >= 3072) {
+    *best_tile_out = 16;
+    *use_mps_out = true;
+    *use_vec2_out = false;
+    return true;
+  }
+  if (square_like && max_dim >= 2048) {
+    *best_tile_out = 16;
+    *use_mps_out = true;
+    *use_vec2_out = false;
+    return true;
+  }
+  if (square_like && max_dim >= 1536) {
+    *best_tile_out = 16;
+    *use_mps_out = true;
+    *use_vec2_out = false;
+    return true;
+  }
+  if (square_like && max_dim >= 1024) {
+    *best_tile_out = 16;
+    *use_mps_out = true;
+    *use_vec2_out = false;
+    return true;
+  }
+
+  // Wide-output case (e.g., 4096x1024x4096) favored kernel path in sweep.
+  if (mm >= 3072 && nn >= 3072 && kk <= 1536) {
+    *best_tile_out = 16;
+    *use_mps_out = true;
+    *use_vec2_out = false;
+    return true;
+  }
+
+  return false;
+}
 
 MatMulSmallBatchMode matMulSmallBatchMode() {
   const char* env = std::getenv("CJ_MATMUL_MLE2_KERNEL");
@@ -198,7 +267,8 @@ void saveMatMulTuneCacheIfDirty(MetalMatMulContext& ctx) {
   }
   for (const auto& kv : ctx.tune_cache) {
     ofs << kv.first.m << "," << kv.first.k << "," << kv.first.n << "," << kv.second.best_tile << ","
-        << static_cast<unsigned>(kv.second.use_mps ? 1 : 0) << "\n";
+      << static_cast<unsigned>(kv.second.use_mps ? 1 : 0) << ","
+      << static_cast<unsigned>(kv.second.use_vec2_kernel ? 1 : 0) << "\n";
   }
   if (ofs.good()) {
     ctx.tune_cache_dirty = false;
@@ -246,7 +316,7 @@ void loadMatMulTuneCacheIfNeeded(MetalMatMulContext& ctx) {
     while (std::getline(ss, tok, ',')) {
       cols.push_back(tok);
     }
-    if (cols.size() != 5) {
+    if (cols.size() != 5 && cols.size() != 6) {
       continue;
     }
     try {
@@ -257,6 +327,7 @@ void loadMatMulTuneCacheIfNeeded(MetalMatMulContext& ctx) {
       MatMulTuneValue val;
       val.best_tile = static_cast<uint32_t>(std::stoul(cols[3]));
       val.use_mps = std::stoi(cols[4]) != 0;
+      val.use_vec2_kernel = (cols.size() >= 6) ? (std::stoi(cols[5]) != 0) : false;
       ctx.tune_cache[key] = val;
     } catch (...) {
       // Ignore malformed lines.
@@ -437,6 +508,52 @@ kernel void matmul_f32_t16(
   }
 }
 
+kernel void matmul_f32_t16x2(
+    device const float* a [[buffer(0)]],
+    device const float* b [[buffer(1)]],
+    device float* out [[buffer(2)]],
+    constant uint& m [[buffer(3)]],
+    constant uint& k [[buffer(4)]],
+    constant uint& n [[buffer(5)]],
+    uint2 tid [[thread_position_in_threadgroup]],
+    uint2 tgid [[threadgroup_position_in_grid]]) {
+  constexpr uint TILE = 16;
+  uint row = tgid.y * TILE + tid.y;
+  uint col0 = tgid.x * (TILE * 2) + tid.x;
+  uint col1 = col0 + TILE;
+
+  threadgroup float a_tile[TILE][TILE];
+  threadgroup float b_tile0[TILE][TILE];
+  threadgroup float b_tile1[TILE][TILE];
+
+  float acc0 = 0.0f;
+  float acc1 = 0.0f;
+  uint num_tiles = (k + TILE - 1) / TILE;
+  for (uint t = 0; t < num_tiles; ++t) {
+    uint a_col = t * TILE + tid.x;
+    uint b_row = t * TILE + tid.y;
+
+    a_tile[tid.y][tid.x] = (row < m && a_col < k) ? a[row * k + a_col] : 0.0f;
+    b_tile0[tid.y][tid.x] = (b_row < k && col0 < n) ? b[b_row * n + col0] : 0.0f;
+    b_tile1[tid.y][tid.x] = (b_row < k && col1 < n) ? b[b_row * n + col1] : 0.0f;
+
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint p = 0; p < TILE; ++p) {
+      float av = a_tile[tid.y][p];
+      acc0 += av * b_tile0[p][tid.x];
+      acc1 += av * b_tile1[p][tid.x];
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+  }
+
+  if (row < m && col0 < n) {
+    out[row * n + col0] = acc0;
+  }
+  if (row < m && col1 < n) {
+    out[row * n + col1] = acc1;
+  }
+}
+
 kernel void matmul_f32_t32(
     device const float* a [[buffer(0)]],
     device const float* b [[buffer(1)]],
@@ -579,8 +696,9 @@ runtime::Status ensureContext() {
     }
   }
 
-  if (ctx.pipeline_m1 != nil && ctx.pipeline_m2 != nil &&
-      ctx.pipeline_t8 != nil && ctx.pipeline_t12 != nil && ctx.pipeline_t16 != nil && ctx.pipeline_t32 != nil) {
+    if (ctx.pipeline_m1 != nil && ctx.pipeline_m2 != nil &&
+      ctx.pipeline_t8 != nil && ctx.pipeline_t12 != nil && ctx.pipeline_t16 != nil &&
+      ctx.pipeline_t16x2 != nil && ctx.pipeline_t32 != nil) {
     loadMatMulTuneCacheIfNeeded(ctx);
     loadMatMulSmallTuneCacheIfNeeded(ctx);
     return runtime::Status::kSuccess;
@@ -598,8 +716,9 @@ runtime::Status ensureContext() {
   id<MTLFunction> fn8 = [lib newFunctionWithName:@"matmul_f32_t8"];
   id<MTLFunction> fn12 = [lib newFunctionWithName:@"matmul_f32_t12"];
   id<MTLFunction> fn16 = [lib newFunctionWithName:@"matmul_f32_t16"];
+  id<MTLFunction> fn16x2 = [lib newFunctionWithName:@"matmul_f32_t16x2"];
   id<MTLFunction> fn32 = [lib newFunctionWithName:@"matmul_f32_t32"];
-  if (!fn_m1 || !fn_m2 || !fn8 || !fn12 || !fn16 || !fn32) {
+  if (!fn_m1 || !fn_m2 || !fn8 || !fn12 || !fn16 || !fn16x2 || !fn32) {
     return runtime::Status::kDriverError;
   }
 
@@ -608,9 +727,10 @@ runtime::Status ensureContext() {
   ctx.pipeline_t8 = [ctx.device newComputePipelineStateWithFunction:fn8 error:&err];
   ctx.pipeline_t12 = [ctx.device newComputePipelineStateWithFunction:fn12 error:&err];
   ctx.pipeline_t16 = [ctx.device newComputePipelineStateWithFunction:fn16 error:&err];
+  ctx.pipeline_t16x2 = [ctx.device newComputePipelineStateWithFunction:fn16x2 error:&err];
   ctx.pipeline_t32 = [ctx.device newComputePipelineStateWithFunction:fn32 error:&err];
   if (!ctx.pipeline_m1 || !ctx.pipeline_m2 ||
-      !ctx.pipeline_t8 || !ctx.pipeline_t12 || !ctx.pipeline_t16 || !ctx.pipeline_t32) {
+      !ctx.pipeline_t8 || !ctx.pipeline_t12 || !ctx.pipeline_t16 || !ctx.pipeline_t16x2 || !ctx.pipeline_t32) {
     return runtime::Status::kDriverError;
   }
 
@@ -706,6 +826,144 @@ runtime::Status runMatMulKernel(
   return runtime::Status::kSuccess;
 }
 
+runtime::Status runMatMulKernelVec2(
+    MetalMatMulContext& ctx,
+    uint32_t mm,
+    uint32_t kk,
+    uint32_t nn,
+    bool wait_for_completion) {
+  id<MTLComputePipelineState> pipe = ctx.pipeline_t16x2;
+  if (!pipe) {
+    return runtime::Status::kDriverError;
+  }
+  constexpr uint32_t tile = 16;
+  if (pipe.maxTotalThreadsPerThreadgroup < (tile * tile)) {
+    return runtime::Status::kNotSupported;
+  }
+
+  id<MTLCommandBuffer> cmd = [ctx.queue commandBuffer];
+  id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
+  if (!cmd || !enc) {
+    return runtime::Status::kDriverError;
+  }
+
+  [enc setComputePipelineState:pipe];
+  [enc setBuffer:ctx.buf_a offset:0 atIndex:0];
+  [enc setBuffer:ctx.buf_b offset:0 atIndex:1];
+  [enc setBuffer:ctx.buf_out offset:0 atIndex:2];
+  [enc setBytes:&mm length:sizeof(mm) atIndex:3];
+  [enc setBytes:&kk length:sizeof(kk) atIndex:4];
+  [enc setBytes:&nn length:sizeof(nn) atIndex:5];
+
+  MTLSize tg = MTLSizeMake(tile, tile, 1);
+  MTLSize tgs = MTLSizeMake((nn + (tile * 2) - 1) / (tile * 2), (mm + tile - 1) / tile, 1);
+  [enc dispatchThreadgroups:tgs threadsPerThreadgroup:tg];
+  [enc endEncoding];
+
+  [cmd commit];
+  if (wait_for_completion) {
+    [cmd waitUntilCompleted];
+    return cmd.status == MTLCommandBufferStatusCompleted ? runtime::Status::kSuccess : runtime::Status::kUnknown;
+  }
+  return runtime::Status::kSuccess;
+}
+
+runtime::Status runMatMulKernelBatch(
+    MetalMatMulContext& ctx,
+    uint32_t tile,
+    uint32_t mm,
+    uint32_t kk,
+    uint32_t nn,
+    uint32_t repeat_count,
+    bool wait_for_completion) {
+  id<MTLComputePipelineState> pipe = pipelineForTile(ctx, tile);
+  if (!pipe || repeat_count == 0) {
+    return runtime::Status::kInvalidValue;
+  }
+  if (pipe.maxTotalThreadsPerThreadgroup < (tile * tile)) {
+    return runtime::Status::kNotSupported;
+  }
+
+  id<MTLCommandBuffer> cmd = [ctx.queue commandBuffer];
+  if (!cmd) {
+    return runtime::Status::kDriverError;
+  }
+
+  MTLSize tg = MTLSizeMake(tile, tile, 1);
+  MTLSize tgs = MTLSizeMake((nn + tile - 1) / tile, (mm + tile - 1) / tile, 1);
+
+  for (uint32_t i = 0; i < repeat_count; ++i) {
+    id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
+    if (!enc) {
+      return runtime::Status::kDriverError;
+    }
+    [enc setComputePipelineState:pipe];
+    [enc setBuffer:ctx.buf_a offset:0 atIndex:0];
+    [enc setBuffer:ctx.buf_b offset:0 atIndex:1];
+    [enc setBuffer:ctx.buf_out offset:0 atIndex:2];
+    [enc setBytes:&mm length:sizeof(mm) atIndex:3];
+    [enc setBytes:&kk length:sizeof(kk) atIndex:4];
+    [enc setBytes:&nn length:sizeof(nn) atIndex:5];
+    [enc dispatchThreadgroups:tgs threadsPerThreadgroup:tg];
+    [enc endEncoding];
+  }
+
+  [cmd commit];
+  if (wait_for_completion) {
+    [cmd waitUntilCompleted];
+    return cmd.status == MTLCommandBufferStatusCompleted ? runtime::Status::kSuccess : runtime::Status::kUnknown;
+  }
+  return runtime::Status::kSuccess;
+}
+
+runtime::Status runMatMulKernelVec2Batch(
+    MetalMatMulContext& ctx,
+    uint32_t mm,
+    uint32_t kk,
+    uint32_t nn,
+    uint32_t repeat_count,
+    bool wait_for_completion) {
+  id<MTLComputePipelineState> pipe = ctx.pipeline_t16x2;
+  if (!pipe || repeat_count == 0) {
+    return runtime::Status::kInvalidValue;
+  }
+  constexpr uint32_t tile = 16;
+  if (pipe.maxTotalThreadsPerThreadgroup < (tile * tile)) {
+    return runtime::Status::kNotSupported;
+  }
+
+  id<MTLCommandBuffer> cmd = [ctx.queue commandBuffer];
+  if (!cmd) {
+    return runtime::Status::kDriverError;
+  }
+
+  MTLSize tg = MTLSizeMake(tile, tile, 1);
+  MTLSize tgs = MTLSizeMake((nn + (tile * 2) - 1) / (tile * 2), (mm + tile - 1) / tile, 1);
+
+  for (uint32_t i = 0; i < repeat_count; ++i) {
+    id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
+    if (!enc) {
+      return runtime::Status::kDriverError;
+    }
+    [enc setComputePipelineState:pipe];
+    [enc setBuffer:ctx.buf_a offset:0 atIndex:0];
+    [enc setBuffer:ctx.buf_b offset:0 atIndex:1];
+    [enc setBuffer:ctx.buf_out offset:0 atIndex:2];
+    [enc setBytes:&mm length:sizeof(mm) atIndex:3];
+    [enc setBytes:&kk length:sizeof(kk) atIndex:4];
+    [enc setBytes:&nn length:sizeof(nn) atIndex:5];
+    [enc dispatchThreadgroups:tgs threadsPerThreadgroup:tg];
+    [enc endEncoding];
+  }
+
+  [cmd commit];
+  if (wait_for_completion) {
+    [cmd waitUntilCompleted];
+    return cmd.status == MTLCommandBufferStatusCompleted ? runtime::Status::kSuccess : runtime::Status::kUnknown;
+  }
+  return runtime::Status::kSuccess;
+}
+
 runtime::Status runMatMulMps(
     MetalMatMulContext& ctx,
     uint32_t mm,
@@ -756,6 +1014,70 @@ runtime::Status runMatMulMps(
     return runtime::Status::kDriverError;
   }
   [ctx.mps_op encodeToCommandBuffer:cmd leftMatrix:ctx.mps_a_mat rightMatrix:ctx.mps_b_mat resultMatrix:ctx.mps_c_mat];
+  [cmd commit];
+  if (wait_for_completion) {
+    [cmd waitUntilCompleted];
+    return cmd.status == MTLCommandBufferStatusCompleted ? runtime::Status::kSuccess : runtime::Status::kUnknown;
+  }
+  return runtime::Status::kSuccess;
+}
+
+runtime::Status runMatMulMpsBatch(
+    MetalMatMulContext& ctx,
+    uint32_t mm,
+    uint32_t kk,
+    uint32_t nn,
+    uint32_t repeat_count,
+    bool wait_for_completion) {
+  if (repeat_count == 0) {
+    return runtime::Status::kInvalidValue;
+  }
+  if (ctx.mps_op == nil || ctx.mps_m != mm || ctx.mps_k != kk || ctx.mps_n != nn ||
+      ctx.mps_a_mat == nil || ctx.mps_b_mat == nil || ctx.mps_c_mat == nil) {
+    ctx.mps_op = [[MPSMatrixMultiplication alloc] initWithDevice:ctx.device
+                                                    transposeLeft:NO
+                                                   transposeRight:NO
+                                                       resultRows:mm
+                                                    resultColumns:nn
+                                                  interiorColumns:kk
+                                                            alpha:1.0f
+                                                             beta:0.0f];
+    if (ctx.mps_op == nil) {
+      return runtime::Status::kNotSupported;
+    }
+    ctx.mps_m = mm;
+    ctx.mps_k = kk;
+    ctx.mps_n = nn;
+
+    MPSMatrixDescriptor* aDesc = [MPSMatrixDescriptor matrixDescriptorWithRows:mm
+                                                                        columns:kk
+                                                                       rowBytes:kk * sizeof(float)
+                                                                       dataType:MPSDataTypeFloat32];
+    MPSMatrixDescriptor* bDesc = [MPSMatrixDescriptor matrixDescriptorWithRows:kk
+                                                                        columns:nn
+                                                                       rowBytes:nn * sizeof(float)
+                                                                       dataType:MPSDataTypeFloat32];
+    MPSMatrixDescriptor* cDesc = [MPSMatrixDescriptor matrixDescriptorWithRows:mm
+                                                                        columns:nn
+                                                                       rowBytes:nn * sizeof(float)
+                                                                       dataType:MPSDataTypeFloat32];
+
+    ctx.mps_a_mat = [[MPSMatrix alloc] initWithBuffer:ctx.buf_a descriptor:aDesc];
+    ctx.mps_b_mat = [[MPSMatrix alloc] initWithBuffer:ctx.buf_b descriptor:bDesc];
+    ctx.mps_c_mat = [[MPSMatrix alloc] initWithBuffer:ctx.buf_out descriptor:cDesc];
+  }
+
+  if (ctx.mps_op == nil || ctx.mps_a_mat == nil || ctx.mps_b_mat == nil || ctx.mps_c_mat == nil) {
+    return runtime::Status::kDriverError;
+  }
+
+  id<MTLCommandBuffer> cmd = [ctx.queue commandBuffer];
+  if (!cmd) {
+    return runtime::Status::kDriverError;
+  }
+  for (uint32_t i = 0; i < repeat_count; ++i) {
+    [ctx.mps_op encodeToCommandBuffer:cmd leftMatrix:ctx.mps_a_mat rightMatrix:ctx.mps_b_mat resultMatrix:ctx.mps_c_mat];
+  }
   [cmd commit];
   if (wait_for_completion) {
     [cmd waitUntilCompleted];
@@ -887,10 +1209,29 @@ runtime::Status autoTuneTile(MetalMatMulContext& ctx, uint32_t mm, uint32_t kk, 
   if (cached != ctx.tune_cache.end()) {
     ctx.best_tile = cached->second.best_tile;
     ctx.use_mps = cached->second.use_mps;
+    ctx.use_vec2 = cached->second.use_vec2_kernel;
     ctx.tuned_m = static_cast<std::size_t>(mm);
     ctx.tuned_k = static_cast<std::size_t>(kk);
     ctx.tuned_n = static_cast<std::size_t>(nn);
     return runtime::Status::kSuccess;
+  }
+
+  {
+    uint32_t promoted_tile = 16;
+    bool promoted_use_mps = false;
+    bool promoted_use_vec2 = false;
+    if (promotedShapeBucketPolicy(mm, kk, nn, &promoted_tile, &promoted_use_mps, &promoted_use_vec2)) {
+      ctx.best_tile = promoted_tile;
+      ctx.use_mps = promoted_use_mps;
+      ctx.use_vec2 = promoted_use_vec2;
+      ctx.tuned_m = static_cast<std::size_t>(mm);
+      ctx.tuned_k = static_cast<std::size_t>(kk);
+      ctx.tuned_n = static_cast<std::size_t>(nn);
+      ctx.tune_cache[key] = MatMulTuneValue{promoted_tile, promoted_use_mps, promoted_use_vec2};
+      ctx.tune_cache_dirty = true;
+      saveMatMulTuneCacheIfDirty(ctx);
+      return runtime::Status::kSuccess;
+    }
   }
 
   if (ctx.best_tile != 0 &&
@@ -904,6 +1245,7 @@ runtime::Status autoTuneTile(MetalMatMulContext& ctx, uint32_t mm, uint32_t kk, 
   double best_ms = std::numeric_limits<double>::max();
   uint32_t best_tile = 16;
   bool best_use_mps = false;
+  bool best_use_vec2 = false;
 
   const std::uint64_t ops = static_cast<std::uint64_t>(mm) * static_cast<std::uint64_t>(kk) * static_cast<std::uint64_t>(nn);
   const bool is_large_gemm = (ops >= matMulLargeOpsThreshold());
@@ -967,6 +1309,35 @@ runtime::Status autoTuneTile(MetalMatMulContext& ctx, uint32_t mm, uint32_t kk, 
         best_ms = avg_ms;
         best_tile = tile;
         best_use_mps = false;
+        best_use_vec2 = false;
+      }
+    }
+  }
+
+  if (evaluate_kernel_candidates && nn >= 2048 && mm >= 1024) {
+    runtime::Status warm = runMatMulKernelVec2(ctx, mm, kk, nn, true);
+    if (warm == runtime::Status::kSuccess) {
+      double sum_ms = 0.0;
+      bool ok = true;
+      for (int rep = 0; rep < 3; ++rep) {
+        auto start = std::chrono::high_resolution_clock::now();
+        runtime::Status st = runMatMulKernelVec2(ctx, mm, kk, nn, true);
+        auto end = std::chrono::high_resolution_clock::now();
+        if (st != runtime::Status::kSuccess) {
+          ok = false;
+          break;
+        }
+        std::chrono::duration<double, std::milli> elapsed = end - start;
+        sum_ms += elapsed.count();
+      }
+      if (ok) {
+        const double avg_ms = sum_ms / 3.0;
+        if (avg_ms < best_ms) {
+          best_ms = avg_ms;
+          best_tile = 16;
+          best_use_mps = false;
+          best_use_vec2 = true;
+        }
       }
     }
   }
@@ -995,6 +1366,7 @@ runtime::Status autoTuneTile(MetalMatMulContext& ctx, uint32_t mm, uint32_t kk, 
         if (avg_ms <= mps_threshold) {
           best_ms = avg_ms;
           best_use_mps = true;
+          best_use_vec2 = false;
         }
       }
     }
@@ -1002,10 +1374,11 @@ runtime::Status autoTuneTile(MetalMatMulContext& ctx, uint32_t mm, uint32_t kk, 
 
   ctx.best_tile = best_tile;
   ctx.use_mps = best_use_mps;
+  ctx.use_vec2 = best_use_vec2;
   ctx.tuned_m = static_cast<std::size_t>(mm);
   ctx.tuned_k = static_cast<std::size_t>(kk);
   ctx.tuned_n = static_cast<std::size_t>(nn);
-  ctx.tune_cache[key] = MatMulTuneValue{best_tile, best_use_mps};
+  ctx.tune_cache[key] = MatMulTuneValue{best_tile, best_use_mps, best_use_vec2};
   ctx.tune_cache_dirty = true;
   saveMatMulTuneCacheIfDirty(ctx);
   return runtime::Status::kSuccess;
@@ -1021,6 +1394,39 @@ runtime::Status matMulMetal(
     std::size_t k,
     std::size_t n) {
   return matMulMetalWithPolicy(a, b, out, m, k, n, true, true, true, true);
+}
+
+runtime::Status matMulMetalResetTuning() {
+  @autoreleasepool {
+    runtime::Status st = ensureContext();
+    if (st != runtime::Status::kSuccess) {
+      return st;
+    }
+    MetalMatMulContext& ctx = getContext();
+    st = waitForQueueIdle(ctx);
+    if (st != runtime::Status::kSuccess) {
+      return st;
+    }
+
+    ctx.best_tile = 0;
+    ctx.use_mps = false;
+    ctx.use_vec2 = false;
+    ctx.tuned_m = 0;
+    ctx.tuned_k = 0;
+    ctx.tuned_n = 0;
+
+    ctx.tune_cache.clear();
+    ctx.tune_cache_loaded = false;
+    ctx.tune_cache_dirty = false;
+    ctx.tune_cache_path.clear();
+
+    ctx.small_tune_cache.clear();
+    ctx.small_tune_cache_loaded = false;
+    ctx.small_tune_cache_dirty = false;
+    ctx.small_tune_cache_path.clear();
+
+    return runtime::Status::kSuccess;
+  }
 }
 
 runtime::Status matMulMetalWithPolicy(
@@ -1096,8 +1502,13 @@ runtime::Status matMulMetalWithPolicy(
       if (st != runtime::Status::kSuccess) {
         return st;
       }
-      st = ctx.use_mps ? runMatMulMps(ctx, mm, kk, nn, wait_for_completion)
-                       : runMatMulKernel(ctx, ctx.best_tile, mm, kk, nn, wait_for_completion);
+      if (ctx.use_mps) {
+        st = runMatMulMps(ctx, mm, kk, nn, wait_for_completion);
+      } else if (ctx.use_vec2) {
+        st = runMatMulKernelVec2(ctx, mm, kk, nn, wait_for_completion);
+      } else {
+        st = runMatMulKernel(ctx, ctx.best_tile, mm, kk, nn, wait_for_completion);
+      }
     }
     if (st != runtime::Status::kSuccess) {
       return st;
@@ -1107,6 +1518,100 @@ runtime::Status matMulMetalWithPolicy(
       ctx.async_inflight = 0;
     } else {
       ctx.async_inflight += 1;
+    }
+
+    if (download_out) {
+      std::memcpy(out, ctx.buf_out.contents, bytes_out);
+    }
+
+    return runtime::Status::kSuccess;
+  }
+}
+
+runtime::Status matMulMetalWithPolicyBatched(
+    const float* a,
+    const float* b,
+    float* out,
+    std::size_t m,
+    std::size_t k,
+    std::size_t n,
+    bool upload_a,
+    bool upload_b,
+    bool download_out,
+    bool synchronize,
+    std::size_t repeat_count) {
+  if ((upload_a && a == nullptr) || (upload_b && b == nullptr) || (download_out && out == nullptr) || m == 0 ||
+      k == 0 || n == 0 || repeat_count == 0) {
+    return runtime::Status::kInvalidValue;
+  }
+
+  @autoreleasepool {
+    runtime::Status st = ensureContext();
+    if (st != runtime::Status::kSuccess) {
+      return st;
+    }
+
+    const std::size_t bytes_a = m * k * sizeof(float);
+    const std::size_t bytes_b = k * n * sizeof(float);
+    const std::size_t bytes_out = m * n * sizeof(float);
+    st = ensureBuffers(bytes_a, bytes_b, bytes_out);
+    if (st != runtime::Status::kSuccess) {
+      return st;
+    }
+
+    MetalMatMulContext& ctx = getContext();
+    const bool effective_sync = synchronize || download_out;
+    const bool force_wait_for_capacity =
+        (!effective_sync && (ctx.async_inflight + static_cast<uint32_t>(repeat_count) >= kMatMulMaxAsyncInflight));
+    const bool wait_for_completion = effective_sync || force_wait_for_capacity;
+
+    if (upload_a || upload_b) {
+      st = waitForQueueIdle(ctx);
+      if (st != runtime::Status::kSuccess) {
+        return st;
+      }
+    }
+
+    if (upload_a) {
+      std::memcpy(ctx.buf_a.contents, a, bytes_a);
+    }
+    if (upload_b) {
+      std::memcpy(ctx.buf_b.contents, b, bytes_b);
+    }
+
+    uint32_t mm = static_cast<uint32_t>(m);
+    uint32_t kk = static_cast<uint32_t>(k);
+    uint32_t nn = static_cast<uint32_t>(n);
+    uint32_t repeat_u32 = static_cast<uint32_t>(repeat_count > static_cast<std::size_t>(UINT32_MAX) ? UINT32_MAX : repeat_count);
+
+    if (mm <= 2) {
+      for (uint32_t i = 0; i < repeat_u32; ++i) {
+        st = runMatMulSmallBatch(ctx, mm, kk, nn, wait_for_completion && (i + 1 == repeat_u32));
+        if (st != runtime::Status::kSuccess) {
+          return st;
+        }
+      }
+    } else {
+      st = autoTuneTile(ctx, mm, kk, nn);
+      if (st != runtime::Status::kSuccess) {
+        return st;
+      }
+      if (ctx.use_mps) {
+        st = runMatMulMpsBatch(ctx, mm, kk, nn, repeat_u32, wait_for_completion);
+      } else if (ctx.use_vec2) {
+        st = runMatMulKernelVec2Batch(ctx, mm, kk, nn, repeat_u32, wait_for_completion);
+      } else {
+        st = runMatMulKernelBatch(ctx, ctx.best_tile, mm, kk, nn, repeat_u32, wait_for_completion);
+      }
+      if (st != runtime::Status::kSuccess) {
+        return st;
+      }
+    }
+
+    if (wait_for_completion) {
+      ctx.async_inflight = 0;
+    } else {
+      ctx.async_inflight += repeat_u32;
     }
 
     if (download_out) {
@@ -1219,6 +1724,10 @@ runtime::Status matMulMetal(
   return runtime::Status::kNotSupported;
 }
 
+runtime::Status matMulMetalResetTuning() {
+  return runtime::Status::kNotSupported;
+}
+
 runtime::Status matMulMetalWithPolicy(
     const float* a,
     const float* b,
@@ -1240,6 +1749,32 @@ runtime::Status matMulMetalWithPolicy(
   (void)upload_b;
   (void)download_out;
   (void)synchronize;
+  return runtime::Status::kNotSupported;
+}
+
+runtime::Status matMulMetalWithPolicyBatched(
+    const float* a,
+    const float* b,
+    float* out,
+    std::size_t m,
+    std::size_t k,
+    std::size_t n,
+    bool upload_a,
+    bool upload_b,
+    bool download_out,
+    bool synchronize,
+    std::size_t repeat_count) {
+  (void)a;
+  (void)b;
+  (void)out;
+  (void)m;
+  (void)k;
+  (void)n;
+  (void)upload_a;
+  (void)upload_b;
+  (void)download_out;
+  (void)synchronize;
+  (void)repeat_count;
   return runtime::Status::kNotSupported;
 }
 
