@@ -1,0 +1,58 @@
+[build-system]
+requires = [
+  "scikit-build-core>=0.11",
+  "pybind11>=2.11",
+]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "lightining-core"
+version = "0.1.0"
+description = "Lightining Core: macOS-first CUDA-style runtime with Metal backend"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+  { name = "Lightining Core Team" }
+]
+maintainers = [
+  { name = "Lightining Core Team" }
+]
+license = { text = "Proprietary" }
+keywords = [
+  "metal",
+  "macos",
+  "gpu",
+  "runtime",
+  "cuda-style",
+  "pybind11",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: C++",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Software Development :: Libraries",
+  "Operating System :: MacOS :: MacOS X",
+]
+
+[project.urls]
+Homepage = "https://github.com/lightining-core/lightining-core"
+Repository = "https://github.com/lightining-core/lightining-core"
+Issues = "https://github.com/lightining-core/lightining-core/issues"
+
+[tool.scikit-build]
+cmake.build-type = "Release"
+cmake.args = [
+  "-DCJ_BUILD_TESTS=OFF",
+  "-DCJ_BUILD_BENCHMARKS=OFF",
+  "-DCJ_BUILD_EXAMPLES=OFF",
+  "-DCJ_BUILD_PYTHON=ON",
+]
+wheel.packages = []

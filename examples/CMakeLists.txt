@@ -1,0 +1,5 @@
+add_executable(lightining_core_c_api_example lightining_core_c_api.c)
+set_source_files_properties(lightining_core_c_api.c PROPERTIES LANGUAGE CXX)
+
+target_include_directories(lightining_core_c_api_example PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(lightining_core_c_api_example PRIVATE cudajun::cudajun)
