@@ -96,6 +96,26 @@ Quick import check:
 python -c "import lightining_core; print(lightining_core.backend_name())"
 ```
 
+## Install for macOS Users (Terminal)
+
+Production install (after PyPI publish is configured):
+
+```bash
+python3 -m pip install lightining-core
+```
+
+Immediate install from GitHub (works now, no PyPI needed):
+
+```bash
+python3 -m pip install "git+https://github.com/wnsgus00114-droid/lightining-core.git@main"
+```
+
+Install a specific release tag:
+
+```bash
+python3 -m pip install "git+https://github.com/wnsgus00114-droid/lightining-core.git@v0.1.1"
+```
+
 ## GitHub Actions: Wheel Build and Publish
 
 Workflow file:
