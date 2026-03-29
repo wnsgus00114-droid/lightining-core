@@ -105,28 +105,121 @@ Latest README snapshot setup (local run, 2026-03-30):
   - `dl_all_bench.py`
 
 # 12. Benchmark Results
-Representative rows from the latest local run:
+Full snapshot with readability-first structure: summary first, then all raw cases in collapsible tables.
 
-| Suite | Case | Lightning Core ms | Torch MPS ms | Best-vs-MPS |
-| --- | --- | ---: | ---: | ---: |
-| Kernel | attention `seq=8,dim=16` | 0.00083 | 0.26909 | 324.33x |
-| Kernel | conv `1x3x16x16 -> 16, k=3` | 0.18535 | 0.25783 | 1.39x |
-| Kernel | gemm `1024^3` | 0.16867 | 0.81028 | 4.80x |
-| Pipeline | conv->attn `seq=192,dim=48` | 0.43108 | 0.42548 | 1.02x (best path) |
-| Pipeline | FFN `batch=1024` | 0.37234 | 1.45200 | 3.90x |
-| Pipeline | LN->Proj `batch=2048` | 0.31055 | 1.21542 | 3.91x |
-| ML | Linear `4096x1024 -> 1024` | 0.63256 | 3.89491 | 6.16x |
-| DL Sweep | GEMM `4096x1024x4096` | 2.46957 | 9.74384 | 3.95x |
+Result key: `ours_best_vs_mps > 1.0` means Lightning Core or Integrated API is faster than Torch MPS for that case.
 
-Snapshot speedup visualization (`ours_best_vs_mps`, higher is better):
+Data scope in this section: `kernel_bench.csv` (10), `pipeline_bench.csv` (8), `ml_all_bench.csv` (10), `large_gemm_auto_sweep.csv` (15), `api_overhead_bench.csv` (6).
 
-```mermaid
-xychart-beta
-    title "Lightning Core Speedup vs Torch MPS (2026-03-30)"
-    x-axis ["Attn Micro Avg","Conv Avg","GEMM Avg","Conv->Attn Avg","FFN Avg","LN->Proj Avg","ML Avg","DL Avg"]
-    y-axis "x Faster" 0 --> 260
-    bar [247.31,1.14,6.23,1.05,3.85,3.76,12.91,3.30]
-```
+**A. Suite Summary (All Rows)**
+| Suite | Rows | Win Rate (>1.0) | Median | Avg | Min | Max |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Kernel | 10 | 100.0% | 4.73x | 76.52x | 1.03x | 324.33x |
+| Pipeline | 8 | 100.0% | 2.34x | 2.42x | 1.02x | 3.91x |
+| ML | 10 | 100.0% | 8.85x | 12.91x | 1.40x | 43.99x |
+| DL Large GEMM Sweep | 15 | 100.0% | 2.73x | 3.30x | 2.32x | 4.70x |
+
+**B. Family Summary (to avoid average distortion)**
+
+Kernel families:
+| Family | Rows | Median | Avg | Min | Max |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| attention micro | 3 | 226.43x | 247.31x | 191.17x | 324.33x |
+| conv | 4 | 1.08x | 1.14x | 1.03x | 1.39x |
+| gemm | 3 | 4.80x | 6.23x | 4.65x | 9.24x |
+
+Pipeline families:
+| Family | Rows | Median | Avg | Min | Max |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| ffn | 2 | 3.85x | 3.85x | 3.79x | 3.90x |
+| ln->proj | 2 | 3.75x | 3.75x | 3.60x | 3.91x |
+| conv->attn | 4 | 1.04x | 1.05x | 1.02x | 1.09x |
+
+**C. Full Case Tables (All Results, Non-Sampled)**
+
+<details>
+<summary>Kernel Bench (10 rows)</summary>
+
+| Case | LC ms | Torch MPS ms | Integrated API ms | Best-vs-MPS | Winner |
+| --- | ---: | ---: | ---: | ---: | --- |
+| attention micro / seq=8,head_dim=16 | 0.000830 | 0.269087 | 0.001226 | 324.33x | LC |
+| attention micro / seq=8,head_dim=32 | 0.000944 | 0.213847 | 0.001882 | 226.43x | LC |
+| attention micro / seq=12,head_dim=12 | 0.001070 | 0.204469 | 0.001555 | 191.17x | LC |
+| conv / batch=1,in_ch=3,h=16,w=16,out_ch=16,k=3 | 0.185349 | 0.257828 | 0.194724 | 1.39x | LC |
+| conv / batch=1,in_ch=3,h=24,w=24,out_ch=16,k=3 | 0.183891 | 0.189333 | 0.210661 | 1.03x | LC |
+| conv / batch=2,in_ch=3,h=16,w=16,out_ch=16,k=3 | 0.185802 | 0.199536 | 0.199568 | 1.07x | LC |
+| conv / batch=1,in_ch=3,h=28,w=28,out_ch=16,k=3 | 0.189276 | 0.199620 | 0.185099 | 1.08x | Integrated |
+| gemm / m=256,k=256,n=256 | 0.025391 | 0.234509 | 0.194258 | 9.24x | LC |
+| gemm / m=896,k=896,n=896 | 0.136708 | 0.636312 | 0.722937 | 4.65x | LC |
+| gemm / m=1024,k=1024,n=1024 | 0.168671 | 0.810279 | 0.981496 | 4.80x | LC |
+</details>
+
+<details>
+<summary>Pipeline Bench (8 rows)</summary>
+
+| Case | LC ms | Torch MPS ms | Integrated API ms | Best-vs-MPS | Winner |
+| --- | ---: | ---: | ---: | ---: | --- |
+| ffn / batch=512,d_model=768,d_ff=3072 | 0.198201 | 0.752038 | n/a | 3.79x | n/a |
+| ffn / batch=1024,d_model=768,d_ff=3072 | 0.372339 | 1.452003 | n/a | 3.90x | n/a |
+| ln->proj / batch=1024,d_model=1024,out=1024 | 0.172553 | 0.620380 | n/a | 3.60x | n/a |
+| ln->proj / batch=2048,d_model=1024,out=1024 | 0.310551 | 1.215415 | n/a | 3.91x | n/a |
+| conv->attn / conv(n=1,c=3->16,h=8,w=8,k=3)+attn(seq=48,d=48) | 0.395543 | 0.408251 | 0.404033 | 1.03x | LC |
+| conv->attn / conv(n=1,c=3->16,h=8,w=8,k=3)+attn(seq=192,d=48) | 0.431083 | 0.425477 | 0.415871 | 1.02x | Integrated |
+| conv->attn / conv(n=1,c=3->16,h=8,w=8,k=3)+attn(seq=192,d=8) | 0.396123 | 0.432692 | 0.407752 | 1.09x | LC |
+| conv->attn / conv(n=1,c=3->16,h=8,w=8,k=3)+attn(seq=96,d=48) | 0.394251 | 0.411843 | 0.398017 | 1.04x | LC |
+</details>
+
+<details>
+<summary>ML Bench (10 rows)</summary>
+
+| Case | LC ms | Torch MPS ms | Integrated API ms | Best-vs-MPS | Winner |
+| --- | ---: | ---: | ---: | ---: | --- |
+| linear_classifier_inference / batch=1024,in=1024,out=512 | 0.096433 | 0.758746 | 1.214318 | 7.87x | LC |
+| linear_classifier_inference / batch=2048,in=1024,out=512 | 0.186845 | 1.847536 | 2.952137 | 9.89x | LC |
+| linear_classifier_inference / batch=4096,in=1024,out=1024 | 0.632555 | 3.894910 | 5.193821 | 6.16x | LC |
+| matrix_preprocessing_sub / rows=512,cols=512 | 0.015134 | 0.208502 | 0.027561 | 13.78x | LC |
+| matrix_preprocessing_sub / rows=1024,cols=1024 | 0.025363 | 0.249293 | 0.108649 | 9.83x | LC |
+| matrix_preprocessing_sub / rows=2048,cols=1024 | 0.009389 | 0.413009 | 0.220267 | 43.99x | LC |
+| feature_scaling_vector_add / n=65536 | 0.008237 | 0.191661 | 0.007252 | 26.43x | Integrated |
+| feature_scaling_vector_add / n=262144 | 0.028608 | 0.205842 | 0.028113 | 7.32x | Integrated |
+| feature_scaling_vector_add / n=1048576 | 0.109309 | 0.264072 | 0.109139 | 2.42x | Integrated |
+| feature_scaling_vector_add / n=4194304 | 0.469037 | 0.653430 | 0.466921 | 1.40x | Integrated |
+</details>
+
+<details>
+<summary>DL Large GEMM Sweep (15 rows)</summary>
+
+| Shape + Mode | LC best ms | Torch MPS ms | Integrated API ms | Best-vs-MPS | Winner |
+| --- | ---: | ---: | ---: | ---: | --- |
+| m=1024,k=1024,n=1024 / runtime_default_promoted | 0.179328 | 0.818152 | 1.011852 | 4.56x | LC |
+| m=1024,k=1024,n=1024 / aggressive_mps_no_bucket | 0.176217 | 0.818152 | 1.011852 | 4.64x | LC |
+| m=1024,k=1024,n=1024 / kernel_favor_no_bucket | 0.174091 | 0.818152 | 1.011852 | 4.70x | LC |
+| m=1536,k=1536,n=1536 / runtime_default_promoted | 0.738707 | 2.801908 | 3.591471 | 3.79x | LC |
+| m=1536,k=1536,n=1536 / aggressive_mps_no_bucket | 0.783325 | 2.801908 | 3.591471 | 3.58x | LC |
+| m=1536,k=1536,n=1536 / kernel_favor_no_bucket | 0.690338 | 2.801908 | 3.591471 | 4.06x | LC |
+| m=2048,k=2048,n=2048 / runtime_default_promoted | 1.808589 | 4.930492 | 5.989359 | 2.73x | LC |
+| m=2048,k=2048,n=2048 / aggressive_mps_no_bucket | 1.830923 | 4.930492 | 5.989359 | 2.69x | LC |
+| m=2048,k=2048,n=2048 / kernel_favor_no_bucket | 2.034688 | 4.930492 | 5.989359 | 2.42x | LC |
+| m=3072,k=3072,n=3072 / runtime_default_promoted | 7.413207 | 17.205290 | 21.317615 | 2.32x | LC |
+| m=3072,k=3072,n=3072 / aggressive_mps_no_bucket | 7.110929 | 17.205290 | 21.317615 | 2.42x | LC |
+| m=3072,k=3072,n=3072 / kernel_favor_no_bucket | 7.113339 | 17.205290 | 21.317615 | 2.42x | LC |
+| m=4096,k=1024,n=4096 / runtime_default_promoted | 2.469568 | 9.743840 | 12.071318 | 3.95x | LC |
+| m=4096,k=1024,n=4096 / aggressive_mps_no_bucket | 3.794696 | 9.743840 | 12.071318 | 2.57x | LC |
+| m=4096,k=1024,n=4096 / kernel_favor_no_bucket | 3.638081 | 9.743840 | 12.071318 | 2.68x | LC |
+</details>
+
+<details>
+<summary>API Overhead (LC direct vs Python API, 6 rows)</summary>
+
+| Case | LC direct ms | Python API ms | API/LC |
+| --- | ---: | ---: | ---: |
+| engine_direct_vs_python_api_attention / seq=256,head_dim=64 | 0.262145 | 0.266253 | 1.02x |
+| engine_direct_vs_python_api_attention / seq=512,head_dim=64 | 0.425523 | 0.437983 | 1.03x |
+| engine_direct_vs_python_api_conv / batch=1,in_ch=3,h=32,w=32,out_ch=16,k=3 | 0.196769 | 0.195138 | 0.99x |
+| engine_direct_vs_python_api_conv / batch=2,in_ch=3,h=32,w=32,out_ch=16,k=3 | 0.211811 | 0.200831 | 0.95x |
+| engine_direct_vs_python_api_conv_attn / conv(n=1,c=3->16,h=8,w=8,k=3)+attn(seq=48,d=48) | 0.416029 | 0.396602 | 0.95x |
+| engine_direct_vs_python_api_conv_attn / conv(n=1,c=3->16,h=8,w=8,k=3)+attn(seq=96,d=48) | 0.424866 | 0.399091 | 0.94x |
+</details>
 
 # 13. Key Findings / Insights
 - Tiny attention shapes are launch-bound on GPU; crossover/routing is critical.
