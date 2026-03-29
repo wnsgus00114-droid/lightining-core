@@ -541,16 +541,42 @@ docs/                           # quickstart/advanced/contributor docs
 ```
 
 # 35. Roadmap
-- Expand fused operator coverage for end-to-end pipelines.
-- Add FlashAttention-style variants and additional fused blocks.
-- Add LoRA/quantization-ready runtime paths.
-- Add a tiny model runner example (small transformer end-to-end).
-- Improve interoperability with CoreML/MLX where practical.
-- Improve precision/performance control surfaces.
-- Harden reproducibility tooling and CI benchmarking + coverage visibility.
-- Publish docs (`quickstart`, `advanced`) via GitHub Pages/ReadTheDocs and add generated API references.
-- `cudajun/` legacy layer removed; use `lightning_core/` headers directly.
-- Continue Python ergonomics while preserving low-level controls.
+Roadmap baseline is now aligned to **v0.1.5** and tracked in detail in [ROADMAP.md](ROADMAP.md).
+
+Phase A (2026 Q2, `v0.1.6`-`v0.1.9`): Runtime Core Hardening
+- Finalize backend contracts (compute/memory/sync/profiler split).
+- Lock tensor lifetime and metadata rules across Metal/CPU parity tests.
+- Add deterministic trace/profiling hooks and fallback behavior.
+
+Phase B (2026 Q3, `v0.2.x`): Graph + Operator Framework
+- Introduce typed operator registry and minimal graph IR.
+- Add graph validation and graph/eager A/B execution mode.
+- Reduce host round-trips for chained workloads.
+
+Phase C (2026 Q4, `v0.3.x`): Fusion + Cost Model
+- Add rule-based fusion (`matmul+bias+act`, `conv+act`, attention subgraphs).
+- Add optimization explain reports and fallback diagnostics.
+- Expand tuning cache/versioned performance metadata.
+
+Phase D (2027 H1, `v0.4.x`): Model Runner Layer
+- Ship tiny transformer runner and reusable block abstraction.
+- Add checkpoint/optimizer interfaces and reproducible CLI runner.
+- Keep low-level control APIs while improving model-level UX.
+
+Phase E (2027 H2, `v0.5.x`): Ecosystem Interop
+- Add CoreML export path for validated subsets.
+- Add MLX/PyTorch interop adapters with capability tables.
+- Keep pure-LC benchmark numbers separated from interop overhead numbers.
+
+Phase F (2028, `v1.0`): Framework Stabilization
+- Semantic versioning + LTS policy + migration guides.
+- CI-driven release gates for correctness/perf/reproducibility.
+- Versioned docs site with generated C++/Python API references.
+
+Mac-First Guardrails
+- Metal fast-path remains first-class while portability grows via backend plugins.
+- No abstraction change is accepted if it regresses macOS benchmark gates.
+- KWU-1.0 license remains unchanged.
 
 # 36. Citation
 If you use Lightning Core in research, please cite it as software:
