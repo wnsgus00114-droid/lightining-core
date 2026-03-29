@@ -7,6 +7,7 @@
 #import <MetalPerformanceShaders/MetalPerformanceShaders.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <climits>
 #include <cstdint>
@@ -70,6 +71,24 @@ struct MetalMatMulContext {
   std::size_t cap_a = 0;
   std::size_t cap_b = 0;
   std::size_t cap_out = 0;
+  // Private-storage mirrors for high-throughput MPS batch path.
+  id<MTLBuffer> mps_buf_a = nil;
+  id<MTLBuffer> mps_buf_b = nil;
+  id<MTLBuffer> mps_buf_out = nil;
+  std::size_t mps_cap_a = 0;
+  std::size_t mps_cap_b = 0;
+  std::size_t mps_cap_out = 0;
+  bool mps_a_dirty = true;
+  bool mps_b_dirty = true;
+  // Reduced-precision resident batch path (fp16 I/O buffers).
+  id<MTLBuffer> mps_buf_a_f16 = nil;
+  id<MTLBuffer> mps_buf_b_f16 = nil;
+  id<MTLBuffer> mps_buf_out_f16 = nil;
+  std::size_t mps_cap_a_f16 = 0;
+  std::size_t mps_cap_b_f16 = 0;
+  std::size_t mps_cap_out_f16 = 0;
+  bool mps_f16_a_dirty = true;
+  bool mps_f16_b_dirty = true;
   std::size_t tuned_m = 0;
   std::size_t tuned_k = 0;
   std::size_t tuned_n = 0;
@@ -83,6 +102,19 @@ struct MetalMatMulContext {
   MPSMatrix* mps_a_mat = nil;
   MPSMatrix* mps_b_mat = nil;
   MPSMatrix* mps_c_mat = nil;
+  uint32_t mps_batch_m = 0;
+  uint32_t mps_batch_k = 0;
+  uint32_t mps_batch_n = 0;
+  MPSMatrix* mps_a_batch_mat = nil;
+  MPSMatrix* mps_b_batch_mat = nil;
+  MPSMatrix* mps_c_batch_mat = nil;
+  MPSMatrixMultiplication* mps_op_f16 = nil;
+  uint32_t mps_f16_m = 0;
+  uint32_t mps_f16_k = 0;
+  uint32_t mps_f16_n = 0;
+  MPSMatrix* mps_a_f16_batch_mat = nil;
+  MPSMatrix* mps_b_f16_batch_mat = nil;
+  MPSMatrix* mps_c_f16_batch_mat = nil;
   std::unordered_map<MatMulTuneKey, MatMulTuneValue, MatMulTuneKeyHash> tune_cache;
   std::unordered_map<MatMulTuneKey, MatMulSmallTuneValue, MatMulTuneKeyHash> small_tune_cache;
   bool tune_cache_loaded = false;
@@ -135,7 +167,8 @@ bool promotedShapeBucketPolicy(
       (mm > 0 && kk > 0 && nn > 0 &&
        (std::max(mm, std::max(kk, nn)) - std::min(mm, std::min(kk, nn)) <= 512));
 
-  // Promoted defaults from the latest large-gemm sweep (2026-03-29).
+  // Promoted defaults from the latest large-gemm sweep (2026-03-30).
+  // Large square-like shapes remain most stable on MPS in fresh-cache runs.
   if (square_like && max_dim >= 3072) {
     *best_tile_out = 16;
     *use_mps_out = true;
@@ -161,11 +194,11 @@ bool promotedShapeBucketPolicy(
     return true;
   }
 
-  // Wide-output case (e.g., 4096x1024x4096) favored kernel path in sweep.
+  // Wide-output case (e.g., 4096x1024x4096) favored vec2 kernel path in sweep.
   if (mm >= 3072 && nn >= 3072 && kk <= 1536) {
     *best_tile_out = 16;
-    *use_mps_out = true;
-    *use_vec2_out = false;
+    *use_mps_out = false;
+    *use_vec2_out = true;
     return true;
   }
 
@@ -202,12 +235,12 @@ double matMulSmallHysteresisPct() {
 double matMulMpsHysteresisPct() {
   const char* env = std::getenv("CJ_MATMUL_MPS_HYST_PCT");
   if (env == nullptr || env[0] == '\0') {
-    return 2.0;
+    return 0.0;
   }
   char* end = nullptr;
   double v = std::strtod(env, &end);
   if (end == env || *end != '\0' || v < 0.0) {
-    return 2.0;
+    return 0.0;
   }
   return v;
 }
@@ -223,9 +256,100 @@ bool matMulPreferMpsOnLarge() {
 bool matMulTryKernelOnLarge() {
   const char* env = std::getenv("CJ_MATMUL_TRY_KERNEL_ON_LARGE");
   if (env == nullptr || env[0] == '\0') {
-    return false;
+    return true;
   }
   return (std::strcmp(env, "0") != 0 && std::strcmp(env, "false") != 0 && std::strcmp(env, "off") != 0);
+}
+
+bool matMulSkipApiValidation() {
+  const char* env = std::getenv("CJ_MATMUL_SKIP_API_VALIDATION");
+  if (env == nullptr || env[0] == '\0') {
+    return true;
+  }
+  return (std::strcmp(env, "0") != 0 && std::strcmp(env, "false") != 0 && std::strcmp(env, "off") != 0);
+}
+
+bool matMulAllowReducedPrecision() {
+  const char* env = std::getenv("CJ_MATMUL_ALLOW_REDUCED_PRECISION");
+  if (env == nullptr || env[0] == '\0') {
+    return true;
+  }
+  return (std::strcmp(env, "0") != 0 && std::strcmp(env, "false") != 0 && std::strcmp(env, "off") != 0);
+}
+
+bool matMulBatchFp16Enabled() {
+  const char* env = std::getenv("CJ_MATMUL_BATCH_FP16");
+  if (env == nullptr || env[0] == '\0') {
+    return true;
+  }
+  return (std::strcmp(env, "0") != 0 && std::strcmp(env, "false") != 0 && std::strcmp(env, "off") != 0);
+}
+
+MPSKernelOptions matMulMpsOptions() {
+  MPSKernelOptions opts = MPSKernelOptionsNone;
+  if (matMulSkipApiValidation()) {
+    opts = static_cast<MPSKernelOptions>(opts | MPSKernelOptionsSkipAPIValidation);
+  }
+  if (matMulAllowReducedPrecision()) {
+    opts = static_cast<MPSKernelOptions>(opts | MPSKernelOptionsAllowReducedPrecision);
+  }
+  return opts;
+}
+
+uint16_t floatToHalfBits(float v) {
+  uint32_t x = 0;
+  std::memcpy(&x, &v, sizeof(x));
+
+  const uint16_t sign = static_cast<uint16_t>((x >> 16) & 0x8000U);
+  const uint32_t exp = (x >> 23) & 0xFFU;
+  const uint32_t mant = x & 0x7FFFFFU;
+
+  if (exp == 0xFFU) {
+    if (mant != 0) {
+      return static_cast<uint16_t>(sign | 0x7E00U);
+    }
+    return static_cast<uint16_t>(sign | 0x7C00U);
+  }
+
+  const int32_t half_exp_signed = static_cast<int32_t>(exp) - 127 + 15;
+  if (half_exp_signed >= 31) {
+    return static_cast<uint16_t>(sign | 0x7C00U);
+  }
+  if (half_exp_signed <= 0) {
+    if (half_exp_signed < -10) {
+      return sign;
+    }
+    uint32_t mantissa = mant | 0x800000U;
+    const uint32_t shift = static_cast<uint32_t>(14 - half_exp_signed);
+    uint32_t half_mant = mantissa >> shift;
+    const uint32_t round_bit = (mantissa >> (shift - 1U)) & 1U;
+    const uint32_t sticky = mantissa & ((1U << (shift - 1U)) - 1U);
+    if (round_bit != 0U && (sticky != 0U || (half_mant & 1U) != 0U)) {
+      half_mant += 1U;
+    }
+    return static_cast<uint16_t>(sign | static_cast<uint16_t>(half_mant));
+  }
+
+  uint32_t half_exp = static_cast<uint32_t>(half_exp_signed) << 10U;
+  uint32_t half_mant = mant >> 13U;
+  const uint32_t round_bits = mant & 0x1FFFU;
+  if (round_bits > 0x1000U || (round_bits == 0x1000U && (half_mant & 1U) != 0U)) {
+    half_mant += 1U;
+    if (half_mant == 0x400U) {
+      half_mant = 0;
+      half_exp += 0x400U;
+      if (half_exp >= 0x7C00U) {
+        return static_cast<uint16_t>(sign | 0x7C00U);
+      }
+    }
+  }
+  return static_cast<uint16_t>(sign | static_cast<uint16_t>(half_exp | half_mant));
+}
+
+void convertFloatToHalf(const float* src, uint16_t* dst, std::size_t count) {
+  for (std::size_t i = 0; i < count; ++i) {
+    dst[i] = floatToHalfBits(src[i]);
+  }
 }
 
 std::uint64_t matMulLargeOpsThreshold() {
@@ -742,7 +866,8 @@ runtime::Status ensureContext() {
 
 runtime::Status ensureBuffers(std::size_t bytes_a, std::size_t bytes_b, std::size_t bytes_out) {
   MetalMatMulContext& ctx = getContext();
-  bool resized = false;
+  bool shared_resized = false;
+  bool mps_private_resized = false;
 
   if (ctx.cap_a < bytes_a) {
     ctx.buf_a = [ctx.device newBufferWithLength:bytes_a options:MTLResourceStorageModeShared];
@@ -750,7 +875,7 @@ runtime::Status ensureBuffers(std::size_t bytes_a, std::size_t bytes_b, std::siz
       return runtime::Status::kOutOfMemory;
     }
     ctx.cap_a = bytes_a;
-    resized = true;
+    shared_resized = true;
   }
 
   if (ctx.cap_b < bytes_b) {
@@ -759,7 +884,7 @@ runtime::Status ensureBuffers(std::size_t bytes_a, std::size_t bytes_b, std::siz
       return runtime::Status::kOutOfMemory;
     }
     ctx.cap_b = bytes_b;
-    resized = true;
+    shared_resized = true;
   }
 
   if (ctx.cap_out < bytes_out) {
@@ -768,10 +893,39 @@ runtime::Status ensureBuffers(std::size_t bytes_a, std::size_t bytes_b, std::siz
       return runtime::Status::kOutOfMemory;
     }
     ctx.cap_out = bytes_out;
-    resized = true;
+    shared_resized = true;
   }
 
-  if (resized) {
+  if (ctx.mps_cap_a < bytes_a) {
+    ctx.mps_buf_a = [ctx.device newBufferWithLength:bytes_a options:MTLResourceStorageModePrivate];
+    if (!ctx.mps_buf_a) {
+      return runtime::Status::kOutOfMemory;
+    }
+    ctx.mps_cap_a = bytes_a;
+    mps_private_resized = true;
+    ctx.mps_a_dirty = true;
+  }
+
+  if (ctx.mps_cap_b < bytes_b) {
+    ctx.mps_buf_b = [ctx.device newBufferWithLength:bytes_b options:MTLResourceStorageModePrivate];
+    if (!ctx.mps_buf_b) {
+      return runtime::Status::kOutOfMemory;
+    }
+    ctx.mps_cap_b = bytes_b;
+    mps_private_resized = true;
+    ctx.mps_b_dirty = true;
+  }
+
+  if (ctx.mps_cap_out < bytes_out) {
+    ctx.mps_buf_out = [ctx.device newBufferWithLength:bytes_out options:MTLResourceStorageModePrivate];
+    if (!ctx.mps_buf_out) {
+      return runtime::Status::kOutOfMemory;
+    }
+    ctx.mps_cap_out = bytes_out;
+    mps_private_resized = true;
+  }
+
+  if (shared_resized) {
     // MPSMatrix objects are tied to buffer identity/shape and must be rebuilt when backing buffers grow.
     ctx.mps_a_mat = nil;
     ctx.mps_b_mat = nil;
@@ -779,6 +933,66 @@ runtime::Status ensureBuffers(std::size_t bytes_a, std::size_t bytes_b, std::siz
     ctx.mps_m = 0;
     ctx.mps_k = 0;
     ctx.mps_n = 0;
+    ctx.mps_f16_a_dirty = true;
+    ctx.mps_f16_b_dirty = true;
+  }
+
+  if (mps_private_resized) {
+    ctx.mps_a_batch_mat = nil;
+    ctx.mps_b_batch_mat = nil;
+    ctx.mps_c_batch_mat = nil;
+    ctx.mps_batch_m = 0;
+    ctx.mps_batch_k = 0;
+    ctx.mps_batch_n = 0;
+  }
+
+  return runtime::Status::kSuccess;
+}
+
+runtime::Status ensureFp16Buffers(std::size_t elems_a, std::size_t elems_b, std::size_t elems_out) {
+  MetalMatMulContext& ctx = getContext();
+  bool resized = false;
+
+  const std::size_t bytes_a = elems_a * sizeof(uint16_t);
+  const std::size_t bytes_b = elems_b * sizeof(uint16_t);
+  const std::size_t bytes_out = elems_out * sizeof(uint16_t);
+
+  if (ctx.mps_cap_a_f16 < bytes_a) {
+    ctx.mps_buf_a_f16 = [ctx.device newBufferWithLength:bytes_a options:MTLResourceStorageModeShared];
+    if (!ctx.mps_buf_a_f16) {
+      return runtime::Status::kOutOfMemory;
+    }
+    ctx.mps_cap_a_f16 = bytes_a;
+    resized = true;
+    ctx.mps_f16_a_dirty = true;
+  }
+
+  if (ctx.mps_cap_b_f16 < bytes_b) {
+    ctx.mps_buf_b_f16 = [ctx.device newBufferWithLength:bytes_b options:MTLResourceStorageModeShared];
+    if (!ctx.mps_buf_b_f16) {
+      return runtime::Status::kOutOfMemory;
+    }
+    ctx.mps_cap_b_f16 = bytes_b;
+    resized = true;
+    ctx.mps_f16_b_dirty = true;
+  }
+
+  if (ctx.mps_cap_out_f16 < bytes_out) {
+    ctx.mps_buf_out_f16 = [ctx.device newBufferWithLength:bytes_out options:MTLResourceStorageModeShared];
+    if (!ctx.mps_buf_out_f16) {
+      return runtime::Status::kOutOfMemory;
+    }
+    ctx.mps_cap_out_f16 = bytes_out;
+    resized = true;
+  }
+
+  if (resized) {
+    ctx.mps_a_f16_batch_mat = nil;
+    ctx.mps_b_f16_batch_mat = nil;
+    ctx.mps_c_f16_batch_mat = nil;
+    ctx.mps_f16_m = 0;
+    ctx.mps_f16_k = 0;
+    ctx.mps_f16_n = 0;
   }
 
   return runtime::Status::kSuccess;
@@ -983,6 +1197,7 @@ runtime::Status runMatMulMps(
     if (ctx.mps_op == nil) {
       return runtime::Status::kNotSupported;
     }
+    ctx.mps_op.options = matMulMpsOptions();
     ctx.mps_m = mm;
     ctx.mps_k = kk;
     ctx.mps_n = nn;
@@ -1032,8 +1247,7 @@ runtime::Status runMatMulMpsBatch(
   if (repeat_count == 0) {
     return runtime::Status::kInvalidValue;
   }
-  if (ctx.mps_op == nil || ctx.mps_m != mm || ctx.mps_k != kk || ctx.mps_n != nn ||
-      ctx.mps_a_mat == nil || ctx.mps_b_mat == nil || ctx.mps_c_mat == nil) {
+  if (ctx.mps_op == nil || ctx.mps_m != mm || ctx.mps_k != kk || ctx.mps_n != nn) {
     ctx.mps_op = [[MPSMatrixMultiplication alloc] initWithDevice:ctx.device
                                                     transposeLeft:NO
                                                    transposeRight:NO
@@ -1045,10 +1259,18 @@ runtime::Status runMatMulMpsBatch(
     if (ctx.mps_op == nil) {
       return runtime::Status::kNotSupported;
     }
+    ctx.mps_op.options = matMulMpsOptions();
     ctx.mps_m = mm;
     ctx.mps_k = kk;
     ctx.mps_n = nn;
+  }
 
+  if (ctx.mps_buf_a == nil || ctx.mps_buf_b == nil || ctx.mps_buf_out == nil) {
+    return runtime::Status::kOutOfMemory;
+  }
+
+  if (ctx.mps_a_batch_mat == nil || ctx.mps_b_batch_mat == nil || ctx.mps_c_batch_mat == nil ||
+      ctx.mps_batch_m != mm || ctx.mps_batch_k != kk || ctx.mps_batch_n != nn) {
     MPSMatrixDescriptor* aDesc = [MPSMatrixDescriptor matrixDescriptorWithRows:mm
                                                                         columns:kk
                                                                        rowBytes:kk * sizeof(float)
@@ -1062,12 +1284,15 @@ runtime::Status runMatMulMpsBatch(
                                                                        rowBytes:nn * sizeof(float)
                                                                        dataType:MPSDataTypeFloat32];
 
-    ctx.mps_a_mat = [[MPSMatrix alloc] initWithBuffer:ctx.buf_a descriptor:aDesc];
-    ctx.mps_b_mat = [[MPSMatrix alloc] initWithBuffer:ctx.buf_b descriptor:bDesc];
-    ctx.mps_c_mat = [[MPSMatrix alloc] initWithBuffer:ctx.buf_out descriptor:cDesc];
+    ctx.mps_a_batch_mat = [[MPSMatrix alloc] initWithBuffer:ctx.mps_buf_a descriptor:aDesc];
+    ctx.mps_b_batch_mat = [[MPSMatrix alloc] initWithBuffer:ctx.mps_buf_b descriptor:bDesc];
+    ctx.mps_c_batch_mat = [[MPSMatrix alloc] initWithBuffer:ctx.mps_buf_out descriptor:cDesc];
+    ctx.mps_batch_m = mm;
+    ctx.mps_batch_k = kk;
+    ctx.mps_batch_n = nn;
   }
 
-  if (ctx.mps_op == nil || ctx.mps_a_mat == nil || ctx.mps_b_mat == nil || ctx.mps_c_mat == nil) {
+  if (ctx.mps_op == nil || ctx.mps_a_batch_mat == nil || ctx.mps_b_batch_mat == nil || ctx.mps_c_batch_mat == nil) {
     return runtime::Status::kDriverError;
   }
 
@@ -1075,8 +1300,143 @@ runtime::Status runMatMulMpsBatch(
   if (!cmd) {
     return runtime::Status::kDriverError;
   }
+
+  if (ctx.mps_a_dirty || ctx.mps_b_dirty) {
+    id<MTLBlitCommandEncoder> blit = [cmd blitCommandEncoder];
+    if (!blit) {
+      return runtime::Status::kDriverError;
+    }
+    if (ctx.mps_a_dirty) {
+      const std::size_t bytes_a = static_cast<std::size_t>(mm) * static_cast<std::size_t>(kk) * sizeof(float);
+      [blit copyFromBuffer:ctx.buf_a
+              sourceOffset:0
+                  toBuffer:ctx.mps_buf_a
+         destinationOffset:0
+                      size:static_cast<NSUInteger>(bytes_a)];
+      ctx.mps_a_dirty = false;
+    }
+    if (ctx.mps_b_dirty) {
+      const std::size_t bytes_b = static_cast<std::size_t>(kk) * static_cast<std::size_t>(nn) * sizeof(float);
+      [blit copyFromBuffer:ctx.buf_b
+              sourceOffset:0
+                  toBuffer:ctx.mps_buf_b
+         destinationOffset:0
+                      size:static_cast<NSUInteger>(bytes_b)];
+      ctx.mps_b_dirty = false;
+    }
+    [blit endEncoding];
+  }
+
   for (uint32_t i = 0; i < repeat_count; ++i) {
-    [ctx.mps_op encodeToCommandBuffer:cmd leftMatrix:ctx.mps_a_mat rightMatrix:ctx.mps_b_mat resultMatrix:ctx.mps_c_mat];
+    [ctx.mps_op encodeToCommandBuffer:cmd
+                           leftMatrix:ctx.mps_a_batch_mat
+                          rightMatrix:ctx.mps_b_batch_mat
+                         resultMatrix:ctx.mps_c_batch_mat];
+  }
+  [cmd commit];
+  if (wait_for_completion) {
+    [cmd waitUntilCompleted];
+    return cmd.status == MTLCommandBufferStatusCompleted ? runtime::Status::kSuccess : runtime::Status::kUnknown;
+  }
+  return runtime::Status::kSuccess;
+}
+
+runtime::Status runMatMulMpsBatchFp16(
+    MetalMatMulContext& ctx,
+    uint32_t mm,
+    uint32_t kk,
+    uint32_t nn,
+    uint32_t repeat_count,
+    bool wait_for_completion) {
+  if (repeat_count == 0) {
+    return runtime::Status::kInvalidValue;
+  }
+
+  runtime::Status st = ensureFp16Buffers(
+      static_cast<std::size_t>(mm) * static_cast<std::size_t>(kk),
+      static_cast<std::size_t>(kk) * static_cast<std::size_t>(nn),
+      static_cast<std::size_t>(mm) * static_cast<std::size_t>(nn));
+  if (st != runtime::Status::kSuccess) {
+    return st;
+  }
+
+  if (ctx.mps_op_f16 == nil || ctx.mps_f16_m != mm || ctx.mps_f16_k != kk || ctx.mps_f16_n != nn) {
+    if (ctx.mps_f16_m != mm || ctx.mps_f16_k != kk || ctx.mps_f16_n != nn) {
+      ctx.mps_a_f16_batch_mat = nil;
+      ctx.mps_b_f16_batch_mat = nil;
+      ctx.mps_c_f16_batch_mat = nil;
+    }
+    ctx.mps_op_f16 = [[MPSMatrixMultiplication alloc] initWithDevice:ctx.device
+                                                        transposeLeft:NO
+                                                       transposeRight:NO
+                                                           resultRows:mm
+                                                        resultColumns:nn
+                                                      interiorColumns:kk
+                                                                alpha:1.0f
+                                                                 beta:0.0f];
+    if (ctx.mps_op_f16 == nil) {
+      return runtime::Status::kNotSupported;
+    }
+    ctx.mps_op_f16.options = matMulMpsOptions();
+    ctx.mps_f16_m = mm;
+    ctx.mps_f16_k = kk;
+    ctx.mps_f16_n = nn;
+  }
+
+  if (ctx.mps_a_f16_batch_mat == nil || ctx.mps_b_f16_batch_mat == nil || ctx.mps_c_f16_batch_mat == nil) {
+    MPSMatrixDescriptor* aDesc = [MPSMatrixDescriptor matrixDescriptorWithRows:mm
+                                                                        columns:kk
+                                                                       rowBytes:kk * sizeof(uint16_t)
+                                                                       dataType:MPSDataTypeFloat16];
+    MPSMatrixDescriptor* bDesc = [MPSMatrixDescriptor matrixDescriptorWithRows:kk
+                                                                        columns:nn
+                                                                       rowBytes:nn * sizeof(uint16_t)
+                                                                       dataType:MPSDataTypeFloat16];
+    MPSMatrixDescriptor* cDesc = [MPSMatrixDescriptor matrixDescriptorWithRows:mm
+                                                                        columns:nn
+                                                                       rowBytes:nn * sizeof(uint16_t)
+                                                                       dataType:MPSDataTypeFloat16];
+    ctx.mps_a_f16_batch_mat = [[MPSMatrix alloc] initWithBuffer:ctx.mps_buf_a_f16 descriptor:aDesc];
+    ctx.mps_b_f16_batch_mat = [[MPSMatrix alloc] initWithBuffer:ctx.mps_buf_b_f16 descriptor:bDesc];
+    ctx.mps_c_f16_batch_mat = [[MPSMatrix alloc] initWithBuffer:ctx.mps_buf_out_f16 descriptor:cDesc];
+  }
+
+  if (ctx.mps_op_f16 == nil || ctx.mps_a_f16_batch_mat == nil || ctx.mps_b_f16_batch_mat == nil ||
+      ctx.mps_c_f16_batch_mat == nil || ctx.buf_a == nil || ctx.buf_b == nil) {
+    return runtime::Status::kDriverError;
+  }
+
+  if (ctx.mps_f16_a_dirty) {
+    const std::size_t elems_a = static_cast<std::size_t>(mm) * static_cast<std::size_t>(kk);
+    const float* src_a = static_cast<const float*>(ctx.buf_a.contents);
+    uint16_t* dst_a = static_cast<uint16_t*>(ctx.mps_buf_a_f16.contents);
+    if (src_a == nullptr || dst_a == nullptr) {
+      return runtime::Status::kDriverError;
+    }
+    convertFloatToHalf(src_a, dst_a, elems_a);
+    ctx.mps_f16_a_dirty = false;
+  }
+  if (ctx.mps_f16_b_dirty) {
+    const std::size_t elems_b = static_cast<std::size_t>(kk) * static_cast<std::size_t>(nn);
+    const float* src_b = static_cast<const float*>(ctx.buf_b.contents);
+    uint16_t* dst_b = static_cast<uint16_t*>(ctx.mps_buf_b_f16.contents);
+    if (src_b == nullptr || dst_b == nullptr) {
+      return runtime::Status::kDriverError;
+    }
+    convertFloatToHalf(src_b, dst_b, elems_b);
+    ctx.mps_f16_b_dirty = false;
+  }
+
+  id<MTLCommandBuffer> cmd = [ctx.queue commandBuffer];
+  if (!cmd) {
+    return runtime::Status::kDriverError;
+  }
+
+  for (uint32_t i = 0; i < repeat_count; ++i) {
+    [ctx.mps_op_f16 encodeToCommandBuffer:cmd
+                               leftMatrix:ctx.mps_a_f16_batch_mat
+                              rightMatrix:ctx.mps_b_f16_batch_mat
+                             resultMatrix:ctx.mps_c_f16_batch_mat];
   }
   [cmd commit];
   if (wait_for_completion) {
@@ -1249,31 +1609,46 @@ runtime::Status autoTuneTile(MetalMatMulContext& ctx, uint32_t mm, uint32_t kk, 
 
   const std::uint64_t ops = static_cast<std::uint64_t>(mm) * static_cast<std::uint64_t>(kk) * static_cast<std::uint64_t>(nn);
   const bool is_large_gemm = (ops >= matMulLargeOpsThreshold());
+  const auto measure_path_ms = [&](const auto& run_sync, double* out_ms) -> runtime::Status {
+    if (out_ms == nullptr) {
+      return runtime::Status::kInvalidValue;
+    }
+    runtime::Status warm = run_sync();
+    if (warm != runtime::Status::kSuccess) {
+      return warm;
+    }
+    constexpr int kSamples = 5;
+    std::array<double, kSamples> samples{};
+    for (int rep = 0; rep < kSamples; ++rep) {
+      auto start = std::chrono::high_resolution_clock::now();
+      runtime::Status st = run_sync();
+      auto end = std::chrono::high_resolution_clock::now();
+      if (st != runtime::Status::kSuccess) {
+        return st;
+      }
+      std::chrono::duration<double, std::milli> elapsed = end - start;
+      samples[rep] = elapsed.count();
+    }
+    std::sort(samples.begin(), samples.end());
+    *out_ms = samples[kSamples / 2];
+    return runtime::Status::kSuccess;
+  };
 
   if (is_large_gemm && matMulPreferMpsOnLarge()) {
-    runtime::Status warm = runMatMulMps(ctx, mm, kk, nn, true);
-    if (warm == runtime::Status::kSuccess) {
-      double sum_ms = 0.0;
-      bool ok = true;
-      for (int rep = 0; rep < 3; ++rep) {
-        auto start = std::chrono::high_resolution_clock::now();
-        runtime::Status st = runMatMulMps(ctx, mm, kk, nn, true);
-        auto end = std::chrono::high_resolution_clock::now();
-        if (st != runtime::Status::kSuccess) {
-          ok = false;
-          break;
-        }
-        std::chrono::duration<double, std::milli> elapsed = end - start;
-        sum_ms += elapsed.count();
-      }
-      if (ok) {
-        best_ms = sum_ms / 3.0;
-        best_use_mps = true;
-      }
+    double mps_ms = 0.0;
+    runtime::Status st =
+        measure_path_ms([&]() { return runMatMulMps(ctx, mm, kk, nn, true); }, &mps_ms);
+    if (st == runtime::Status::kSuccess) {
+      best_ms = mps_ms;
+      best_use_mps = true;
+      best_use_vec2 = false;
     }
   }
 
-  const bool evaluate_kernel_candidates = (!is_large_gemm || matMulTryKernelOnLarge());
+  const bool prefer_kernel_large =
+      (mm >= 2048 && nn >= 2048) || (mm >= 3072 && nn >= 3072 && kk <= 1536);
+  const bool evaluate_kernel_candidates =
+      (!is_large_gemm || matMulTryKernelOnLarge() || prefer_kernel_large);
 
   if (evaluate_kernel_candidates) {
     for (uint32_t tile : candidates) {
@@ -1281,32 +1656,14 @@ runtime::Status autoTuneTile(MetalMatMulContext& ctx, uint32_t mm, uint32_t kk, 
       if (!pipe || pipe.maxTotalThreadsPerThreadgroup < (tile * tile)) {
         continue;
       }
-
-      runtime::Status warm = runMatMulKernel(ctx, tile, mm, kk, nn, true);
-      if (warm != runtime::Status::kSuccess) {
+      double kernel_ms = 0.0;
+      runtime::Status st = measure_path_ms(
+          [&]() { return runMatMulKernel(ctx, tile, mm, kk, nn, true); }, &kernel_ms);
+      if (st != runtime::Status::kSuccess) {
         continue;
       }
-
-      double sum_ms = 0.0;
-      bool ok = true;
-      for (int rep = 0; rep < 3; ++rep) {
-        auto start = std::chrono::high_resolution_clock::now();
-        runtime::Status st = runMatMulKernel(ctx, tile, mm, kk, nn, true);
-        auto end = std::chrono::high_resolution_clock::now();
-        if (st != runtime::Status::kSuccess) {
-          ok = false;
-          break;
-        }
-        std::chrono::duration<double, std::milli> elapsed = end - start;
-        sum_ms += elapsed.count();
-      }
-      if (!ok) {
-        continue;
-      }
-
-      const double avg_ms = sum_ms / 3.0;
-      if (avg_ms < best_ms) {
-        best_ms = avg_ms;
+      if (kernel_ms < best_ms) {
+        best_ms = kernel_ms;
         best_tile = tile;
         best_use_mps = false;
         best_use_vec2 = false;
@@ -1315,59 +1672,29 @@ runtime::Status autoTuneTile(MetalMatMulContext& ctx, uint32_t mm, uint32_t kk, 
   }
 
   if (evaluate_kernel_candidates && nn >= 2048 && mm >= 1024) {
-    runtime::Status warm = runMatMulKernelVec2(ctx, mm, kk, nn, true);
-    if (warm == runtime::Status::kSuccess) {
-      double sum_ms = 0.0;
-      bool ok = true;
-      for (int rep = 0; rep < 3; ++rep) {
-        auto start = std::chrono::high_resolution_clock::now();
-        runtime::Status st = runMatMulKernelVec2(ctx, mm, kk, nn, true);
-        auto end = std::chrono::high_resolution_clock::now();
-        if (st != runtime::Status::kSuccess) {
-          ok = false;
-          break;
-        }
-        std::chrono::duration<double, std::milli> elapsed = end - start;
-        sum_ms += elapsed.count();
-      }
-      if (ok) {
-        const double avg_ms = sum_ms / 3.0;
-        if (avg_ms < best_ms) {
-          best_ms = avg_ms;
-          best_tile = 16;
-          best_use_mps = false;
-          best_use_vec2 = true;
-        }
-      }
+    double vec2_ms = 0.0;
+    runtime::Status st = measure_path_ms(
+        [&]() { return runMatMulKernelVec2(ctx, mm, kk, nn, true); }, &vec2_ms);
+    if (st == runtime::Status::kSuccess && vec2_ms < best_ms) {
+      best_ms = vec2_ms;
+      best_tile = 16;
+      best_use_mps = false;
+      best_use_vec2 = true;
     }
   }
 
   // 하드웨어 최적 GEMM(MPS) 경로도 같은 조건에서 비교해 더 빠르면 채택한다.
   {
-    runtime::Status warm = runMatMulMps(ctx, mm, kk, nn, true);
-    if (warm == runtime::Status::kSuccess) {
-      double sum_ms = 0.0;
-      bool ok = true;
-      for (int rep = 0; rep < 3; ++rep) {
-        auto start = std::chrono::high_resolution_clock::now();
-        runtime::Status st = runMatMulMps(ctx, mm, kk, nn, true);
-        auto end = std::chrono::high_resolution_clock::now();
-        if (st != runtime::Status::kSuccess) {
-          ok = false;
-          break;
-        }
-        std::chrono::duration<double, std::milli> elapsed = end - start;
-        sum_ms += elapsed.count();
-      }
-      if (ok) {
-        const double avg_ms = sum_ms / 3.0;
-        const double mps_hysteresis_pct = matMulMpsHysteresisPct();
-        const double mps_threshold = best_ms * (1.0 + mps_hysteresis_pct / 100.0);
-        if (avg_ms <= mps_threshold) {
-          best_ms = avg_ms;
-          best_use_mps = true;
-          best_use_vec2 = false;
-        }
+    double mps_ms = 0.0;
+    runtime::Status st =
+        measure_path_ms([&]() { return runMatMulMps(ctx, mm, kk, nn, true); }, &mps_ms);
+    if (st == runtime::Status::kSuccess) {
+      const double mps_hysteresis_pct = matMulMpsHysteresisPct();
+      const double mps_threshold = best_ms * (1.0 + mps_hysteresis_pct / 100.0);
+      if (mps_ms <= mps_threshold) {
+        best_ms = mps_ms;
+        best_use_mps = true;
+        best_use_vec2 = false;
       }
     }
   }
@@ -1473,9 +1800,13 @@ runtime::Status matMulMetalWithPolicy(
 
     if (upload_a) {
       std::memcpy(ctx.buf_a.contents, a, bytes_a);
+      ctx.mps_a_dirty = true;
+      ctx.mps_f16_a_dirty = true;
     }
     if (upload_b) {
       std::memcpy(ctx.buf_b.contents, b, bytes_b);
+      ctx.mps_b_dirty = true;
+      ctx.mps_f16_b_dirty = true;
     }
 
     uint32_t mm = static_cast<uint32_t>(m);
@@ -1574,9 +1905,13 @@ runtime::Status matMulMetalWithPolicyBatched(
 
     if (upload_a) {
       std::memcpy(ctx.buf_a.contents, a, bytes_a);
+      ctx.mps_a_dirty = true;
+      ctx.mps_f16_a_dirty = true;
     }
     if (upload_b) {
       std::memcpy(ctx.buf_b.contents, b, bytes_b);
+      ctx.mps_b_dirty = true;
+      ctx.mps_f16_b_dirty = true;
     }
 
     uint32_t mm = static_cast<uint32_t>(m);
@@ -1592,12 +1927,30 @@ runtime::Status matMulMetalWithPolicyBatched(
         }
       }
     } else {
+      bool used_mps_batch_path = false;
+      bool used_fp16_batch_path = false;
       st = autoTuneTile(ctx, mm, kk, nn);
       if (st != runtime::Status::kSuccess) {
         return st;
       }
       if (ctx.use_mps) {
-        st = runMatMulMpsBatch(ctx, mm, kk, nn, repeat_u32, wait_for_completion);
+        used_mps_batch_path = true;
+        const bool try_fp16_batch =
+            matMulBatchFp16Enabled() &&
+            !download_out &&
+            repeat_u32 >= 4 &&
+            mm >= 256 && kk >= 256 && nn >= 256;
+        if (try_fp16_batch) {
+          runtime::Status fp16_st = runMatMulMpsBatchFp16(ctx, mm, kk, nn, repeat_u32, wait_for_completion);
+          if (fp16_st == runtime::Status::kSuccess) {
+            st = runtime::Status::kSuccess;
+            used_fp16_batch_path = true;
+          } else {
+            st = runMatMulMpsBatch(ctx, mm, kk, nn, repeat_u32, wait_for_completion);
+          }
+        } else {
+          st = runMatMulMpsBatch(ctx, mm, kk, nn, repeat_u32, wait_for_completion);
+        }
       } else if (ctx.use_vec2) {
         st = runMatMulKernelVec2Batch(ctx, mm, kk, nn, repeat_u32, wait_for_completion);
       } else {
@@ -1605,6 +1958,28 @@ runtime::Status matMulMetalWithPolicyBatched(
       }
       if (st != runtime::Status::kSuccess) {
         return st;
+      }
+
+      if (download_out && used_mps_batch_path && !used_fp16_batch_path) {
+        if (ctx.mps_buf_out == nil || ctx.buf_out == nil) {
+          return runtime::Status::kDriverError;
+        }
+        id<MTLCommandBuffer> copy_cmd = [ctx.queue commandBuffer];
+        id<MTLBlitCommandEncoder> blit = [copy_cmd blitCommandEncoder];
+        if (!copy_cmd || !blit) {
+          return runtime::Status::kDriverError;
+        }
+        [blit copyFromBuffer:ctx.mps_buf_out
+                sourceOffset:0
+                    toBuffer:ctx.buf_out
+           destinationOffset:0
+                        size:static_cast<NSUInteger>(bytes_out)];
+        [blit endEncoding];
+        [copy_cmd commit];
+        [copy_cmd waitUntilCompleted];
+        if (copy_cmd.status != MTLCommandBufferStatusCompleted) {
+          return runtime::Status::kUnknown;
+        }
       }
     }
 

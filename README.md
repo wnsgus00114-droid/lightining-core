@@ -1,108 +1,159 @@
-# Lightning Core
+# 1. Title
+# Lightning Core: Metal-First Runtime for Attention, MatMul, and Fused Inference Pipelines
 
+# 2. Badges
 [![PyPI version](https://img.shields.io/pypi/v/lightning-core.svg)](https://pypi.org/project/lightning-core/)
 [![PyPI downloads](https://img.shields.io/pypi/dm/lightning-core.svg)](https://pypi.org/project/lightning-core/)
+[![Wheel Publish](https://github.com/wnsgus00114-droid/lightning-core/actions/workflows/python-wheel-publish.yml/badge.svg)](https://github.com/wnsgus00114-droid/lightning-core/actions/workflows/python-wheel-publish.yml)
 
-Lightning Core is a macOS-first CUDA-style runtime focused on custom attention training/inference paths.
+# 3. One-line Summary
+Lightning Core is a macOS-first, Metal-backed runtime that provides low-level control (resident IO, policy routing, fused paths) with easy Python APIs.
 
-## Why This Project Exists
+# 4. Abstract
+Lightning Core targets high-iteration experimentation on Apple Silicon by combining:
+- custom C++ kernels and runtime scheduling,
+- Metal fastpaths with CPU fallback/crossover,
+- pybind-based Python APIs for rapid operator and pipeline testing.
 
-Deep learning tooling is often CUDA-centric, while many local development environments are macOS + Apple Silicon.
-This project was created to provide a practical, CUDA-style runtime experience on macOS with a Metal backend,
-so custom attention and tensor/ops experiments can be built, profiled, and tuned without changing the entire workflow.
+The project is positioned between a research runtime and a production-oriented operator engine. It emphasizes repeatable benchmarking, explicit execution policy control, and practical end-to-end pipeline composition (conv -> attention, FFN, LN -> projection).
 
-In short, Lightning Core targets the gap between:
+# 5. Motivation / Problem Statement
+Most deep-learning tooling assumes CUDA-first execution, while many practical local environments are macOS + Apple Silicon. This creates a gap:
+- kernel-level optimization ideas are hard to test quickly on macOS,
+- launch/memory overhead dominates small and repeated workloads,
+- framework-level abstractions can hide runtime policy decisions.
 
-- familiar CUDA-like execution mental model
-- native Metal execution path on macOS
-- fast iteration loop with both C++ and Python APIs
+Lightning Core addresses this by exposing runtime scheduling primitives and fastpaths directly.
 
-## Why Lightning Core
+# 6. Key Idea
+Treat execution policy as a first-class runtime object:
+- choose upload/download/sync behavior per call,
+- persist resident sessions for repeated loops,
+- auto-tune per-shape kernel/mode choices,
+- fuse where useful, and fallback/crossover when launch overhead dominates.
 
-| Point | What it gives you |
-| --- | --- |
-| Metal-first runtime path | Optimized execution flow on Apple Silicon/macOS |
-| Attention fastpath focus | Practical tuning path for custom attention workloads |
-| Resident session policy | Reduced upload/download/sync overhead in repeated runs |
-| C++ + Python workflow | Native core with pybind11 module for quick iteration |
+# 7. Contributions
+- Metal-first runtime for selected tensor/ops and attention workloads.
+- Resident execution model for amortizing transfer/sync overhead.
+- Auto-tuned matmul and attention mode selection with persisted cache.
+- High-level integrated APIs for conv/attention pipeline composition.
+- Python-friendly convenience APIs (`matmul2d`, `attention2d`, tensor constructors) without changing fast-path kernels.
+- Benchmark harnesses and reproducibility artifacts.
 
-## Core Architecture
-
+# 8. System Architecture
 ```mermaid
 flowchart LR
-	A[Python API: lightning_core] --> B[pybind11 bindings]
-	C[C++ API: lightning_core/*] --> D[Runtime Core]
-	B --> D
-	D --> E[Tensor and Ops]
-	E --> F[Metal Backend]
-	E --> G[CPU Fallback]
-	D --> H[Benchmark and Profile Artifacts]
+    A[Python User API] --> B[pybind Bindings]
+    B --> C[Runtime Core]
+    C --> D[Ops Layer: matmul/conv/attention/vector]
+    D --> E[Metal Fastpath]
+    D --> F[CPU Fallback/Crossover]
+    C --> G[Policy Engine]
+    C --> H[Auto-tune Cache]
+    C --> I[Resident Sessions]
 ```
 
-## Performance Checkpoints
+# 9. Execution Model
+```mermaid
+sequenceDiagram
+    participant P as Python Caller
+    participant R as Runtime
+    participant M as Metal Queue
 
-| Checkpoint | Command | Artifact |
-| --- | --- | --- |
-| Attention shape sweep | `./build/benchmarks/bench_attention` with sweep env vars | `build/benchmarks/attention_shape_sweep.csv` |
-| Vector add crossover | `./build/benchmarks/bench_vector_add` with sweep mode | `build/benchmarks/vector_add_crossover.csv` |
-| Matrix ops sweep | `./benchmarks/sweep_matrix_ops.sh` | `build/benchmarks/matrix_ops_sweep.csv` |
+    P->>R: op(input, policy)
+    R->>R: validate + pick path (tuned/policy)
+    alt resident start
+        R->>M: upload once + launch
+    else resident run
+        R->>M: launch only
+    else finish/sync
+        R->>M: launch + sync + optional download
+    end
+    M-->>R: completion
+    R-->>P: output/status
+```
 
-See [docs/advanced.md](docs/advanced.md) for full benchmark and tuning flow.
+# 10. Fused Pipeline Design
+```mermaid
+flowchart TD
+    X[Conv2D + ReLU] --> Y[QKV Arrange]
+    Y --> Z[Attention]
+    Z --> W[Projection / Next Block]
 
-## Latest Benchmark Snapshot (2026-03-29, local Apple Silicon)
+    subgraph Optimization Axes
+      A1[Into buffers]
+      A2[Resident reuse]
+      A3[Fused or split policy]
+      A4[Auto-tuned mode]
+    end
 
-Torch(MPS) vs Lightning Core direct operator comparison:
+    A1 --> X
+    A2 --> X
+    A2 --> Z
+    A3 --> Y
+    A4 --> Z
+```
 
-| Bench | Shape | Lightning Core ms | Torch MPS ms | Speedup (Torch/LCore) |
+# 11. Benchmark Setup
+Latest README snapshot setup (local run, 2026-03-30):
+- Device: Apple Silicon macOS (Metal enabled)
+- Runtime: `lightning_core` editable build
+- Torch: 2.11.0 (MPS available)
+- Bench suites:
+  - `ai_model_all_bench.py`
+  - `ml_all_bench.py`
+  - `dl_all_bench.py`
+
+# 12. Benchmark Results
+Representative rows from the latest local run:
+
+| Suite | Case | Lightning Core ms | Torch MPS ms | Best-vs-MPS |
 | --- | --- | ---: | ---: | ---: |
-| vector_add | n=4096 | 0.0008 | 0.3401 | 421.89x |
-| vector_add | n=16384 | 0.0031 | 0.3042 | 99.45x |
-| vector_add | n=65536 | 0.0083 | 0.1926 | 23.33x |
-| vector_add | n=262144 | 0.0285 | 0.2101 | 7.38x |
-| vector_add | n=1048576 | 0.1087 | 0.2559 | 2.35x |
-| matmul | m=256,k=256,n=256 | 0.2373 | 0.1943 | 0.82x |
-| matmul | m=512,k=512,n=512 | 0.2957 | 0.2617 | 0.89x |
-| matmul | m=1024,k=1024,n=1024 | 0.9845 | 1.2519 | 1.27x |
-| matmul | m=2048,k=2048,n=2048 | 5.7157 | 4.7575 | 0.83x |
+| Kernel | attention `seq=8,dim=16` | 0.00083 | 0.26909 | 324.33x |
+| Kernel | conv `1x3x16x16 -> 16, k=3` | 0.18535 | 0.25783 | 1.39x |
+| Kernel | gemm `1024^3` | 0.16867 | 0.81028 | 4.80x |
+| Pipeline | conv->attn `seq=192,dim=48` | 0.43108 | 0.42548 | 1.02x (best path) |
+| Pipeline | FFN `batch=1024` | 0.37234 | 1.45200 | 3.90x |
+| Pipeline | LN->Proj `batch=2048` | 0.31055 | 1.21542 | 3.91x |
+| ML | Linear `4096x1024 -> 1024` | 0.63256 | 3.89491 | 6.16x |
+| DL Sweep | GEMM `4096x1024x4096` | 2.46957 | 9.74384 | 3.95x |
 
-Lightning Core native benchmark sweep highlights (from build artifacts):
-
-- Attention best speedup: 14.35x at seq=2048, dim=64
-- Transformer best speedup: 15.32x at seq=1024, dim=64
-- Matrix sub best speedup: 3.45x
-- Matrix div best speedup: 3.81x
-- Vector add crossover (metal recommended from): n=65536
+Snapshot speedup visualization (`ours_best_vs_mps`, higher is better):
 
 ```mermaid
 xychart-beta
-	title "Lightning Core Native Sweep Speedups"
-	x-axis ["Attention", "Transformer", "MatSub", "MatDiv"]
-	y-axis "Speedup (CPU/Metal)" 0 --> 20
-	bar [14.35, 15.32, 3.45, 3.81]
+    title "Lightning Core Speedup vs Torch MPS (2026-03-30)"
+    x-axis ["Attn Micro Avg","Conv Avg","GEMM Avg","Conv->Attn Avg","FFN Avg","LN->Proj Avg","ML Avg","DL Avg"]
+    y-axis "x Faster" 0 --> 260
+    bar [247.31,1.14,6.23,1.05,3.85,3.76,12.91,3.30]
 ```
 
-Why use Lightning Core:
+# 13. Key Findings / Insights
+- Tiny attention shapes are launch-bound on GPU; crossover/routing is critical.
+- Resident execution strongly improves repeated matmul/pipe throughput.
+- For large GEMM, tuned mode selection avoids one-size-fits-all regressions.
+- "Best path" metric is useful because integrated and direct paths can win on different shapes.
 
-- Strong low-latency vector path and custom-op runtime control on Apple Silicon.
-- Dense matmul competitiveness improved with a 1024-shape crossover win vs Torch MPS in this run.
-- C++ benchmark/tuning pipeline with concrete artifact outputs.
-- Easy hybrid usage with higher-level frameworks when dense GEMM-heavy paths are preferable there.
+# 14. Limitations
+- Scope is selective operators/pipelines, not a full DL framework.
+- Performance can vary by thermals, OS/driver version, and benchmark ordering.
+- Some APIs are still low-level by design.
+- Multi-head/full-transformer framework parity is not the goal yet.
 
-Raw artifacts:
+# 15. Future Work
+- Expanded fused kernels (attention and projection blocks).
+- Better mixed-precision controls and calibration tooling.
+- Broader operator coverage and shape-specialized kernels.
+- More stable cross-device benchmark CI baselines.
 
-- benchmarks/reports/2026-03-29/torch_mps_vs_lightning_core.csv
-- benchmarks/reports/2026-03-29/torch_mps_vs_lightning_core.json
-- benchmarks/reports/2026-03-29/lightning_core_sweep_summary.json
-
-## Install and Use
-
-Install from PyPI:
+# 16. Installation
+From PyPI:
 
 ```bash
 python -m pip install -U lightning-core
 ```
 
-Install from source:
+From source:
 
 ```bash
 git clone https://github.com/wnsgus00114-droid/lightning-core.git
@@ -110,122 +161,276 @@ cd lightning-core
 python -m pip install .
 ```
 
-Quick Python usage:
+# 17. Quick Start
+```python
+import numpy as np
+import lightning_core as lc
+
+print("backend:", lc.backend_name())
+
+a = np.random.rand(128, 256).astype(np.float32)
+b = np.random.rand(256, 64).astype(np.float32)
+y = lc.matmul2d(a, b, "metal")
+print(y.shape)
+```
+
+# 18. Core API Overview
+Core categories:
+- Runtime: `backend_name`, `metal_available`, `cuda_available`
+- Tensor: `Tensor`, `Tensor64`, `TensorView`
+- Ops: matmul/conv/vector/matrix (+ resident sessions)
+- Attention: forward/train + policy + session
+- Integrated: high-level conv/attention pipeline APIs
+
+# 19. Input Rules
+- Use `float32` NumPy arrays for fast paths.
+- Prefer contiguous arrays (`np.ascontiguousarray`).
+- For `*_into` APIs, output buffer shape must exactly match expected shape.
+- Device string must be one of: `"metal"`, `"cpu"`, `"cuda"` (if available).
+
+# 20. MatMul Usage
+```python
+import numpy as np
+import lightning_core as lc
+
+a = np.random.rand(512, 1024).astype(np.float32)
+b = np.random.rand(1024, 512).astype(np.float32)
+
+# easy API (shape inferred)
+out = lc.matmul2d(a, b, "metal")
+
+# into API (avoid re-allocation)
+out2 = np.empty((512, 512), dtype=np.float32)
+lc.matmul2d_into(a, b, out2, "metal")
+```
+
+# 21. Attention Usage
+```python
+import numpy as np
+import lightning_core as lc
+
+q = np.random.rand(8, 16).astype(np.float32)
+k = np.random.rand(8, 16).astype(np.float32)
+v = np.random.rand(8, 16).astype(np.float32)
+
+out = lc.attention2d(q, k, v, False, "metal")
+out_into = np.empty_like(q)
+lc.attention2d_into(q, k, v, out_into, False, "metal")
+```
+
+# 22. Convolution Usage
+```python
+import numpy as np
+import lightning_core as lc
+
+x = np.random.rand(1, 3, 16, 16).astype(np.float32)
+w = np.random.rand(16, 3, 3, 3).astype(np.float32)
+b = np.random.rand(16).astype(np.float32)
+
+y = lc.conv2d_nchw(x, w, b, 1, 1, 1, 1, "metal")
+```
+
+# 23. Resident Blocks
+Resident sessions reduce repeated IO/sync overhead:
 
 ```python
 import numpy as np
 import lightning_core as lc
 
-print(lc.backend_name())
-a = np.arange(8, dtype=np.float32)
-b = np.arange(8, dtype=np.float32)
-out = lc.vector_add(a, b, "metal")
-print(out)
+a = np.random.rand(1024, 1024).astype(np.float32)
+b = np.random.rand(1024, 1024).astype(np.float32)
+out = np.empty((1024, 1024), dtype=np.float32)
+
+sess = lc.matmul2d_resident_session(a, b)
+sess.start_into(a, b, out)
+sess.run_batch_sync_no_download_into(a, b, out, 8)
 ```
 
-## Quick Start (Beginner)
+# 24. Pipeline Usage
+Integrated APIs are exposed in both `lightning_core` (legacy-prefixed names) and `lightning_core.api` (clean names).
 
-Documentation entrypoint:
+```python
+import numpy as np
+import lightning_core as lc
 
-- docs/index.md
+x = np.random.rand(1, 3, 8, 8).astype(np.float32)
+w = np.random.rand(16, 3, 3, 3).astype(np.float32)
+b = np.random.rand(16).astype(np.float32)
 
-Use this path first:
+# High-level conv+relu
+y = lc.api.conv_relu_nchw(x, w, b, stride_h=1, stride_w=1, pad_h=1, pad_w=1, device="metal")
 
-1. Install and import-check
-2. Build and run one C API example
-3. Run tests
+# Integrated conv->attention path
+seq_len, head_dim = 96, 48
+z = lc.api.conv_attention_torchstrong_nchw(
+    x, w, b, seq_len=seq_len, head_dim=head_dim, stride_h=1, stride_w=1, pad_h=1, pad_w=1, device="metal"
+)
+print(y.shape, z.shape)
+```
+
+Typical optimization pattern:
+- use `*_into` to reuse preallocated output buffers,
+- keep data contiguous in `float32`,
+- avoid host/device round-trips between connected blocks.
+
+# 25. Performance Tips
+- Reuse output buffers with `*_into` APIs.
+- Use resident sessions for repeated loops.
+- Keep inputs contiguous `float32`.
+- Separate one-shot latency benchmarks and steady-state throughput benchmarks.
+- Warm up before measurement.
+
+# 26. API Examples
+More examples:
+- [docs/quickstart.md](docs/quickstart.md)
+- [docs/advanced.md](docs/advanced.md)
+- `examples/` and benchmark source files under `benchmarks/`
+
+# 27. Benchmark Overview
+Lightning Core includes:
+- Native C++ benchmark binaries in `benchmarks/`
+- Python benchmark scripts in benchmark workspace (when available)
+- CSV/JSON artifacts for reproducibility and comparison
+
+# 28. Benchmark Directory Structure
+```text
+benchmarks/
+  bench_attention.cpp
+  bench_vector_add.cpp
+  bench_matmul.cpp
+  bench_matrix_ops.cpp
+  bench_transformer.cpp
+  bench_lstm_rnn.cpp
+  bench_cnn_dnn.cpp
+  bench_vlm.cpp
+  sweep_matrix_ops.sh
+  large_gemm_auto_sweep.py
+  generate_cross_suite_summary.py
+```
+
+Workspace-level scripts used for README snapshot (outside repo root in this environment):
+- `ai_model_all_bench.py`
+- `ml_all_bench.py`
+- `dl_all_bench.py`
+
+# 29. How to Run Benchmarks
+Native C++ benchmarks:
 
 ```bash
-python3 -m pip install .
-python -c "import lightning_core; print(lightning_core.backend_name())"
-
-cmake -S . -B build -DCJ_ENABLE_METAL=ON -DCJ_BUILD_TESTS=ON -DCJ_BUILD_PYTHON=ON -DCJ_BUILD_EXAMPLES=ON
+cmake -S . -B build -DCJ_ENABLE_METAL=ON -DCJ_BUILD_BENCHMARKS=ON -DCJ_BUILD_PYTHON=ON
 cmake --build build -j
 
-cmake --build build --target lightning_core_c_api_example -j
-./build/lightning_core_c_api_example
-
-ctest --test-dir build --output-on-failure
+./build/benchmarks/bench_vector_add
+./build/benchmarks/bench_attention
+./build/benchmarks/bench_matmul
+./build/benchmarks/bench_matrix_ops
+./build/benchmarks/bench_transformer
+./build/benchmarks/bench_lstm_rnn
+./build/benchmarks/bench_cnn_dnn
+./build/benchmarks/bench_vlm
 ```
 
-Detailed beginner guide:
-
-- docs/quickstart.md
-
-## Scope (Current)
-
-This project is an optimization-focused runtime prototype, not a full deep learning framework.
-
-- Core focus: runtime, attention path, selected matrix/vector ops
-- Model-family wrappers are advanced policy/fastpath helpers, not full model implementations
-- API and internals are still actively evolving
-
-## Identity and Naming
-
-- Public package/module: lightning-core / lightning_core
-- Public C++ include path/namespace: lightning_core/* and lightning_core::...
-- Internal canonical headers: include/lightning_core/core/*
-- Legacy include/cudajun/* remains as compatibility shim
-
-## Advanced Topics
-
-For advanced usage and operations, see:
-
-- docs/advanced.md
-
-For contributor workflow and coding conventions, see:
-
-- docs/contributor.md
-
-Includes:
-
-- benchmark sweeps and generated artifacts
-- resident session and policy tuning
-- model-family wrapper examples and caveats
-- runtime profile/env tuning
-- release and publishing workflow notes
-- repository rename transition operations
-
-## Build Targets
-
-Useful targets:
-
-- library: lightning_core::lightning_core
-- python module: lightning_core
-- c api example: lightning_core_c_api_example
-
-## Repository
-
-Current GitHub repository URL:
-
-- https://github.com/wnsgus00114-droid/lightning-core
-
-If you still have an older local clone URL, use:
+Workspace Python benchmark harness (if present):
 
 ```bash
-./scripts/sync_remote_after_repo_rename.sh --dry-run
-./scripts/sync_remote_after_repo_rename.sh
+python ../ai_model_all_bench.py
+python ../ml_all_bench.py
+python ../dl_all_bench.py
 ```
 
-The script automatically checks target repository availability and skips safely when rename is not ready.
+# 30. Benchmark Output Files
+Typical outputs:
+- `benchmark_results/kernel_bench.csv`
+- `benchmark_results/pipeline_bench.csv`
+- `benchmark_results/ml_all_bench.csv`
+- `benchmark_results/large_gemm_auto_sweep.csv`
+- corresponding `.json` files for each suite
 
-## Project Layout
+Native build outputs can also appear under `build/benchmarks/*.csv`.
 
-- include/lightning_core: public wrappers
-- include/lightning_core/core: canonical internal headers
-- include/cudajun: compatibility shims for legacy integrations
-- src: runtime + tensor + ops implementation
-- tests: C++ unit tests
-- benchmarks: benchmark binaries and sweep scripts
-- python: pybind11 bindings
-- docs: split docs (index/quickstart/advanced/contributor)
+# 31. How to Read the Results
+Common columns:
+- `lightning_core_ms`: LC runtime latency
+- `torch_mps_ms`: Torch MPS latency
+- `integrated_api_ms`: higher-level integrated API latency
+- `ours_best_vs_mps`: best(LC, integrated) against Torch MPS
+  - `> 1.0`: ours is faster
+  - `< 1.0`: Torch MPS is faster
 
-## Author
+# 32. Reproducing README Numbers
+Numbers in this README were refreshed on **2026-03-30** with:
 
-- JunHyeon Beak (Kwangwoon University)
+```bash
+# from workspace root (recommended in this repo layout)
+python ai_model_all_bench.py
+python ml_all_bench.py
+python dl_all_bench.py
+```
 
-## License
+Alternative (from `lightning-core/` directory):
 
-This project is licensed under the Kwangwoon University License 1.0 (KWU-1.0).
+```bash
+python ../ai_model_all_bench.py
+python ../ml_all_bench.py
+python ../dl_all_bench.py
+```
 
+Then checked by scanning `ours_best_vs_mps` from:
+- `benchmark_results/kernel_bench.csv`
+- `benchmark_results/pipeline_bench.csv`
+- `benchmark_results/ml_all_bench.csv`
+- `benchmark_results/large_gemm_auto_sweep.csv`
+
+# 33. Benchmark Methodology Notes
+- Warmup iterations are used before timed iterations.
+- Some suites use repeated trials and median/robust center.
+- Thermal state can affect absolute numbers; compare relative metrics and rerun if needed.
+- For fair comparison, synchronize MPS paths and separate one-shot vs resident scenarios.
+
+# 34. Repository Structure
+```text
+include/lightning_core/         # public wrapper headers
+include/lightning_core/core/    # canonical core headers
+include/cudajun/                # compatibility forwarding headers
+src/                            # runtime + op implementations
+python/bindings/                # pybind11 bindings
+benchmarks/                     # native benchmark sources/scripts
+tests/                          # C++ unit tests
+docs/                           # quickstart/advanced/contributor docs
+```
+
+# 35. Roadmap
+- Expand fused operator coverage for end-to-end pipelines.
+- Improve precision/performance control surfaces.
+- Harden reproducibility tooling and CI benchmarking.
+- Continue Python ergonomics while preserving low-level controls.
+
+# 36. Citation
+If you use Lightning Core in research, please cite it as software:
+
+```bibtex
+@software{lightning_core,
+  title = {Lightning Core: Metal-First Runtime for Attention and Fused Pipelines},
+  author = {Beak, JunHyeon},
+  year = {2026},
+  url = {https://github.com/wnsgus00114-droid/lightning-core}
+}
+```
+
+# 37. License
+This project is licensed under **Kwangwoon University License 1.0 (KWU-1.0)**.
 See [LICENSE](LICENSE).
+
+# 38. Contributing
+Please read:
+- [docs/contributor.md](docs/contributor.md)
+
+General flow:
+1. Open an issue/discussion for major changes.
+2. Keep PRs focused and benchmark-backed when performance-sensitive.
+3. Include reproduction steps for behavior/perf changes.
+
+# 39. Project Status
+**Active development (beta).**
+
+Lightning Core is stable enough for experimentation and benchmarking, while APIs and internals continue to evolve quickly.

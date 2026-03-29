@@ -77,3 +77,4 @@ void bindTensor(py::module_& m);
 void bindRuntime(py::module_& m);
 void bindOps(py::module_& m);
 void bindAttention(py::module_& m);
+void bindIntegrated(py::module_& m);

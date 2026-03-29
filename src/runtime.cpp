@@ -12,6 +12,10 @@
 #include <cuda_runtime.h>
 #endif
 
+#if defined(CJ_HAS_METAL) && CJ_HAS_METAL && defined(__APPLE__)
+extern "C" void* MTLCreateSystemDefaultDevice(void);
+#endif
+
 namespace lightning_core::runtime {
 
 namespace {
@@ -265,7 +269,13 @@ bool isCudaAvailable() {
 bool isMetalAvailable() {
   ensureRuntimeProfileLoaded();
 #if defined(CJ_HAS_METAL) && CJ_HAS_METAL
-  return true;
+  static bool probed = false;
+  static bool available = false;
+  if (!probed) {
+    available = (MTLCreateSystemDefaultDevice() != nullptr);
+    probed = true;
+  }
+  return available;
 #else
   return false;
 #endif

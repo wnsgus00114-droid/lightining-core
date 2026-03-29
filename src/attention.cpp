@@ -3,6 +3,8 @@
 #include "lightning_core/core/detail/attention_backend.hpp"
 
 #include <algorithm>
+#include <cstdlib>
+#include <cstring>
 #include <mutex>
 
 namespace {
@@ -60,6 +62,29 @@ void applyForwardPostprocess(
 std::mutex& attentionSessionStateMutex() {
   static std::mutex mu;
   return mu;
+}
+
+std::size_t attentionMetalOneShotCpuCrossoverOps() {
+  const char* env = std::getenv("CJ_ATTN_METAL_ONESHOT_CPU_CROSSOVER_OPS");
+  if (env == nullptr || env[0] == '\0') {
+    // Tiny attention shapes are often launch-bound on Metal; use CPU for one-shot latency.
+    return 8192;
+  }
+  char* end = nullptr;
+  unsigned long long v = std::strtoull(env, &end, 10);
+  if (end == env || *end != '\0') {
+    return 8192;
+  }
+  return static_cast<std::size_t>(v);
+}
+
+bool useCpuCrossoverForMetalForward(const lightning_core::AttentionConfig& cfg,
+                                    const lightning_core::AttentionIoPolicy& policy) {
+  if (!policy.upload_q || !policy.upload_k || !policy.upload_v || !policy.download_out) {
+    return false;
+  }
+  const std::size_t ops = cfg.seq_len * cfg.seq_len * cfg.head_dim;
+  return ops <= attentionMetalOneShotCpuCrossoverOps();
 }
 
 }  // namespace
@@ -129,6 +154,13 @@ runtime::Status attentionForwardWithPolicy(
     return st;
   }
   if (device == runtime::Device::kMetal) {
+    if (useCpuCrossoverForMetalForward(cfg, policy)) {
+      runtime::Status st = detail::attentionForwardCpu(q, k, v, out, cfg);
+      if (st == runtime::Status::kSuccess) {
+        applyForwardPostprocess(out, cfg, policy);
+      }
+      return st;
+    }
     runtime::Status st = detail::attentionForwardMetalWithPolicy(q, k, v, out, cfg, policy);
     if (st == runtime::Status::kNotSupported) {
       st = detail::attentionForwardCpu(q, k, v, out, cfg);

@@ -67,6 +67,7 @@ if(pybind11_FOUND)
     bindings/bind_tensor.cpp
     bindings/bind_ops.cpp
     bindings/bind_attention.cpp
+    bindings/bind_integrated.cpp
   )
   target_link_libraries(lightning_core PRIVATE cudajun::cudajun)
   target_include_directories(lightning_core PRIVATE ${CMAKE_SOURCE_DIR}/include)

@@ -21,6 +21,23 @@ void bindTensorType(py::module_& m, const char* name) {
            }),
            py::arg("shape"),
            py::arg("device") = "cpu")
+      .def_static("zeros",
+                  [](const std::vector<std::int64_t>& shape, const std::string& device) {
+                    return TensorType(shape, parseDevice(device));
+                  },
+                  py::arg("shape"),
+                  py::arg("device") = "cpu")
+      .def_static("from_numpy_array",
+                  [](const py::array_t<Scalar, py::array::c_style | py::array::forcecast>& values,
+                     const std::vector<std::int64_t>& shape,
+                     const std::string& device) {
+                    TensorType t(shape, parseDevice(device));
+                    throwIfNotSuccess(t.fromHost(toVector(values)));
+                    return t;
+                  },
+                  py::arg("values"),
+                  py::arg("shape"),
+                  py::arg("device") = "cpu")
       .def("shape", &TensorType::shape)
       .def("strides", &TensorType::strides)
       .def("rank", &TensorType::rank)

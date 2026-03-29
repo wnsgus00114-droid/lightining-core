@@ -1,6 +1,11 @@
 #include "lightning_core/core/detail/ops_backend.hpp"
 
 #include <algorithm>
+#include <limits>
+
+#if defined(__APPLE__)
+#include <Accelerate/Accelerate.h>
+#endif
 
 namespace lightning_core::detail {
 
@@ -14,6 +19,32 @@ runtime::Status matMulCpu(
   if (a == nullptr || b == nullptr || out == nullptr || m == 0 || k == 0 || n == 0) {
     return runtime::Status::kInvalidValue;
   }
+
+#if defined(__APPLE__)
+  if (m <= static_cast<std::size_t>(std::numeric_limits<int>::max()) &&
+      k <= static_cast<std::size_t>(std::numeric_limits<int>::max()) &&
+      n <= static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+    const int mm = static_cast<int>(m);
+    const int kk = static_cast<int>(k);
+    const int nn = static_cast<int>(n);
+    cblas_sgemm(
+        CblasRowMajor,
+        CblasNoTrans,
+        CblasNoTrans,
+        mm,
+        nn,
+        kk,
+        1.0f,
+        a,
+        kk,
+        b,
+        nn,
+        0.0f,
+        out,
+        nn);
+    return runtime::Status::kSuccess;
+  }
+#endif
 
   std::fill(out, out + (m * n), 0.0f);
   for (std::size_t i = 0; i < m; ++i) {
@@ -39,6 +70,32 @@ runtime::Status matMulCpu(
   if (a == nullptr || b == nullptr || out == nullptr || m == 0 || k == 0 || n == 0) {
     return runtime::Status::kInvalidValue;
   }
+
+#if defined(__APPLE__)
+  if (m <= static_cast<std::size_t>(std::numeric_limits<int>::max()) &&
+      k <= static_cast<std::size_t>(std::numeric_limits<int>::max()) &&
+      n <= static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+    const int mm = static_cast<int>(m);
+    const int kk = static_cast<int>(k);
+    const int nn = static_cast<int>(n);
+    cblas_dgemm(
+        CblasRowMajor,
+        CblasNoTrans,
+        CblasNoTrans,
+        mm,
+        nn,
+        kk,
+        1.0,
+        a,
+        kk,
+        b,
+        nn,
+        0.0,
+        out,
+        nn);
+    return runtime::Status::kSuccess;
+  }
+#endif
 
   std::fill(out, out + (m * n), 0.0);
   for (std::size_t i = 0; i < m; ++i) {

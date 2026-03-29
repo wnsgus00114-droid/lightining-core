@@ -263,6 +263,35 @@ runtime::Status matMulMetalWithPolicyBatched(
     bool download_out,
     bool synchronize,
     std::size_t repeat_count);
+
+runtime::Status conv2dNchw3x3s1p1Metal(
+    const float* x,
+    const float* w,
+    const float* bias,
+    float* out,
+    std::size_t batch,
+    std::size_t in_channels,
+    std::size_t in_h,
+    std::size_t in_w,
+    std::size_t out_channels,
+    bool apply_relu);
+
+runtime::Status conv2dNchw3x3s1p1MetalWithPolicy(
+    const float* x,
+    const float* w,
+    const float* bias,
+    float* out,
+    std::size_t batch,
+    std::size_t in_channels,
+    std::size_t in_h,
+    std::size_t in_w,
+    std::size_t out_channels,
+    bool apply_relu,
+    bool upload_x,
+    bool upload_w,
+    bool upload_bias,
+    bool download_out,
+    bool synchronize);
 runtime::Status matMulMetalResetTuning();
 runtime::Status matMulMetalWithPolicy(
     const double* a,

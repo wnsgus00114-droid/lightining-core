@@ -25,6 +25,20 @@ std::vector<float> attentionForwardVec(const std::vector<float>& q,
   return out;
 }
 
+void requireAttention2D(const py::buffer_info& info,
+                        const char* name,
+                        std::size_t* seq_len_out,
+                        std::size_t* head_dim_out) {
+  if (seq_len_out == nullptr || head_dim_out == nullptr) {
+    throw std::invalid_argument("internal error: null output shape pointer");
+  }
+  if (info.ndim != 2 || info.shape.size() != 2) {
+    throw std::invalid_argument(std::string(name) + " must be a 2D float32 array shaped [seq_len, head_dim]");
+  }
+  *seq_len_out = static_cast<std::size_t>(info.shape[0]);
+  *head_dim_out = static_cast<std::size_t>(info.shape[1]);
+}
+
 }  // namespace
 
 void bindAttention(py::module_& m) {
@@ -189,4 +203,86 @@ void bindAttention(py::module_& m) {
         py::arg("causal") = false,
         py::arg("device") = "metal",
         py::arg("policy") = lc::AttentionIoPolicy{});
+
+  m.def("attention2d",
+        [](const py::array_t<float, py::array::c_style | py::array::forcecast>& q,
+           const py::array_t<float, py::array::c_style | py::array::forcecast>& k,
+           const py::array_t<float, py::array::c_style | py::array::forcecast>& v,
+           bool causal,
+           const std::string& device_name) {
+          std::size_t seq_len = 0;
+          std::size_t head_dim = 0;
+          requireAttention2D(q.request(), "q", &seq_len, &head_dim);
+
+          std::size_t k_seq = 0;
+          std::size_t k_dim = 0;
+          requireAttention2D(k.request(), "k", &k_seq, &k_dim);
+          std::size_t v_seq = 0;
+          std::size_t v_dim = 0;
+          requireAttention2D(v.request(), "v", &v_seq, &v_dim);
+          if (k_seq != seq_len || v_seq != seq_len || k_dim != head_dim || v_dim != head_dim) {
+            throw std::invalid_argument("q/k/v must have identical 2D shape [seq_len, head_dim]");
+          }
+
+          lc::AttentionConfig cfg{seq_len, head_dim, causal};
+          py::array_t<float> out({static_cast<py::ssize_t>(seq_len), static_cast<py::ssize_t>(head_dim)});
+          throwIfNotSuccess(lc::attentionForward(q.data(), k.data(), v.data(), out.mutable_data(), cfg, parseDevice(device_name)));
+          return out;
+        },
+        py::arg("q"),
+        py::arg("k"),
+        py::arg("v"),
+        py::arg("causal") = false,
+        py::arg("device") = "metal");
+
+  m.def("attention2d_into",
+        [](const py::array_t<float, py::array::c_style | py::array::forcecast>& q,
+           const py::array_t<float, py::array::c_style | py::array::forcecast>& k,
+           const py::array_t<float, py::array::c_style | py::array::forcecast>& v,
+           py::array_t<float, py::array::c_style | py::array::forcecast>& out,
+           bool causal,
+           const std::string& device_name) {
+          std::size_t seq_len = 0;
+          std::size_t head_dim = 0;
+          requireAttention2D(q.request(), "q", &seq_len, &head_dim);
+
+          std::size_t k_seq = 0;
+          std::size_t k_dim = 0;
+          requireAttention2D(k.request(), "k", &k_seq, &k_dim);
+          std::size_t v_seq = 0;
+          std::size_t v_dim = 0;
+          requireAttention2D(v.request(), "v", &v_seq, &v_dim);
+          if (k_seq != seq_len || v_seq != seq_len || k_dim != head_dim || v_dim != head_dim) {
+            throw std::invalid_argument("q/k/v must have identical 2D shape [seq_len, head_dim]");
+          }
+
+          auto out_info = out.request();
+          if (out_info.ndim != 2 || out_info.shape.size() != 2 ||
+              static_cast<std::size_t>(out_info.shape[0]) != seq_len ||
+              static_cast<std::size_t>(out_info.shape[1]) != head_dim) {
+            throw std::invalid_argument("out must be a 2D float32 array shaped [seq_len, head_dim]");
+          }
+
+          lc::AttentionConfig cfg{seq_len, head_dim, causal};
+          throwIfNotSuccess(lc::attentionForward(q.data(), k.data(), v.data(), out.mutable_data(), cfg, parseDevice(device_name)));
+        },
+        py::arg("q"),
+        py::arg("k"),
+        py::arg("v"),
+        py::arg("out"),
+        py::arg("causal") = false,
+        py::arg("device") = "metal");
+
+  m.def("attention2d_session",
+        [](const py::array_t<float, py::array::c_style | py::array::forcecast>& q,
+           bool causal,
+           const std::string& device_name) {
+          std::size_t seq_len = 0;
+          std::size_t head_dim = 0;
+          requireAttention2D(q.request(), "q", &seq_len, &head_dim);
+          return lc::AttentionSession(lc::AttentionConfig{seq_len, head_dim, causal}, parseDevice(device_name));
+        },
+        py::arg("q"),
+        py::arg("causal") = false,
+        py::arg("device") = "metal");
 }

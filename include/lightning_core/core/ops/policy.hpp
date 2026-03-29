@@ -26,6 +26,14 @@ struct VectorAddIoPolicy {
   bool synchronize = true;
 };
 
+struct Conv2dIoPolicy {
+  bool upload_x = true;
+  bool upload_w = true;
+  bool upload_bias = true;
+  bool download_out = true;
+  bool synchronize = true;
+};
+
 inline MatMulIoPolicy makeMetalResidentStartPolicy() {
   MatMulIoPolicy p;
   p.upload_a = true;
@@ -111,6 +119,46 @@ inline VectorAddIoPolicy makeMetalVectorResidentFinishPolicy() {
   VectorAddIoPolicy p;
   p.upload_a = false;
   p.upload_b = false;
+  p.download_out = true;
+  p.synchronize = true;
+  return p;
+}
+
+inline Conv2dIoPolicy makeMetalConvResidentStartPolicy() {
+  Conv2dIoPolicy p;
+  p.upload_x = true;
+  p.upload_w = true;
+  p.upload_bias = true;
+  p.download_out = false;
+  p.synchronize = false;
+  return p;
+}
+
+inline Conv2dIoPolicy makeMetalConvResidentRunPolicy() {
+  Conv2dIoPolicy p;
+  p.upload_x = false;
+  p.upload_w = false;
+  p.upload_bias = false;
+  p.download_out = false;
+  p.synchronize = false;
+  return p;
+}
+
+inline Conv2dIoPolicy makeMetalConvResidentSyncPolicy() {
+  Conv2dIoPolicy p;
+  p.upload_x = false;
+  p.upload_w = false;
+  p.upload_bias = false;
+  p.download_out = false;
+  p.synchronize = true;
+  return p;
+}
+
+inline Conv2dIoPolicy makeMetalConvResidentFinishPolicy() {
+  Conv2dIoPolicy p;
+  p.upload_x = false;
+  p.upload_w = false;
+  p.upload_bias = false;
   p.download_out = true;
   p.synchronize = true;
   return p;
