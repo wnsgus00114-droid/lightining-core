@@ -530,7 +530,7 @@ Then checked by scanning `ours_best_vs_mps` from:
 ```text
 include/lightning_core/         # public wrapper headers
 include/lightning_core/core/    # canonical core headers
-include/cudajun/                # legacy compatibility headers (deprecated / removal candidate)
+include/lightining_core/        # typo-compat wrapper headers -> lightning_core
 src/                            # runtime + op implementations
 python/bindings/                # pybind11 bindings
 benchmarks/                     # native benchmark sources/scripts
@@ -548,7 +548,7 @@ docs/                           # quickstart/advanced/contributor docs
 - Improve precision/performance control surfaces.
 - Harden reproducibility tooling and CI benchmarking + coverage visibility.
 - Publish docs (`quickstart`, `advanced`) via GitHub Pages/ReadTheDocs and add generated API references.
-- Phase out legacy `cudajun/` compatibility layer unless active demand appears.
+- `cudajun/` legacy layer removed; use `lightning_core/` headers directly.
 - Continue Python ergonomics while preserving low-level controls.
 
 # 36. Citation

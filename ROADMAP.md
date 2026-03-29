@@ -5,7 +5,7 @@ This roadmap tracks known architecture gaps and compatibility work.
 ## P0: Branding and Surface Consistency
 
 - Unify public naming across package, docs, targets, and namespaces.
-- Keep compatibility wrappers for existing `cudajun` users during migration.
+- Migration complete: legacy `cudajun` wrappers removed; canonical namespace is `lightning_core`.
 - Ensure metadata and repository URLs always match the canonical repo.
 
 ## P1: Documentation and Expectation Management
@@ -19,7 +19,7 @@ This roadmap tracks known architecture gaps and compatibility work.
 - Remove CUDA-centric internal identifiers where backend-neutral semantics are intended.
 - Clarify memory model contracts for each backend.
 - Reduce hidden backend-specific behavior under generic runtime names.
-- Gradually migrate internal namespace naming from `cudajun` to canonical core naming while preserving compatibility.
+- Continue cleanup around canonical `lightning_core` naming and API consistency.
 
 ## P2: Tensor Core Expansion
 

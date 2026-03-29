@@ -1,3 +1,3 @@
 #pragma once
 
-namespace lightining_core = ::cudajun;
+namespace lightining_core = ::lightning_core;

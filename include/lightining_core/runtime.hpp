@@ -1,4 +1,4 @@
 #pragma once
 
-#include "cudajun/runtime.hpp"
+#include "lightning_core/runtime.hpp"
 #include "lightining_core/namespace_alias.hpp"

@@ -16,7 +16,6 @@ ctest --test-dir build --output-on-failure
 - Core implementation: [src/](../src/)
 - Canonical internal headers: [include/lightning_core/core/](../include/lightning_core/core/)
 - Public wrappers: [include/lightning_core/](../include/lightning_core/)
-- Legacy compatibility shims: [include/cudajun/](../include/cudajun/)
 - Python bindings: [python/bindings/](../python/bindings/)
 - Tests: [tests/](../tests/)
 - Benchmarks: [benchmarks/](../benchmarks/)
@@ -25,7 +24,7 @@ ctest --test-dir build --output-on-failure
 
 - New code should use lightning_core naming.
 - Keep compatibility shims working for existing integrations.
-- Do not remove [include/cudajun/](../include/cudajun/) forwarding headers without explicit migration plan.
+- `cudajun` forwarding headers were removed. New code must use `lightning_core` headers/namespaces.
 
 ## 4) Python binding policy
 

@@ -103,7 +103,6 @@ endif()
 # 코어 라이브러리 타깃과 네임스페이스 별칭.
 add_library(lightning_core_core STATIC ${CJ_SOURCES})
 add_library(lightning_core::lightning_core ALIAS lightning_core_core)
-add_library(cudajun::cudajun ALIAS lightning_core_core)
 set_target_properties(lightning_core_core PROPERTIES OUTPUT_NAME lightning_core)
 
 target_compile_options(lightning_core_core PRIVATE
@@ -144,7 +143,12 @@ else()
 endif()
 
 if(APPLE)
-  target_link_libraries(lightning_core_core PUBLIC "-framework CoreML" "-framework MetalPerformanceShaders" "-framework MetalPerformanceShadersGraph")
+  target_link_libraries(lightning_core_core PUBLIC
+    "-framework Accelerate"
+    "-framework CoreML"
+    "-framework MetalPerformanceShaders"
+    "-framework MetalPerformanceShadersGraph"
+  )
 endif()
 
 # 플랫폼 식별 매크로: OS별 조건 컴파일용.

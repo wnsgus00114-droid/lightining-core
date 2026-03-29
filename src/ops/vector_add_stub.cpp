@@ -1,4 +1,4 @@
-#include "cudajun/detail/ops_backend.hpp"
+#include "lightning_core/core/detail/ops_backend.hpp"
 
 namespace lightning_core::detail {
 

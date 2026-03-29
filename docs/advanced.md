@@ -177,10 +177,10 @@ Canonical internal headers:
 
 Compatibility headers:
 
-- [include/cudajun/](../include/cudajun/) forwards to canonical core headers
+- Legacy `include/cudajun/` forwarding headers have been removed. Use `include/lightning_core/`.
 
 Public wrappers:
 
 - [include/lightning_core/](../include/lightning_core/)
 
-This keeps legacy integrations working while moving the project identity to lightning_core.
+This keeps the public surface consistent around `lightning_core`.

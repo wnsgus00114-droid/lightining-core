@@ -23,7 +23,7 @@ bool approxEq(float a, float b, float tol = 1.0e-4f) {
 }  // namespace
 
 int main() {
-  using namespace cudajun;
+  using namespace lightning_core;
 
   AttentionImplementation metal_impl = attentionImplementation(runtime::Device::kMetal);
 #if defined(CJ_HAS_METAL) && CJ_HAS_METAL

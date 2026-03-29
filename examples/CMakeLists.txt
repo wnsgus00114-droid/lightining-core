@@ -2,4 +2,4 @@ add_executable(lightning_core_c_api_example lightning_core_c_api.c)
 set_source_files_properties(lightning_core_c_api.c PROPERTIES LANGUAGE CXX)
 
 target_include_directories(lightning_core_c_api_example PRIVATE ${CMAKE_SOURCE_DIR}/include)
-target_link_libraries(lightning_core_c_api_example PRIVATE cudajun::cudajun)
+target_link_libraries(lightning_core_c_api_example PRIVATE lightning_core::lightning_core)

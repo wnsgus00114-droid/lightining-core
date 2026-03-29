@@ -69,7 +69,7 @@ if(pybind11_FOUND)
     bindings/bind_attention.cpp
     bindings/bind_integrated.cpp
   )
-  target_link_libraries(lightning_core PRIVATE cudajun::cudajun)
+  target_link_libraries(lightning_core PRIVATE lightning_core::lightning_core)
   target_include_directories(lightning_core PRIVATE ${CMAKE_SOURCE_DIR}/include)
   install(TARGETS lightning_core LIBRARY DESTINATION .)
   message(STATUS "pybind11 found. Python module target enabled.")

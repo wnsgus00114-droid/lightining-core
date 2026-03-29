@@ -1,4 +1,4 @@
-#include "cudajun/detail/ops_backend.hpp"
+#include "lightning_core/core/detail/ops_backend.hpp"
 
 #if CJ_HAS_CUDA
 #include <cuda_runtime.h>
