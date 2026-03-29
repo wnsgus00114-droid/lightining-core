@@ -4,6 +4,9 @@
 # 2. Badges
 [![PyPI version](https://img.shields.io/pypi/v/lightning-core.svg)](https://pypi.org/project/lightning-core/)
 [![PyPI downloads](https://img.shields.io/pypi/dm/lightning-core.svg)](https://pypi.org/project/lightning-core/)
+[![Python versions](https://img.shields.io/pypi/pyversions/lightning-core.svg)](https://pypi.org/project/lightning-core/)
+[![License: KWU-1.0](https://img.shields.io/badge/License-KWU--1.0-1f6feb.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/Platform-macOS%20Apple%20Silicon-black.svg)](https://github.com/wnsgus00114-droid/lightning-core)
 [![Wheel Publish](https://github.com/wnsgus00114-droid/lightning-core/actions/workflows/python-wheel-publish.yml/badge.svg)](https://github.com/wnsgus00114-droid/lightning-core/actions/workflows/python-wheel-publish.yml)
 
 # 3. One-line Summary
@@ -103,6 +106,15 @@ Latest README snapshot setup (local run, 2026-03-30):
   - `ai_model_all_bench.py`
   - `ml_all_bench.py`
   - `dl_all_bench.py`
+
+Verified environments (currently disclosed):
+
+| Scope | Environment |
+| --- | --- |
+| Local benchmark snapshot | Apple Silicon macOS, Python 3.14, Torch 2.11.0 |
+| CI wheel build | GitHub Actions `macos-14`, Python 3.12 |
+
+We are expanding hardware coverage disclosure (M1/M2/M3/M4, Monterey~Sequoia) as additional runs are validated.
 
 # 12. Benchmark Results
 Full snapshot with readability-first structure: summary first, then all raw cases in collapsible tables.
@@ -222,10 +234,11 @@ Pipeline families:
 </details>
 
 # 13. Key Findings / Insights
-- Tiny attention shapes are launch-bound on GPU; crossover/routing is critical.
-- Resident execution strongly improves repeated matmul/pipe throughput.
-- For large GEMM, tuned mode selection avoids one-size-fits-all regressions.
-- "Best path" metric is useful because integrated and direct paths can win on different shapes.
+- Why Torch MPS can look slower on some shapes: generic graph/operator dispatch and synchronization overhead become dominant for very small kernels.
+- Why Lightning Core can win: tuned mode routing + resident sessions reduce upload/download/sync cost across repeated calls.
+- Why integrated path sometimes wins over direct path: fewer intermediate host round-trips and better cache reuse in connected blocks.
+- Why Torch can still win in other projects/shapes: some large dense operators benefit from highly optimized generic kernels when fusion/session reuse is not active.
+- Fair interpretation rule: compare both one-shot latency and steady-state (resident) throughput, because they measure different bottlenecks.
 
 # 14. Limitations
 - Scope is selective operators/pipelines, not a full DL framework.
@@ -382,8 +395,9 @@ More examples:
 # 27. Benchmark Overview
 Lightning Core includes:
 - Native C++ benchmark binaries in `benchmarks/`
-- Python benchmark scripts in benchmark workspace (when available)
+- Public Python benchmark scripts in `benchmarks/python/`
 - CSV/JSON artifacts for reproducibility and comparison
+- Full benchmark source is open in this repository (C++ + Python)
 
 # 28. Benchmark Directory Structure
 ```text
@@ -396,12 +410,14 @@ benchmarks/
   bench_lstm_rnn.cpp
   bench_cnn_dnn.cpp
   bench_vlm.cpp
+  python/
+    quick_bench.py
   sweep_matrix_ops.sh
   large_gemm_auto_sweep.py
   generate_cross_suite_summary.py
 ```
 
-Workspace-level scripts used for README snapshot (outside repo root in this environment):
+Workspace-level scripts used for the README snapshot (outside repo root in this environment):
 - `ai_model_all_bench.py`
 - `ml_all_bench.py`
 - `dl_all_bench.py`
@@ -429,6 +445,35 @@ Workspace Python benchmark harness (if present):
 python ../ai_model_all_bench.py
 python ../ml_all_bench.py
 python ../dl_all_bench.py
+```
+
+Public quick benchmark (copy-paste runnable, inside this repo):
+
+```bash
+python benchmarks/python/quick_bench.py --warmup 40 --iters 200 --out benchmark_results/quick_bench.csv
+```
+
+Minimal copy-paste micro benchmark template:
+
+```bash
+python - <<'PY'
+import time
+import numpy as np
+import lightning_core as lc
+
+a = np.random.rand(1024, 1024).astype(np.float32)
+b = np.random.rand(1024, 1024).astype(np.float32)
+
+for _ in range(20):  # warmup
+    lc.matmul2d(a, b, "metal")
+
+t0 = time.perf_counter()
+for _ in range(100):
+    lc.matmul2d(a, b, "metal")
+t1 = time.perf_counter()
+
+print("median-like avg ms:", ((t1 - t0) * 1000.0) / 100.0)
+PY
 ```
 
 # 30. Benchmark Output Files
@@ -479,23 +524,31 @@ Then checked by scanning `ours_best_vs_mps` from:
 - Some suites use repeated trials and median/robust center.
 - Thermal state can affect absolute numbers; compare relative metrics and rerun if needed.
 - For fair comparison, synchronize MPS paths and separate one-shot vs resident scenarios.
+- For API overhead, compare `lightning_core_ms` vs `integrated_api_ms` directly (they answer different questions than kernel-vs-MPS).
 
 # 34. Repository Structure
 ```text
 include/lightning_core/         # public wrapper headers
 include/lightning_core/core/    # canonical core headers
-include/cudajun/                # compatibility forwarding headers
+include/cudajun/                # legacy compatibility headers (deprecated / removal candidate)
 src/                            # runtime + op implementations
 python/bindings/                # pybind11 bindings
 benchmarks/                     # native benchmark sources/scripts
+benchmarks/python/              # public runnable python benchmark scripts
 tests/                          # C++ unit tests
 docs/                           # quickstart/advanced/contributor docs
 ```
 
 # 35. Roadmap
 - Expand fused operator coverage for end-to-end pipelines.
+- Add FlashAttention-style variants and additional fused blocks.
+- Add LoRA/quantization-ready runtime paths.
+- Add a tiny model runner example (small transformer end-to-end).
+- Improve interoperability with CoreML/MLX where practical.
 - Improve precision/performance control surfaces.
-- Harden reproducibility tooling and CI benchmarking.
+- Harden reproducibility tooling and CI benchmarking + coverage visibility.
+- Publish docs (`quickstart`, `advanced`) via GitHub Pages/ReadTheDocs and add generated API references.
+- Phase out legacy `cudajun/` compatibility layer unless active demand appears.
 - Continue Python ergonomics while preserving low-level controls.
 
 # 36. Citation
@@ -512,6 +565,7 @@ If you use Lightning Core in research, please cite it as software:
 
 # 37. License
 This project is licensed under **Kwangwoon University License 1.0 (KWU-1.0)**.
+License policy note: Lightning Core intentionally keeps KWU-1.0 and does not currently plan to switch to MIT/Apache-style terms.
 See [LICENSE](LICENSE).
 
 # 38. Contributing
@@ -523,7 +577,13 @@ General flow:
 2. Keep PRs focused and benchmark-backed when performance-sensitive.
 3. Include reproduction steps for behavior/perf changes.
 
+Community feedback channels we actively monitor:
+- X (Twitter)
+- Reddit (`r/MachineLearning`, `r/LocalLLaMA`)
+- Korean ML communities (Discord/Facebook groups)
+
 # 39. Project Status
 **Active development (beta).**
 
 Lightning Core is stable enough for experimentation and benchmarking, while APIs and internals continue to evolve quickly.
+Visibility update: repository topics and benchmark discoverability documentation are actively maintained.
