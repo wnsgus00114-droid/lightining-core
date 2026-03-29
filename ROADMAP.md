@@ -250,6 +250,10 @@ Each milestone tracks:
 - publish docs site MVP with quickstart/advanced/API index,
 - add tested environment matrix table to README with concrete device/OS entries.
 
+Progress update (2026-03-30):
+
+- completed: runtime trace observability API baseline (C++ runtime + Python binding + runtime smoke test).
+
 ## 11) Release-Train Detail (v0.1.5 -> v1.0)
 
 ## 11.1 2026 Q2 (v0.1.6 ~ v0.1.9): Runtime Contracts

@@ -36,5 +36,32 @@ int main() {
     return 1;
   }
 
+  // 3) runtime trace 스모크 테스트.
+  clearRuntimeTraceEvents();
+  setRuntimeTraceEnabled(true);
+  (void)backendName();
+  (void)isMetalAvailable();
+  (void)isCudaAvailable();
+  (void)getDeviceCount(&device_count);
+  setRuntimeTraceEnabled(false);
+
+  const auto events = runtimeTraceEvents();
+  if (events.empty()) {
+    std::cerr << "runtime trace should contain events, but it is empty\n";
+    return 1;
+  }
+  bool saw_backend_name = false;
+  for (const auto& ev : events) {
+    if (ev.type == RuntimeTraceEventType::kBackendName) {
+      saw_backend_name = true;
+      break;
+    }
+  }
+  if (!saw_backend_name) {
+    std::cerr << "runtime trace missing backend_name event\n";
+    return 1;
+  }
+  clearRuntimeTraceEvents();
+
   return 0;
 }

@@ -1,7 +1,9 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
+#include <vector>
 
 namespace lightning_core::runtime {
 
@@ -44,6 +46,29 @@ enum class MemoryModel {
   kHostManagedCompat
 };
 
+// 런타임 레벨 관측 이벤트 타입.
+enum class RuntimeTraceEventType {
+  kMallocDevice = 0,
+  kFreeDevice,
+  kMemcpy,
+  kDeviceSynchronize,
+  kGetDeviceCount,
+  kIsCudaAvailable,
+  kIsMetalAvailable,
+  kPreferredDeviceFor,
+  kBackendName
+};
+
+// 런타임 API 호출 추적용 이벤트.
+struct RuntimeTraceEvent {
+  RuntimeTraceEventType type{RuntimeTraceEventType::kBackendName};
+  Status status{Status::kUnknown};
+  std::uint64_t timestamp_ns{0};
+  std::size_t size_bytes{0};
+  int detail0{0};
+  int detail1{0};
+};
+
 // 디바이스 메모리 할당.
 // CUDA 환경이면 cudaMalloc, 아니면 NotSupported를 반환한다.
 Status mallocDevice(void** ptr, std::size_t size_bytes);
@@ -83,6 +108,24 @@ const char* memoryModelName(MemoryModel model);
 // Load runtime tuning profile env file once (if configured/found).
 // Existing environment variables are kept as-is.
 void preloadRuntimeProfileEnv();
+
+// 런타임 trace 수집 on/off.
+void setRuntimeTraceEnabled(bool enabled);
+
+// 런타임 trace 활성화 여부.
+bool isRuntimeTraceEnabled();
+
+// 누적된 runtime trace 이벤트를 초기화.
+void clearRuntimeTraceEvents();
+
+// 누적된 runtime trace 이벤트 조회(시간순 반환).
+std::vector<RuntimeTraceEvent> runtimeTraceEvents();
+
+// runtime trace 버퍼 최대 이벤트 개수.
+std::size_t runtimeTraceEventCapacity();
+
+// RuntimeTraceEventType을 사람이 읽을 수 있는 문자열로 변환.
+const char* runtimeTraceEventTypeName(RuntimeTraceEventType type);
 
 // Status를 사람이 읽을 수 있는 문자열로 변환.
 const char* getErrorString(Status status);
