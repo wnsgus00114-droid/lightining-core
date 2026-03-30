@@ -65,6 +65,8 @@ std::atomic<bool> g_runtime_trace_enabled{false};
 std::mutex g_runtime_trace_mu;
 std::vector<RuntimeTraceEvent> g_runtime_trace_events;
 std::size_t g_runtime_trace_write_idx = 0;
+std::atomic<int> g_default_sync_mode{static_cast<int>(SyncMode::kAuto)};
+std::atomic<bool> g_default_sync_trace_boundary{false};
 
 std::uint64_t nowSteadyNs() {
   const auto now = std::chrono::steady_clock::now().time_since_epoch();
@@ -420,6 +422,73 @@ void preloadRuntimeProfileEnv() {
   ensureRuntimeProfileLoaded();
 }
 
+const char* syncModeName(SyncMode mode) {
+  switch (mode) {
+    case SyncMode::kAlways:
+      return "always";
+    case SyncMode::kNever:
+      return "never";
+    case SyncMode::kAuto:
+    default:
+      return "auto";
+  }
+}
+
+void setDefaultSyncPolicy(const SyncPolicy& policy) {
+  g_default_sync_mode.store(static_cast<int>(policy.mode), std::memory_order_relaxed);
+  g_default_sync_trace_boundary.store(policy.trace_sync_boundary, std::memory_order_relaxed);
+}
+
+SyncPolicy defaultSyncPolicy() {
+  SyncPolicy policy;
+  const int mode_raw = g_default_sync_mode.load(std::memory_order_relaxed);
+  switch (mode_raw) {
+    case static_cast<int>(SyncMode::kAlways):
+      policy.mode = SyncMode::kAlways;
+      break;
+    case static_cast<int>(SyncMode::kNever):
+      policy.mode = SyncMode::kNever;
+      break;
+    case static_cast<int>(SyncMode::kAuto):
+    default:
+      policy.mode = SyncMode::kAuto;
+      break;
+  }
+  policy.trace_sync_boundary = g_default_sync_trace_boundary.load(std::memory_order_relaxed);
+  return policy;
+}
+
+Status deviceSynchronizeWithPolicy(const SyncPolicy& policy) {
+  Status st = Status::kSuccess;
+  switch (policy.mode) {
+    case SyncMode::kNever:
+      st = Status::kSuccess;
+      break;
+    case SyncMode::kAlways:
+      st = deviceSynchronize();
+      break;
+    case SyncMode::kAuto:
+    default:
+      if (isCudaAvailable() || isMetalAvailable()) {
+        st = deviceSynchronize();
+      } else {
+        st = Status::kSuccess;
+      }
+      break;
+  }
+
+  recordRuntimeTraceEvent(RuntimeTraceEventType::kApplySyncPolicy,
+                          st,
+                          0,
+                          static_cast<int>(policy.mode),
+                          policy.trace_sync_boundary ? 1 : 0);
+  return st;
+}
+
+Status applyDefaultSyncPolicy() {
+  return deviceSynchronizeWithPolicy(defaultSyncPolicy());
+}
+
 void setRuntimeTraceEnabled(bool enabled) {
   g_runtime_trace_enabled.store(enabled, std::memory_order_relaxed);
 }
@@ -465,6 +534,8 @@ const char* runtimeTraceEventTypeName(RuntimeTraceEventType type) {
       return "memcpy";
     case RuntimeTraceEventType::kDeviceSynchronize:
       return "device_synchronize";
+    case RuntimeTraceEventType::kApplySyncPolicy:
+      return "apply_sync_policy";
     case RuntimeTraceEventType::kGetDeviceCount:
       return "get_device_count";
     case RuntimeTraceEventType::kIsCudaAvailable:

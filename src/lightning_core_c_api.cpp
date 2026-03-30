@@ -60,6 +60,44 @@ lcMemoryModel toLcMemoryModel(lightning_core::runtime::MemoryModel model) {
   return LC_MEMORY_HOST_MANAGED_COMPAT;
 }
 
+lightning_core::runtime::SyncMode toSyncMode(lcSyncMode mode) {
+  switch (mode) {
+    case LC_SYNC_ALWAYS:
+      return lightning_core::runtime::SyncMode::kAlways;
+    case LC_SYNC_NEVER:
+      return lightning_core::runtime::SyncMode::kNever;
+    case LC_SYNC_AUTO:
+    default:
+      return lightning_core::runtime::SyncMode::kAuto;
+  }
+}
+
+lcSyncMode toLcSyncMode(lightning_core::runtime::SyncMode mode) {
+  switch (mode) {
+    case lightning_core::runtime::SyncMode::kAlways:
+      return LC_SYNC_ALWAYS;
+    case lightning_core::runtime::SyncMode::kNever:
+      return LC_SYNC_NEVER;
+    case lightning_core::runtime::SyncMode::kAuto:
+    default:
+      return LC_SYNC_AUTO;
+  }
+}
+
+lightning_core::runtime::SyncPolicy toSyncPolicy(lcSyncPolicy policy) {
+  lightning_core::runtime::SyncPolicy out;
+  out.mode = toSyncMode(policy.mode);
+  out.trace_sync_boundary = (policy.trace_sync_boundary != 0);
+  return out;
+}
+
+lcSyncPolicy toLcSyncPolicy(lightning_core::runtime::SyncPolicy policy) {
+  lcSyncPolicy out;
+  out.mode = toLcSyncMode(policy.mode);
+  out.trace_sync_boundary = policy.trace_sync_boundary ? 1 : 0;
+  return out;
+}
+
 }  // namespace
 
 extern "C" {
@@ -117,6 +155,23 @@ const char* lcGetMemoryModelName(lcMemoryModel model) {
     return lightning_core::runtime::memoryModelName(lightning_core::runtime::MemoryModel::kNativeDevice);
   }
   return lightning_core::runtime::memoryModelName(lightning_core::runtime::MemoryModel::kHostManagedCompat);
+}
+
+lcError_t lcSetDefaultSyncPolicy(lcSyncPolicy policy) {
+  lightning_core::runtime::setDefaultSyncPolicy(toSyncPolicy(policy));
+  return LC_SUCCESS;
+}
+
+lcSyncPolicy lcGetDefaultSyncPolicy(void) {
+  return toLcSyncPolicy(lightning_core::runtime::defaultSyncPolicy());
+}
+
+lcError_t lcApplySyncPolicy(lcSyncPolicy policy) {
+  return toLcError(lightning_core::runtime::deviceSynchronizeWithPolicy(toSyncPolicy(policy)));
+}
+
+lcError_t lcApplyDefaultSyncPolicy(void) {
+  return toLcError(lightning_core::runtime::applyDefaultSyncPolicy());
 }
 
 const char* lcBackendName(void) {

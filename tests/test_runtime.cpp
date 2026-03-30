@@ -63,5 +63,50 @@ int main() {
   }
   clearRuntimeTraceEvents();
 
+  // 4) 기본 sync policy 제어 스모크 테스트.
+  SyncPolicy never_policy;
+  never_policy.mode = SyncMode::kNever;
+  never_policy.trace_sync_boundary = true;
+  setDefaultSyncPolicy(never_policy);
+  const SyncPolicy loaded_policy = defaultSyncPolicy();
+  if (loaded_policy.mode != SyncMode::kNever || !loaded_policy.trace_sync_boundary) {
+    std::cerr << "default sync policy round-trip mismatch\n";
+    return 1;
+  }
+  if (applyDefaultSyncPolicy() != Status::kSuccess) {
+    std::cerr << "applyDefaultSyncPolicy(never) should succeed\n";
+    return 1;
+  }
+
+  SyncPolicy always_policy;
+  always_policy.mode = SyncMode::kAlways;
+  always_policy.trace_sync_boundary = true;
+  clearRuntimeTraceEvents();
+  setRuntimeTraceEnabled(true);
+  const Status sync_status = deviceSynchronizeWithPolicy(always_policy);
+  setRuntimeTraceEnabled(false);
+  if (sync_status != Status::kSuccess && sync_status != Status::kNotSupported) {
+    std::cerr << "deviceSynchronizeWithPolicy(always) unexpected status: " << getErrorString(sync_status)
+              << "\n";
+    return 1;
+  }
+  bool saw_apply_sync = false;
+  for (const auto& ev : runtimeTraceEvents()) {
+    if (ev.type == RuntimeTraceEventType::kApplySyncPolicy) {
+      saw_apply_sync = true;
+      break;
+    }
+  }
+  if (!saw_apply_sync) {
+    std::cerr << "runtime trace missing apply_sync_policy event\n";
+    return 1;
+  }
+  clearRuntimeTraceEvents();
+
+  SyncPolicy auto_policy;
+  auto_policy.mode = SyncMode::kAuto;
+  auto_policy.trace_sync_boundary = false;
+  setDefaultSyncPolicy(auto_policy);
+
   return 0;
 }

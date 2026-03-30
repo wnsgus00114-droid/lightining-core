@@ -52,6 +52,7 @@ enum class RuntimeTraceEventType {
   kFreeDevice,
   kMemcpy,
   kDeviceSynchronize,
+  kApplySyncPolicy,
   kGetDeviceCount,
   kIsCudaAvailable,
   kIsMetalAvailable,
@@ -67,6 +68,19 @@ struct RuntimeTraceEvent {
   std::size_t size_bytes{0};
   int detail0{0};
   int detail1{0};
+};
+
+// 공개 런타임 동기화 모드.
+enum class SyncMode {
+  kAuto = 0,   // backend 특성에 맞춰 동기화 여부를 자동 결정.
+  kAlways,     // 항상 동기화.
+  kNever       // 동기화를 건너뜀(고급 사용자용).
+};
+
+// 런타임 기본 동기화 정책.
+struct SyncPolicy {
+  SyncMode mode{SyncMode::kAuto};
+  bool trace_sync_boundary{false};
 };
 
 // 디바이스 메모리 할당.
@@ -108,6 +122,21 @@ const char* memoryModelName(MemoryModel model);
 // Load runtime tuning profile env file once (if configured/found).
 // Existing environment variables are kept as-is.
 void preloadRuntimeProfileEnv();
+
+// 런타임 기본 동기화 정책 설정.
+void setDefaultSyncPolicy(const SyncPolicy& policy);
+
+// 런타임 기본 동기화 정책 조회.
+SyncPolicy defaultSyncPolicy();
+
+// 정책 기반 동기화 적용.
+Status deviceSynchronizeWithPolicy(const SyncPolicy& policy);
+
+// 현재 기본 정책으로 동기화 적용.
+Status applyDefaultSyncPolicy();
+
+// SyncMode를 사람이 읽을 수 있는 문자열로 변환.
+const char* syncModeName(SyncMode mode);
 
 // 런타임 trace 수집 on/off.
 void setRuntimeTraceEnabled(bool enabled);
