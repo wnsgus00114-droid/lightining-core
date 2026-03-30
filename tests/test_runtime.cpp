@@ -108,5 +108,30 @@ int main() {
   auto_policy.trace_sync_boundary = false;
   setDefaultSyncPolicy(auto_policy);
 
+  // 5) backend capability 계약 스모크 테스트.
+  const BackendCapabilities cpu_caps = backendCapabilities(Device::kCPU);
+  if (!cpu_caps.available || !cpu_caps.compute_surface) {
+    std::cerr << "CPU capability contract invalid\n";
+    return 1;
+  }
+  if (!cpu_caps.runtime_trace_surface || !cpu_caps.sync_policy_surface) {
+    std::cerr << "CPU capability missing runtime control surfaces\n";
+    return 1;
+  }
+
+  const BackendCapabilities active_caps = activeBackendCapabilities();
+  if (!active_caps.available) {
+    std::cerr << "active backend should be available\n";
+    return 1;
+  }
+
+  if (isMetalAvailable()) {
+    const BackendCapabilities metal_caps = backendCapabilities(Device::kMetal);
+    if (!metal_caps.built || !metal_caps.available || !metal_caps.compute_surface || !metal_caps.memory_surface) {
+      std::cerr << "Metal capability contract invalid\n";
+      return 1;
+    }
+  }
+
   return 0;
 }

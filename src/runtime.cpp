@@ -489,6 +489,55 @@ Status applyDefaultSyncPolicy() {
   return deviceSynchronizeWithPolicy(defaultSyncPolicy());
 }
 
+BackendCapabilities backendCapabilities(Device device) {
+  ensureRuntimeProfileLoaded();
+  BackendCapabilities caps;
+  caps.device = device;
+  caps.runtime_trace_surface = true;
+  caps.sync_policy_surface = true;
+  caps.profiling_surface = false;
+
+  switch (device) {
+    case Device::kCPU:
+      caps.built = true;
+      caps.available = true;
+      caps.compute_surface = true;
+      caps.memory_surface = false;
+      caps.sync_surface = false;
+      caps.memory_model = MemoryModel::kHostManagedCompat;
+      break;
+    case Device::kCUDA:
+#if CJ_HAS_CUDA
+      caps.built = true;
+#else
+      caps.built = false;
+#endif
+      caps.available = isCudaAvailable();
+      caps.compute_surface = caps.built;
+      caps.memory_surface = caps.built;
+      caps.sync_surface = caps.built;
+      caps.memory_model = MemoryModel::kNativeDevice;
+      break;
+    case Device::kMetal:
+#if defined(CJ_HAS_METAL) && CJ_HAS_METAL
+      caps.built = true;
+#else
+      caps.built = false;
+#endif
+      caps.available = isMetalAvailable();
+      caps.compute_surface = caps.built;
+      caps.memory_surface = caps.built;
+      caps.sync_surface = caps.built;
+      caps.memory_model = MemoryModel::kHostManagedCompat;
+      break;
+  }
+  return caps;
+}
+
+BackendCapabilities activeBackendCapabilities() {
+  return backendCapabilities(preferredDeviceFor(WorkloadKind::kInference));
+}
+
 void setRuntimeTraceEnabled(bool enabled) {
   g_runtime_trace_enabled.store(enabled, std::memory_order_relaxed);
 }

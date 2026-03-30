@@ -83,6 +83,20 @@ struct SyncPolicy {
   bool trace_sync_boundary{false};
 };
 
+// 백엔드 기능 표면(capability surface) 계약.
+struct BackendCapabilities {
+  Device device{Device::kCPU};
+  bool built{false};
+  bool available{false};
+  bool compute_surface{false};
+  bool memory_surface{false};
+  bool sync_surface{false};
+  bool profiling_surface{false};
+  bool runtime_trace_surface{false};
+  bool sync_policy_surface{false};
+  MemoryModel memory_model{MemoryModel::kHostManagedCompat};
+};
+
 // 디바이스 메모리 할당.
 // CUDA 환경이면 cudaMalloc, 아니면 NotSupported를 반환한다.
 Status mallocDevice(void** ptr, std::size_t size_bytes);
@@ -137,6 +151,12 @@ Status applyDefaultSyncPolicy();
 
 // SyncMode를 사람이 읽을 수 있는 문자열로 변환.
 const char* syncModeName(SyncMode mode);
+
+// 특정 디바이스 백엔드의 capability 계약 조회.
+BackendCapabilities backendCapabilities(Device device);
+
+// 현재 선택된 활성 백엔드의 capability 계약 조회.
+BackendCapabilities activeBackendCapabilities();
 
 // 런타임 trace 수집 on/off.
 void setRuntimeTraceEnabled(bool enabled);

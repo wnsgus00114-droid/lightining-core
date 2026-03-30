@@ -45,6 +45,19 @@ typedef struct lcSyncPolicy {
   int trace_sync_boundary;
 } lcSyncPolicy;
 
+typedef struct lcBackendCapabilities {
+  lcDeviceKind device;
+  int built;
+  int available;
+  int compute_surface;
+  int memory_surface;
+  int sync_surface;
+  int profiling_surface;
+  int runtime_trace_surface;
+  int sync_policy_surface;
+  lcMemoryModel memory_model;
+} lcBackendCapabilities;
+
 lcError_t lcMalloc(void** ptr, size_t size_bytes);
 lcError_t lcFree(void* ptr);
 lcError_t lcMemcpy(void* dst, const void* src, size_t size_bytes, lcMemcpyKind kind);
@@ -60,6 +73,8 @@ lcError_t lcSetDefaultSyncPolicy(lcSyncPolicy policy);
 lcSyncPolicy lcGetDefaultSyncPolicy(void);
 lcError_t lcApplySyncPolicy(lcSyncPolicy policy);
 lcError_t lcApplyDefaultSyncPolicy(void);
+lcError_t lcGetBackendCapabilities(lcDeviceKind device, lcBackendCapabilities* out_caps);
+lcError_t lcGetActiveBackendCapabilities(lcBackendCapabilities* out_caps);
 const char* lcBackendName(void);
 const char* lcGetErrorString(lcError_t error);
 

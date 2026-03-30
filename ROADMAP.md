@@ -254,6 +254,7 @@ Progress update (2026-03-30):
 
 - completed: runtime trace observability API baseline (C++ runtime + Python binding + runtime smoke test).
 - completed: explicit runtime sync policy object (C++/C/Python APIs + policy-based synchronize path).
+- completed: backend capability contract surfaces (compute/memory/sync/profiling descriptors via C++/C/Python APIs).
 
 ## 11) Release-Train Detail (v0.1.5 -> v1.0)
 

@@ -53,6 +53,18 @@ lcDeviceKind toDeviceKind(lightning_core::runtime::Device device) {
   }
 }
 
+lightning_core::runtime::Device fromLcDeviceKind(lcDeviceKind device) {
+  switch (device) {
+    case LC_DEVICE_CPU:
+      return lightning_core::runtime::Device::kCPU;
+    case LC_DEVICE_CUDA:
+      return lightning_core::runtime::Device::kCUDA;
+    case LC_DEVICE_METAL:
+    default:
+      return lightning_core::runtime::Device::kMetal;
+  }
+}
+
 lcMemoryModel toLcMemoryModel(lightning_core::runtime::MemoryModel model) {
   if (model == lightning_core::runtime::MemoryModel::kNativeDevice) {
     return LC_MEMORY_NATIVE_DEVICE;
@@ -95,6 +107,21 @@ lcSyncPolicy toLcSyncPolicy(lightning_core::runtime::SyncPolicy policy) {
   lcSyncPolicy out;
   out.mode = toLcSyncMode(policy.mode);
   out.trace_sync_boundary = policy.trace_sync_boundary ? 1 : 0;
+  return out;
+}
+
+lcBackendCapabilities toLcBackendCapabilities(lightning_core::runtime::BackendCapabilities caps) {
+  lcBackendCapabilities out;
+  out.device = toDeviceKind(caps.device);
+  out.built = caps.built ? 1 : 0;
+  out.available = caps.available ? 1 : 0;
+  out.compute_surface = caps.compute_surface ? 1 : 0;
+  out.memory_surface = caps.memory_surface ? 1 : 0;
+  out.sync_surface = caps.sync_surface ? 1 : 0;
+  out.profiling_surface = caps.profiling_surface ? 1 : 0;
+  out.runtime_trace_surface = caps.runtime_trace_surface ? 1 : 0;
+  out.sync_policy_surface = caps.sync_policy_surface ? 1 : 0;
+  out.memory_model = toLcMemoryModel(caps.memory_model);
   return out;
 }
 
@@ -172,6 +199,22 @@ lcError_t lcApplySyncPolicy(lcSyncPolicy policy) {
 
 lcError_t lcApplyDefaultSyncPolicy(void) {
   return toLcError(lightning_core::runtime::applyDefaultSyncPolicy());
+}
+
+lcError_t lcGetBackendCapabilities(lcDeviceKind device, lcBackendCapabilities* out_caps) {
+  if (out_caps == nullptr) {
+    return LC_INVALID_VALUE;
+  }
+  *out_caps = toLcBackendCapabilities(lightning_core::runtime::backendCapabilities(fromLcDeviceKind(device)));
+  return LC_SUCCESS;
+}
+
+lcError_t lcGetActiveBackendCapabilities(lcBackendCapabilities* out_caps) {
+  if (out_caps == nullptr) {
+    return LC_INVALID_VALUE;
+  }
+  *out_caps = toLcBackendCapabilities(lightning_core::runtime::activeBackendCapabilities());
+  return LC_SUCCESS;
 }
 
 const char* lcBackendName(void) {
