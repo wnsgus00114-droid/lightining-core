@@ -1,5 +1,7 @@
 #include "bind_common.hpp"
 
+#include <unordered_map>
+
 namespace {
 
 lc::graph::OpKind parseOpKind(const std::string& op) {
@@ -108,6 +110,71 @@ py::dict toValidationIssueDict(const lc::graph::ValidationIssue& issue) {
   out["node_id"] = issue.node_id;
   out["tensor_id"] = issue.tensor_id;
   out["message"] = issue.message;
+  return out;
+}
+
+py::list toPlanStepsList(const std::vector<lc::graph::GraphPlanStep>& steps) {
+  py::list out;
+  for (const auto& step : steps) {
+    py::dict row;
+    row["node_id"] = step.node_id;
+    row["op"] = toOpString(step.op);
+    row["assigned_device"] = toString(step.assigned_device);
+    row["fallback"] = step.fallback;
+    out.append(row);
+  }
+  return out;
+}
+
+py::list toExecutionGroupsList(const std::vector<lc::graph::GraphExecutionGroup>& groups) {
+  py::list out;
+  for (const auto& group : groups) {
+    py::dict row;
+    row["group_id"] = group.group_id;
+    row["assigned_device"] = toString(group.assigned_device);
+    row["fallback"] = group.fallback;
+    row["sync_boundary_before"] = group.sync_boundary_before;
+    row["sync_boundary_after"] = group.sync_boundary_after;
+    row["node_ids"] = group.node_ids;
+    out.append(row);
+  }
+  return out;
+}
+
+lc::graph::GraphPlannerOptions parseGraphPlannerOptions(
+    const std::string& preferred_device,
+    const std::string& sync_mode,
+    bool trace_sync_boundary,
+    bool separate_fallback_segments,
+    bool insert_sync_on_device_change) {
+  lc::graph::GraphPlannerOptions options;
+  options.preferred_device = parseDevice(preferred_device);
+  options.sync_policy.mode = parseSyncMode(sync_mode);
+  options.sync_policy.trace_sync_boundary = trace_sync_boundary;
+  options.separate_fallback_segments = separate_fallback_segments;
+  options.insert_sync_on_device_change = insert_sync_on_device_change;
+  return options;
+}
+
+template <typename T>
+std::unordered_map<std::size_t, std::vector<T>> parseValueFeedDict(const py::dict& feed_dict) {
+  std::unordered_map<std::size_t, std::vector<T>> feeds;
+  feeds.reserve(feed_dict.size());
+  for (const auto& item : feed_dict) {
+    const std::size_t tensor_id = py::cast<std::size_t>(item.first);
+    py::array_t<T, py::array::c_style | py::array::forcecast> arr =
+        py::cast<py::array_t<T, py::array::c_style | py::array::forcecast>>(item.second);
+    feeds[tensor_id] = toVector<T>(arr);
+  }
+  return feeds;
+}
+
+template <typename T>
+py::dict toValueDict(const std::unordered_map<std::size_t, std::vector<T>>& values) {
+  py::dict out;
+  for (const auto& kv : values) {
+    out[py::int_(kv.first)] = toNumpy<T>(kv.second);
+  }
   return out;
 }
 
@@ -234,43 +301,86 @@ void bindGraph(py::module_& m) {
               bool trace_sync_boundary,
               bool separate_fallback_segments,
               bool insert_sync_on_device_change) {
-             lc::graph::GraphPlannerOptions options;
-             options.preferred_device = parseDevice(preferred_device);
-             options.sync_policy.mode = parseSyncMode(sync_mode);
-             options.sync_policy.trace_sync_boundary = trace_sync_boundary;
-             options.separate_fallback_segments = separate_fallback_segments;
-             options.insert_sync_on_device_change = insert_sync_on_device_change;
+             const lc::graph::GraphPlannerOptions options = parseGraphPlannerOptions(
+                 preferred_device,
+                 sync_mode,
+                 trace_sync_boundary,
+                 separate_fallback_segments,
+                 insert_sync_on_device_change);
 
              std::vector<lc::graph::GraphExecutionGroup> groups;
              std::vector<lc::graph::GraphPlanStep> steps;
              throwIfNotSuccess(g.planExecutionGroups(options, &groups, &steps));
 
              py::dict out;
-             py::list groups_out;
-             for (const auto& group : groups) {
-               py::dict row;
-               row["group_id"] = group.group_id;
-               row["assigned_device"] = toString(group.assigned_device);
-               row["fallback"] = group.fallback;
-               row["sync_boundary_before"] = group.sync_boundary_before;
-               row["sync_boundary_after"] = group.sync_boundary_after;
-               row["node_ids"] = group.node_ids;
-               groups_out.append(row);
-             }
-
-             py::list steps_out;
-             for (const auto& step : steps) {
-               py::dict row;
-               row["node_id"] = step.node_id;
-               row["op"] = toOpString(step.op);
-               row["assigned_device"] = toString(step.assigned_device);
-               row["fallback"] = step.fallback;
-               steps_out.append(row);
-             }
-             out["groups"] = groups_out;
-             out["steps"] = steps_out;
+             out["groups"] = toExecutionGroupsList(groups);
+             out["steps"] = toPlanStepsList(steps);
              return out;
            },
+           py::arg("preferred_device") = "metal",
+           py::arg("sync_mode") = "auto",
+           py::arg("trace_sync_boundary") = false,
+           py::arg("separate_fallback_segments") = true,
+           py::arg("insert_sync_on_device_change") = true)
+      .def("execute_f32",
+           [](const lc::graph::GraphIR& g,
+              const py::dict& feeds,
+              const std::string& preferred_device,
+              const std::string& sync_mode,
+              bool trace_sync_boundary,
+              bool separate_fallback_segments,
+              bool insert_sync_on_device_change) {
+             const lc::graph::GraphPlannerOptions options = parseGraphPlannerOptions(
+                 preferred_device,
+                 sync_mode,
+                 trace_sync_boundary,
+                 separate_fallback_segments,
+                 insert_sync_on_device_change);
+             std::unordered_map<std::size_t, std::vector<float>> values;
+             std::vector<lc::graph::GraphExecutionGroup> groups;
+             std::vector<lc::graph::GraphPlanStep> steps;
+             throwIfNotSuccess(g.executeF32(
+                 options, parseValueFeedDict<float>(feeds), &values, &groups, &steps));
+
+             py::dict out;
+             out["values"] = toValueDict<float>(values);
+             out["groups"] = toExecutionGroupsList(groups);
+             out["steps"] = toPlanStepsList(steps);
+             return out;
+           },
+           py::arg("feeds"),
+           py::arg("preferred_device") = "metal",
+           py::arg("sync_mode") = "auto",
+           py::arg("trace_sync_boundary") = false,
+           py::arg("separate_fallback_segments") = true,
+           py::arg("insert_sync_on_device_change") = true)
+      .def("execute_f64",
+           [](const lc::graph::GraphIR& g,
+              const py::dict& feeds,
+              const std::string& preferred_device,
+              const std::string& sync_mode,
+              bool trace_sync_boundary,
+              bool separate_fallback_segments,
+              bool insert_sync_on_device_change) {
+             const lc::graph::GraphPlannerOptions options = parseGraphPlannerOptions(
+                 preferred_device,
+                 sync_mode,
+                 trace_sync_boundary,
+                 separate_fallback_segments,
+                 insert_sync_on_device_change);
+             std::unordered_map<std::size_t, std::vector<double>> values;
+             std::vector<lc::graph::GraphExecutionGroup> groups;
+             std::vector<lc::graph::GraphPlanStep> steps;
+             throwIfNotSuccess(g.executeF64(
+                 options, parseValueFeedDict<double>(feeds), &values, &groups, &steps));
+
+             py::dict out;
+             out["values"] = toValueDict<double>(values);
+             out["groups"] = toExecutionGroupsList(groups);
+             out["steps"] = toPlanStepsList(steps);
+             return out;
+           },
+           py::arg("feeds"),
            py::arg("preferred_device") = "metal",
            py::arg("sync_mode") = "auto",
            py::arg("trace_sync_boundary") = false,

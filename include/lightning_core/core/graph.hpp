@@ -3,10 +3,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
+#include "lightning_core/core/attention.hpp"
+#include "lightning_core/core/ops.hpp"
 #include "lightning_core/core/runtime.hpp"
 #include "lightning_core/core/tensor.hpp"
 
@@ -527,6 +531,24 @@ class GraphIR {
     return runtime::Status::kSuccess;
   }
 
+  runtime::Status executeF32(
+      const GraphPlannerOptions& options,
+      const std::unordered_map<std::size_t, std::vector<float>>& feeds,
+      std::unordered_map<std::size_t, std::vector<float>>* out_values,
+      std::vector<GraphExecutionGroup>* out_groups = nullptr,
+      std::vector<GraphPlanStep>* out_steps = nullptr) const {
+    return executeTyped<float>(options, feeds, out_values, out_groups, out_steps);
+  }
+
+  runtime::Status executeF64(
+      const GraphPlannerOptions& options,
+      const std::unordered_map<std::size_t, std::vector<double>>& feeds,
+      std::unordered_map<std::size_t, std::vector<double>>* out_values,
+      std::vector<GraphExecutionGroup>* out_groups = nullptr,
+      std::vector<GraphPlanStep>* out_steps = nullptr) const {
+    return executeTyped<double>(options, feeds, out_values, out_groups, out_steps);
+  }
+
   const std::vector<GraphTensorValue>& tensors() const {
     return tensors_;
   }
@@ -575,6 +597,387 @@ class GraphIR {
 
     *out_assigned_device = assigned;
     *out_fallback = (assigned != preferred_device);
+    return runtime::Status::kSuccess;
+  }
+
+  template <typename T>
+  static constexpr DType dtypeForExecution() {
+    if constexpr (std::is_same_v<T, float>) {
+      return DType::kFloat32;
+    }
+    return DType::kFloat64;
+  }
+
+  template <typename T>
+  runtime::Status validateExecutionValues(
+      const std::unordered_map<std::size_t, std::vector<T>>& values) const {
+    const DType expected_dtype = dtypeForExecution<T>();
+    for (const auto& kv : values) {
+      const std::size_t tensor_id = kv.first;
+      if (tensor_id >= tensors_.size()) {
+        return runtime::Status::kInvalidValue;
+      }
+      const GraphTensorValue& tensor = tensors_[tensor_id];
+      if (tensor.spec.dtype != expected_dtype) {
+        return runtime::Status::kInvalidValue;
+      }
+      const std::size_t expected_numel = detail::numelFromShapeContract(tensor.spec.shape);
+      if (expected_numel == 0 || kv.second.size() != expected_numel) {
+        return runtime::Status::kInvalidValue;
+      }
+    }
+    return runtime::Status::kSuccess;
+  }
+
+  template <typename T>
+  runtime::Status executeNodeTyped(
+      const GraphNode& node,
+      runtime::Device assigned_device,
+      std::unordered_map<std::size_t, std::vector<T>>* values) const {
+    if (values == nullptr) {
+      return runtime::Status::kInvalidValue;
+    }
+    if (node.inputs.empty() || node.outputs.empty()) {
+      return runtime::Status::kInvalidValue;
+    }
+
+    auto get_value = [&](std::size_t tensor_id) -> const std::vector<T>* {
+      auto it = values->find(tensor_id);
+      if (it == values->end()) {
+        return nullptr;
+      }
+      return &it->second;
+    };
+
+    auto set_output = [&](std::size_t tensor_id, std::vector<T>&& out) -> runtime::Status {
+      values->insert_or_assign(tensor_id, std::move(out));
+      return runtime::Status::kSuccess;
+    };
+
+    for (std::size_t tensor_id : node.inputs) {
+      if (tensor_id >= tensors_.size()) {
+        return runtime::Status::kInvalidValue;
+      }
+      const std::vector<T>* data = get_value(tensor_id);
+      if (data == nullptr) {
+        return runtime::Status::kInvalidValue;
+      }
+      const std::size_t expected_numel = detail::numelFromShapeContract(tensors_[tensor_id].spec.shape);
+      if (data->size() != expected_numel) {
+        return runtime::Status::kInvalidValue;
+      }
+    }
+
+    for (std::size_t tensor_id : node.outputs) {
+      if (tensor_id >= tensors_.size()) {
+        return runtime::Status::kInvalidValue;
+      }
+      if (tensors_[tensor_id].spec.dtype != dtypeForExecution<T>()) {
+        return runtime::Status::kInvalidValue;
+      }
+    }
+
+    if (node.outputs.size() != 1) {
+      return runtime::Status::kInvalidValue;
+    }
+
+    const std::size_t out_id = node.outputs[0];
+    const GraphTensorValue& out_tensor = tensors_[out_id];
+
+    switch (node.op) {
+      case OpKind::kMatMul: {
+        if (node.inputs.size() != 2) {
+          return runtime::Status::kInvalidValue;
+        }
+        const std::size_t lhs_id = node.inputs[0];
+        const std::size_t rhs_id = node.inputs[1];
+        const GraphTensorValue& lhs_tensor = tensors_[lhs_id];
+        const GraphTensorValue& rhs_tensor = tensors_[rhs_id];
+        const std::vector<T>* lhs = get_value(lhs_id);
+        const std::vector<T>* rhs = get_value(rhs_id);
+        if (lhs == nullptr || rhs == nullptr) {
+          return runtime::Status::kInvalidValue;
+        }
+        if (lhs_tensor.spec.shape.size() != 2 || rhs_tensor.spec.shape.size() != 2 ||
+            out_tensor.spec.shape.size() != 2) {
+          return runtime::Status::kInvalidValue;
+        }
+        const std::size_t m = static_cast<std::size_t>(lhs_tensor.spec.shape[0]);
+        const std::size_t k = static_cast<std::size_t>(lhs_tensor.spec.shape[1]);
+        const std::size_t rhs_k = static_cast<std::size_t>(rhs_tensor.spec.shape[0]);
+        const std::size_t n = static_cast<std::size_t>(rhs_tensor.spec.shape[1]);
+        const std::size_t out_m = static_cast<std::size_t>(out_tensor.spec.shape[0]);
+        const std::size_t out_n = static_cast<std::size_t>(out_tensor.spec.shape[1]);
+        if (k != rhs_k || out_m != m || out_n != n) {
+          return runtime::Status::kInvalidValue;
+        }
+
+        std::vector<T> out(detail::numelFromShapeContract(out_tensor.spec.shape), static_cast<T>(0));
+        runtime::Status st = ops::matMul<T>(lhs->data(), rhs->data(), out.data(), m, k, n, assigned_device);
+        if (st != runtime::Status::kSuccess) {
+          return st;
+        }
+        return set_output(out_id, std::move(out));
+      }
+      case OpKind::kVectorAdd: {
+        if (node.inputs.size() != 2) {
+          return runtime::Status::kInvalidValue;
+        }
+        const std::size_t lhs_id = node.inputs[0];
+        const std::size_t rhs_id = node.inputs[1];
+        const GraphTensorValue& lhs_tensor = tensors_[lhs_id];
+        const GraphTensorValue& rhs_tensor = tensors_[rhs_id];
+        const std::vector<T>* lhs = get_value(lhs_id);
+        const std::vector<T>* rhs = get_value(rhs_id);
+        if (lhs == nullptr || rhs == nullptr) {
+          return runtime::Status::kInvalidValue;
+        }
+        const std::size_t lhs_numel = detail::numelFromShapeContract(lhs_tensor.spec.shape);
+        const std::size_t rhs_numel = detail::numelFromShapeContract(rhs_tensor.spec.shape);
+        const std::size_t out_numel = detail::numelFromShapeContract(out_tensor.spec.shape);
+        if (lhs_numel == 0 || lhs_numel != rhs_numel || lhs_numel != out_numel) {
+          return runtime::Status::kInvalidValue;
+        }
+
+        std::vector<T> out(out_numel, static_cast<T>(0));
+        runtime::Status st =
+            ops::vectorAdd<T>(lhs->data(), rhs->data(), out.data(), out_numel, assigned_device);
+        if (st != runtime::Status::kSuccess) {
+          return st;
+        }
+        return set_output(out_id, std::move(out));
+      }
+      case OpKind::kMatrixSub:
+      case OpKind::kMatrixDiv: {
+        if (node.inputs.size() != 2) {
+          return runtime::Status::kInvalidValue;
+        }
+        const std::size_t lhs_id = node.inputs[0];
+        const std::size_t rhs_id = node.inputs[1];
+        const GraphTensorValue& lhs_tensor = tensors_[lhs_id];
+        const GraphTensorValue& rhs_tensor = tensors_[rhs_id];
+        const std::vector<T>* lhs = get_value(lhs_id);
+        const std::vector<T>* rhs = get_value(rhs_id);
+        if (lhs == nullptr || rhs == nullptr) {
+          return runtime::Status::kInvalidValue;
+        }
+        if (lhs_tensor.spec.shape.size() != 2 || rhs_tensor.spec.shape.size() != 2 ||
+            out_tensor.spec.shape.size() != 2) {
+          return runtime::Status::kInvalidValue;
+        }
+        if (lhs_tensor.spec.shape != rhs_tensor.spec.shape || lhs_tensor.spec.shape != out_tensor.spec.shape) {
+          return runtime::Status::kInvalidValue;
+        }
+        const std::size_t rows = static_cast<std::size_t>(out_tensor.spec.shape[0]);
+        const std::size_t cols = static_cast<std::size_t>(out_tensor.spec.shape[1]);
+        std::vector<T> out(detail::numelFromShapeContract(out_tensor.spec.shape), static_cast<T>(0));
+
+        runtime::Status st = runtime::Status::kSuccess;
+        if (node.op == OpKind::kMatrixSub) {
+          st = ops::matrixSub<T>(lhs->data(), rhs->data(), out.data(), rows, cols, assigned_device);
+        } else {
+          st = ops::matrixDiv<T>(lhs->data(), rhs->data(), out.data(), rows, cols, assigned_device);
+        }
+        if (st != runtime::Status::kSuccess) {
+          return st;
+        }
+        return set_output(out_id, std::move(out));
+      }
+      case OpKind::kAttentionForward: {
+        if constexpr (!std::is_same_v<T, float>) {
+          return runtime::Status::kNotSupported;
+        }
+        if (node.inputs.size() != 3) {
+          return runtime::Status::kInvalidValue;
+        }
+        const std::size_t q_id = node.inputs[0];
+        const std::size_t k_id = node.inputs[1];
+        const std::size_t v_id = node.inputs[2];
+        const GraphTensorValue& q_tensor = tensors_[q_id];
+        const GraphTensorValue& k_tensor = tensors_[k_id];
+        const GraphTensorValue& v_tensor = tensors_[v_id];
+        const std::vector<T>* q = get_value(q_id);
+        const std::vector<T>* k = get_value(k_id);
+        const std::vector<T>* v = get_value(v_id);
+        if (q == nullptr || k == nullptr || v == nullptr) {
+          return runtime::Status::kInvalidValue;
+        }
+        if (q_tensor.spec.shape.size() != 2 || k_tensor.spec.shape.size() != 2 ||
+            v_tensor.spec.shape.size() != 2 || out_tensor.spec.shape.size() != 2) {
+          return runtime::Status::kInvalidValue;
+        }
+        if (q_tensor.spec.shape != k_tensor.spec.shape ||
+            q_tensor.spec.shape != v_tensor.spec.shape ||
+            q_tensor.spec.shape != out_tensor.spec.shape) {
+          return runtime::Status::kInvalidValue;
+        }
+
+        const std::size_t seq_len = static_cast<std::size_t>(q_tensor.spec.shape[0]);
+        const std::size_t head_dim = static_cast<std::size_t>(q_tensor.spec.shape[1]);
+        std::vector<T> out(detail::numelFromShapeContract(out_tensor.spec.shape), static_cast<T>(0));
+
+        AttentionConfig cfg{seq_len, head_dim, false};
+        runtime::Status st = attentionForward(
+            reinterpret_cast<const float*>(q->data()),
+            reinterpret_cast<const float*>(k->data()),
+            reinterpret_cast<const float*>(v->data()),
+            reinterpret_cast<float*>(out.data()),
+            cfg,
+            assigned_device);
+        if (st != runtime::Status::kSuccess) {
+          return st;
+        }
+        return set_output(out_id, std::move(out));
+      }
+      case OpKind::kConv2dNchw3x3s1p1: {
+        if (node.inputs.size() != 2 && node.inputs.size() != 3) {
+          return runtime::Status::kInvalidValue;
+        }
+        const std::size_t x_id = node.inputs[0];
+        const std::size_t w_id = node.inputs[1];
+        const std::size_t bias_id = (node.inputs.size() == 3) ? node.inputs[2] : static_cast<std::size_t>(-1);
+        const GraphTensorValue& x_tensor = tensors_[x_id];
+        const GraphTensorValue& w_tensor = tensors_[w_id];
+        const std::vector<T>* x = get_value(x_id);
+        const std::vector<T>* w = get_value(w_id);
+        if (x == nullptr || w == nullptr) {
+          return runtime::Status::kInvalidValue;
+        }
+        const std::vector<T>* bias = nullptr;
+        const GraphTensorValue* bias_tensor = nullptr;
+        if (node.inputs.size() == 3) {
+          bias_tensor = &tensors_[bias_id];
+          bias = get_value(bias_id);
+          if (bias == nullptr) {
+            return runtime::Status::kInvalidValue;
+          }
+        }
+
+        if (x_tensor.spec.shape.size() != 4 || w_tensor.spec.shape.size() != 4 || out_tensor.spec.shape.size() != 4) {
+          return runtime::Status::kInvalidValue;
+        }
+        const std::size_t batch = static_cast<std::size_t>(x_tensor.spec.shape[0]);
+        const std::size_t in_channels = static_cast<std::size_t>(x_tensor.spec.shape[1]);
+        const std::size_t in_h = static_cast<std::size_t>(x_tensor.spec.shape[2]);
+        const std::size_t in_w = static_cast<std::size_t>(x_tensor.spec.shape[3]);
+        const std::size_t out_channels = static_cast<std::size_t>(w_tensor.spec.shape[0]);
+        const std::size_t w_in_channels = static_cast<std::size_t>(w_tensor.spec.shape[1]);
+        const std::size_t kernel_h = static_cast<std::size_t>(w_tensor.spec.shape[2]);
+        const std::size_t kernel_w = static_cast<std::size_t>(w_tensor.spec.shape[3]);
+        if (kernel_h != 3 || kernel_w != 3 || in_channels != w_in_channels) {
+          return runtime::Status::kInvalidValue;
+        }
+        if (out_tensor.spec.shape[0] != static_cast<std::int64_t>(batch) ||
+            out_tensor.spec.shape[1] != static_cast<std::int64_t>(out_channels) ||
+            out_tensor.spec.shape[2] != static_cast<std::int64_t>(in_h) ||
+            out_tensor.spec.shape[3] != static_cast<std::int64_t>(in_w)) {
+          return runtime::Status::kInvalidValue;
+        }
+        const T* bias_ptr = nullptr;
+        if (bias != nullptr) {
+          if (bias_tensor->spec.shape.size() != 1 ||
+              bias_tensor->spec.shape[0] != static_cast<std::int64_t>(out_channels)) {
+            return runtime::Status::kInvalidValue;
+          }
+          bias_ptr = bias->data();
+        }
+
+        std::vector<T> out(detail::numelFromShapeContract(out_tensor.spec.shape), static_cast<T>(0));
+        runtime::Status st = ops::conv2dNchw<T>(
+            x->data(),
+            w->data(),
+            bias_ptr,
+            out.data(),
+            batch,
+            in_channels,
+            in_h,
+            in_w,
+            out_channels,
+            /*kernel_h=*/3,
+            /*kernel_w=*/3,
+            /*stride_h=*/1,
+            /*stride_w=*/1,
+            /*pad_h=*/1,
+            /*pad_w=*/1,
+            assigned_device,
+            /*apply_relu=*/false);
+        if (st != runtime::Status::kSuccess) {
+          return st;
+        }
+        return set_output(out_id, std::move(out));
+      }
+      default:
+        return runtime::Status::kNotSupported;
+    }
+  }
+
+  template <typename T>
+  runtime::Status executeTyped(
+      const GraphPlannerOptions& options,
+      const std::unordered_map<std::size_t, std::vector<T>>& feeds,
+      std::unordered_map<std::size_t, std::vector<T>>* out_values,
+      std::vector<GraphExecutionGroup>* out_groups,
+      std::vector<GraphPlanStep>* out_steps) const {
+    if (out_values == nullptr) {
+      return runtime::Status::kInvalidValue;
+    }
+
+    std::vector<GraphExecutionGroup> groups;
+    std::vector<GraphPlanStep> steps;
+    runtime::Status st = planExecutionGroups(options, &groups, &steps);
+    if (st != runtime::Status::kSuccess) {
+      return st;
+    }
+
+    std::unordered_map<std::size_t, std::vector<T>> values = feeds;
+    st = validateExecutionValues(values);
+    if (st != runtime::Status::kSuccess) {
+      return st;
+    }
+
+    std::unordered_set<std::size_t> visited_nodes;
+    visited_nodes.reserve(nodes_.size());
+
+    for (const auto& group : groups) {
+      if (group.sync_boundary_before) {
+        st = runtime::deviceSynchronizeWithPolicy(options.sync_policy);
+        if (st != runtime::Status::kSuccess) {
+          return st;
+        }
+      }
+
+      for (std::size_t node_id : group.node_ids) {
+        if (node_id >= nodes_.size()) {
+          return runtime::Status::kInvalidValue;
+        }
+        if (!visited_nodes.insert(node_id).second) {
+          return runtime::Status::kInvalidValue;
+        }
+        st = executeNodeTyped<T>(nodes_[node_id], group.assigned_device, &values);
+        if (st != runtime::Status::kSuccess) {
+          return st;
+        }
+      }
+
+      if (group.sync_boundary_after) {
+        st = runtime::deviceSynchronizeWithPolicy(options.sync_policy);
+        if (st != runtime::Status::kSuccess) {
+          return st;
+        }
+      }
+    }
+
+    if (visited_nodes.size() != nodes_.size()) {
+      return runtime::Status::kInvalidValue;
+    }
+
+    *out_values = std::move(values);
+    if (out_groups != nullptr) {
+      *out_groups = std::move(groups);
+    }
+    if (out_steps != nullptr) {
+      *out_steps = std::move(steps);
+    }
     return runtime::Status::kSuccess;
   }
 

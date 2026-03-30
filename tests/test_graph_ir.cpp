@@ -1,4 +1,5 @@
 #include <iostream>
+#include <unordered_map>
 #include <vector>
 
 #include "lightning_core/graph.hpp"
@@ -104,6 +105,231 @@ int main() {
     }
   }
 
+  // graph execution smoke: matmul -> vector_add
+  GraphIR exec_graph;
+  std::size_t exec_a = 0;
+  std::size_t exec_b = 0;
+  std::size_t exec_mm = 0;
+  std::size_t exec_bias = 0;
+  std::size_t exec_out = 0;
+  if (exec_graph.addTensorSpec(spec, &exec_a, "exec_a", true) != Status::kSuccess ||
+      exec_graph.addTensorSpec(spec, &exec_b, "exec_b", true) != Status::kSuccess ||
+      exec_graph.addTensorSpec(spec, &exec_mm, "exec_mm", false) != Status::kSuccess ||
+      exec_graph.addTensorSpec(spec, &exec_bias, "exec_bias", true) != Status::kSuccess ||
+      exec_graph.addTensorSpec(spec, &exec_out, "exec_out", false) != Status::kSuccess) {
+    std::cerr << "exec_graph addTensorSpec failed\n";
+    return 1;
+  }
+  if (exec_graph.addNode(OpKind::kMatMul, {exec_a, exec_b}, {exec_mm}) != Status::kSuccess ||
+      exec_graph.addNode(OpKind::kVectorAdd, {exec_mm, exec_bias}, {exec_out}) != Status::kSuccess) {
+    std::cerr << "exec_graph addNode failed\n";
+    return 1;
+  }
+
+  lightning_core::graph::GraphPlannerOptions exec_options;
+  exec_options.preferred_device = Device::kMetal;
+  exec_options.sync_policy.mode = lightning_core::runtime::SyncMode::kAuto;
+  exec_options.sync_policy.trace_sync_boundary = false;
+  exec_options.separate_fallback_segments = true;
+  exec_options.insert_sync_on_device_change = true;
+
+  std::unordered_map<std::size_t, std::vector<float>> exec_feeds;
+  exec_feeds[exec_a] = {1.0f, 2.0f, 3.0f, 4.0f};
+  exec_feeds[exec_b] = {5.0f, 6.0f, 7.0f, 8.0f};
+  exec_feeds[exec_bias] = {1.0f, 2.0f, 3.0f, 4.0f};
+
+  std::unordered_map<std::size_t, std::vector<float>> exec_values;
+  std::vector<lightning_core::graph::GraphExecutionGroup> exec_groups;
+  std::vector<lightning_core::graph::GraphPlanStep> exec_steps;
+  if (exec_graph.executeF32(exec_options, exec_feeds, &exec_values, &exec_groups, &exec_steps) !=
+      Status::kSuccess) {
+    std::cerr << "executeF32 should succeed for matmul->vector_add graph\n";
+    return 1;
+  }
+  const auto out_it = exec_values.find(exec_out);
+  if (out_it == exec_values.end()) {
+    std::cerr << "executeF32 should produce output tensor value\n";
+    return 1;
+  }
+  const std::vector<float> expected_out = {20.0f, 24.0f, 46.0f, 54.0f};
+  if (out_it->second.size() != expected_out.size()) {
+    std::cerr << "executeF32 output size mismatch\n";
+    return 1;
+  }
+  for (std::size_t i = 0; i < expected_out.size(); ++i) {
+    const float diff = out_it->second[i] - expected_out[i];
+    if (diff > 1e-4f || diff < -1e-4f) {
+      std::cerr << "executeF32 output mismatch at index " << i << "\n";
+      return 1;
+    }
+  }
+  if (exec_steps.size() != exec_graph.numNodes()) {
+    std::cerr << "executeF32 should return one plan step per node\n";
+    return 1;
+  }
+  if (exec_groups.empty()) {
+    std::cerr << "executeF32 should return execution groups\n";
+    return 1;
+  }
+
+  const lightning_core::runtime::BackendCapabilities metal_caps =
+      lightning_core::runtime::backendCapabilities(Device::kMetal);
+  const bool metal_compute_built = metal_caps.compute_surface;
+  const bool metal_exec_available = metal_caps.compute_surface && metal_caps.available;
+  if (metal_exec_available) {
+    // attention dispatch validation: graph output must match direct attentionForward call.
+    GraphIR attn_graph;
+    std::size_t tq = 0;
+    std::size_t tk = 0;
+    std::size_t tv = 0;
+    std::size_t to = 0;
+    TensorSpec attn_spec;
+    attn_spec.shape = {4, 8};
+    attn_spec.dtype = DType::kFloat32;
+    attn_spec.layout = lightning_core::Layout::kContiguous;
+    if (attn_graph.addTensorSpec(attn_spec, &tq, "q", true) != Status::kSuccess ||
+        attn_graph.addTensorSpec(attn_spec, &tk, "k", true) != Status::kSuccess ||
+        attn_graph.addTensorSpec(attn_spec, &tv, "v", true) != Status::kSuccess ||
+        attn_graph.addTensorSpec(attn_spec, &to, "out", false) != Status::kSuccess) {
+      std::cerr << "attn_graph addTensorSpec failed\n";
+      return 1;
+    }
+    if (attn_graph.addNode(OpKind::kAttentionForward, {tq, tk, tv}, {to}) != Status::kSuccess) {
+      std::cerr << "attn_graph addNode failed\n";
+      return 1;
+    }
+
+    std::vector<float> qv(32, 0.0f);
+    std::vector<float> kv(32, 0.0f);
+    std::vector<float> vv(32, 0.0f);
+    for (std::size_t i = 0; i < qv.size(); ++i) {
+      qv[i] = static_cast<float>((i % 7) + 1) * 0.05f;
+      kv[i] = static_cast<float>((i % 5) + 1) * 0.03f;
+      vv[i] = static_cast<float>((i % 9) + 1) * 0.04f;
+    }
+    std::unordered_map<std::size_t, std::vector<float>> attn_feeds;
+    attn_feeds[tq] = qv;
+    attn_feeds[tk] = kv;
+    attn_feeds[tv] = vv;
+    std::unordered_map<std::size_t, std::vector<float>> attn_values;
+    if (attn_graph.executeF32(exec_options, attn_feeds, &attn_values, nullptr, nullptr) != Status::kSuccess) {
+      std::cerr << "attn_graph executeF32 failed\n";
+      return 1;
+    }
+    const auto attn_out_it = attn_values.find(to);
+    if (attn_out_it == attn_values.end() || attn_out_it->second.size() != qv.size()) {
+      std::cerr << "attn_graph output missing or size mismatch\n";
+      return 1;
+    }
+    std::vector<float> attn_expected(qv.size(), 0.0f);
+    lightning_core::AttentionConfig attn_cfg{4, 8, false};
+    if (lightning_core::attentionForward(
+            qv.data(), kv.data(), vv.data(), attn_expected.data(), attn_cfg, Device::kMetal) != Status::kSuccess) {
+      std::cerr << "direct attentionForward failed\n";
+      return 1;
+    }
+    for (std::size_t i = 0; i < attn_expected.size(); ++i) {
+      const float diff = attn_out_it->second[i] - attn_expected[i];
+      if (diff > 1e-3f || diff < -1e-3f) {
+        std::cerr << "attn_graph output mismatch at index " << i << "\n";
+        return 1;
+      }
+    }
+
+    // conv dispatch validation: graph output must match direct conv2dNchw call.
+    GraphIR conv_exec_graph;
+    std::size_t cx = 0;
+    std::size_t cw = 0;
+    std::size_t cb = 0;
+    std::size_t cy = 0;
+    TensorSpec cx_spec;
+    cx_spec.shape = {1, 3, 8, 8};
+    cx_spec.dtype = DType::kFloat32;
+    cx_spec.layout = lightning_core::Layout::kContiguous;
+    TensorSpec cw_spec;
+    cw_spec.shape = {16, 3, 3, 3};
+    cw_spec.dtype = DType::kFloat32;
+    cw_spec.layout = lightning_core::Layout::kContiguous;
+    TensorSpec cb_spec;
+    cb_spec.shape = {16};
+    cb_spec.dtype = DType::kFloat32;
+    cb_spec.layout = lightning_core::Layout::kContiguous;
+    TensorSpec cy_spec;
+    cy_spec.shape = {1, 16, 8, 8};
+    cy_spec.dtype = DType::kFloat32;
+    cy_spec.layout = lightning_core::Layout::kContiguous;
+    if (conv_exec_graph.addTensorSpec(cx_spec, &cx, "x", true) != Status::kSuccess ||
+        conv_exec_graph.addTensorSpec(cw_spec, &cw, "w", true) != Status::kSuccess ||
+        conv_exec_graph.addTensorSpec(cb_spec, &cb, "b", true) != Status::kSuccess ||
+        conv_exec_graph.addTensorSpec(cy_spec, &cy, "y", false) != Status::kSuccess) {
+      std::cerr << "conv_exec_graph addTensorSpec failed\n";
+      return 1;
+    }
+    if (conv_exec_graph.addNode(OpKind::kConv2dNchw3x3s1p1, {cx, cw, cb}, {cy}) != Status::kSuccess) {
+      std::cerr << "conv_exec_graph addNode failed\n";
+      return 1;
+    }
+
+    std::vector<float> xv(1 * 3 * 8 * 8, 0.0f);
+    std::vector<float> wv(16 * 3 * 3 * 3, 0.0f);
+    std::vector<float> bv(16, 0.0f);
+    for (std::size_t i = 0; i < xv.size(); ++i) {
+      xv[i] = static_cast<float>((i % 13) + 1) * 0.01f;
+    }
+    for (std::size_t i = 0; i < wv.size(); ++i) {
+      wv[i] = static_cast<float>((i % 11) + 1) * 0.02f;
+    }
+    for (std::size_t i = 0; i < bv.size(); ++i) {
+      bv[i] = static_cast<float>(i + 1) * 0.001f;
+    }
+    std::unordered_map<std::size_t, std::vector<float>> conv_feeds;
+    conv_feeds[cx] = xv;
+    conv_feeds[cw] = wv;
+    conv_feeds[cb] = bv;
+    std::unordered_map<std::size_t, std::vector<float>> conv_values;
+    const Status conv_exec_status =
+        conv_exec_graph.executeF32(exec_options, conv_feeds, &conv_values, nullptr, nullptr);
+    if (conv_exec_status != Status::kSuccess) {
+      std::cerr << "conv_exec_graph executeF32 failed: "
+                << lightning_core::runtime::getErrorString(conv_exec_status) << "\n";
+      return 1;
+    }
+    const auto conv_out_it = conv_values.find(cy);
+    if (conv_out_it == conv_values.end() || conv_out_it->second.size() != (1 * 16 * 8 * 8)) {
+      std::cerr << "conv_exec_graph output missing or size mismatch\n";
+      return 1;
+    }
+    std::vector<float> conv_expected(1 * 16 * 8 * 8, 0.0f);
+    if (lightning_core::ops::conv2dNchw<float>(
+            xv.data(),
+            wv.data(),
+            bv.data(),
+            conv_expected.data(),
+            1,
+            3,
+            8,
+            8,
+            16,
+            3,
+            3,
+            1,
+            1,
+            1,
+            1,
+            Device::kMetal,
+            false) != Status::kSuccess) {
+      std::cerr << "direct conv2dNchw failed\n";
+      return 1;
+    }
+    for (std::size_t i = 0; i < conv_expected.size(); ++i) {
+      const float diff = conv_out_it->second[i] - conv_expected[i];
+      if (diff > 1e-3f || diff < -1e-3f) {
+        std::cerr << "conv_exec_graph output mismatch at index " << i << "\n";
+        return 1;
+      }
+    }
+  }
+
   GraphIR bad_graph;
   std::size_t t0 = 0;
   std::size_t t1 = 0;
@@ -150,8 +376,6 @@ int main() {
   }
   lightning_core::graph::ValidationReport conv_report;
   const Status conv_validate_status = conv_graph.validateWithReport(&conv_report);
-  const bool metal_compute_built =
-      lightning_core::runtime::backendCapabilities(Device::kMetal).compute_surface;
   if (metal_compute_built) {
     if (conv_validate_status != Status::kSuccess || !conv_report.ok()) {
       std::cerr << "conv_graph should validate when metal backend is built\n";

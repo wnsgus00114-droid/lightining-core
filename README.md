@@ -11,7 +11,7 @@
 
 # 3. One-line Summary
 Lightning Core is a macOS-first, Metal-backed runtime that provides low-level control (resident IO, policy routing, fused paths) with easy Python APIs.
-Current public release: **v0.1.5** (2026-03-30).
+Current public release: **v0.1.6** (2026-03-30).
 
 # 4. Abstract
 Lightning Core targets high-iteration experimentation on Apple Silicon by combining:
@@ -541,7 +541,7 @@ docs/                           # quickstart/advanced/contributor docs
 ```
 
 # 35. Roadmap
-Roadmap baseline is now aligned to **v0.1.5** and tracked in detail in [ROADMAP.md](ROADMAP.md).
+Roadmap baseline is now aligned to **v0.1.6** and tracked in detail in [ROADMAP.md](ROADMAP.md).
 
 Phase A (2026 Q2, `v0.1.6`-`v0.1.9`): Runtime Core Hardening
 - Finalize backend contracts (compute/memory/sync/profiler split).
@@ -614,4 +614,4 @@ Community feedback channels we actively monitor:
 
 Lightning Core is stable enough for experimentation and benchmarking, while APIs and internals continue to evolve quickly.
 Visibility update: repository topics and benchmark discoverability documentation are actively maintained.
-Current release train: **v0.1.5**.
+Current release train: **v0.1.6**.
