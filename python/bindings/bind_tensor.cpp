@@ -8,9 +8,31 @@ void bindTensorViewType(py::module_& m, const char* name) {
       .def("rank", &ViewType::rank)
       .def("numel", &ViewType::numel)
       .def("is_contiguous", &ViewType::isContiguous)
+      .def("layout", [](const ViewType& t) {
+        return t.layout() == lc::Layout::kContiguous ? "contiguous" : "strided";
+      })
       .def("dtype", &ViewType::dtypeName)
       .def("offset_elements", &ViewType::offsetElements)
-      .def("device", [](const ViewType& t) { return toString(t.device()); });
+      .def("device", [](const ViewType& t) { return toString(t.device()); })
+      .def("validate_contract", [](const ViewType& t) { throwIfNotSuccess(t.validateContract()); })
+      .def("validate_contract_for_storage",
+           [](const ViewType& t, std::size_t storage_numel) {
+             throwIfNotSuccess(t.validateContractForStorage(storage_numel));
+           },
+           py::arg("storage_numel"))
+      .def("contract", [](const ViewType& t) {
+        py::dict out;
+        out["shape"] = t.shape();
+        out["strides"] = t.strides();
+        out["rank"] = t.rank();
+        out["numel"] = t.numel();
+        out["is_contiguous"] = t.isContiguous();
+        out["layout"] = t.layout() == lc::Layout::kContiguous ? "contiguous" : "strided";
+        out["dtype"] = t.dtypeName();
+        out["offset_elements"] = t.offsetElements();
+        out["device"] = toString(t.device());
+        return out;
+      });
 }
 
 template <typename TensorType, typename ViewType, typename Scalar>
@@ -45,6 +67,26 @@ void bindTensorType(py::module_& m, const char* name) {
       .def("dtype", &TensorType::dtypeName)
       .def("device", [](const TensorType& t) { return toString(t.device()); })
       .def("numel", &TensorType::numel)
+      .def("storage_numel", &TensorType::storageNumel)
+      .def("validate_contract", [](const TensorType& t) {
+        throwIfNotSuccess(t.validateContract());
+      })
+      .def("validate_view_contract", [](const TensorType& t, const ViewType& view) {
+        throwIfNotSuccess(t.validateViewContract(view));
+      })
+      .def("contract", [](const TensorType& t) {
+        py::dict out;
+        out["shape"] = t.shape();
+        out["strides"] = t.strides();
+        out["rank"] = t.rank();
+        out["numel"] = t.numel();
+        out["storage_numel"] = t.storageNumel();
+        out["is_contiguous"] = t.isContiguous();
+        out["layout"] = t.layout() == lc::Layout::kContiguous ? "contiguous" : "strided";
+        out["dtype"] = t.dtypeName();
+        out["device"] = toString(t.device());
+        return out;
+      })
       .def("reshape", [](TensorType& t, const std::vector<std::int64_t>& shape) {
         throwIfNotSuccess(t.reshape(shape));
       })

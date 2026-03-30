@@ -31,6 +31,14 @@ int runCase(lightning_core::Device device) {
     std::cerr << "stride check failed\n";
     return 1;
   }
+  if (a.storageNumel() != a.numel()) {
+    std::cerr << "storage numel mismatch\n";
+    return 1;
+  }
+  if (a.validateContract() != lightning_core::runtime::Status::kSuccess) {
+    std::cerr << "tensor contract should be valid\n";
+    return 1;
+  }
 
   if (a.fromHost({static_cast<T>(1), static_cast<T>(2), static_cast<T>(3), static_cast<T>(4)}) !=
       lightning_core::runtime::Status::kSuccess) {
@@ -84,6 +92,18 @@ int runCase(lightning_core::Device device) {
     std::cerr << "view metadata invalid\n";
     return 1;
   }
+  if (v.validateContract() != lightning_core::runtime::Status::kSuccess) {
+    std::cerr << "view contract should be valid\n";
+    return 1;
+  }
+  if (a.validateViewContract(v) != lightning_core::runtime::Status::kSuccess) {
+    std::cerr << "tensor-view contract should be valid\n";
+    return 1;
+  }
+  if (v.validateContractForStorage(2) != lightning_core::runtime::Status::kInvalidValue) {
+    std::cerr << "view storage bound check should fail for small storage\n";
+    return 1;
+  }
 
   lightning_core::TensorViewT<T> sview;
   if (a.slice(0, 0, 1, &sview) != lightning_core::runtime::Status::kSuccess) {
@@ -96,6 +116,10 @@ int runCase(lightning_core::Device device) {
   }
   if (sview.offsetElements() != 0) {
     std::cerr << "slice offset invalid\n";
+    return 1;
+  }
+  if (sview.validateContractForStorage(a.storageNumel()) != lightning_core::runtime::Status::kSuccess) {
+    std::cerr << "slice view contract should fit tensor storage\n";
     return 1;
   }
   if (a.slice(0, 1, 3, &sview) != lightning_core::runtime::Status::kInvalidValue) {
@@ -141,6 +165,23 @@ int runCase(lightning_core::Device device) {
   for (std::size_t i = 0; i < copy_expected.size(); ++i) {
     if (!nearlyEqual(strided_values[i], copy_expected[i])) {
       std::cerr << "readStrided value mismatch\n";
+      return 1;
+    }
+  }
+  if (a.readStrided({2}, {2}, 3, &strided_values) != lightning_core::runtime::Status::kInvalidValue) {
+    std::cerr << "readStrided out-of-bound contract should fail\n";
+    return 1;
+  }
+
+  if (device != lightning_core::Device::kCPU) {
+    TensorT host_tensor({2, 2}, lightning_core::Device::kCPU);
+    lightning_core::TensorViewT<T> host_view;
+    if (host_tensor.view({4}, &host_view) != lightning_core::runtime::Status::kSuccess) {
+      std::cerr << "host tensor view should succeed\n";
+      return 1;
+    }
+    if (a.validateViewContract(host_view) != lightning_core::runtime::Status::kInvalidValue) {
+      std::cerr << "cross-device view contract should fail\n";
       return 1;
     }
   }

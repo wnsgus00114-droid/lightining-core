@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <numeric>
+#include <string>
 #include <type_traits>
 #include <vector>
 
@@ -17,6 +18,80 @@ enum class Layout {
   kContiguous = 0,
   kStrided
 };
+
+namespace detail {
+
+inline bool isShapeValidContract(const std::vector<std::int64_t>& shape) {
+  if (shape.empty()) {
+    return false;
+  }
+  for (std::int64_t d : shape) {
+    if (d <= 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+inline std::vector<std::int64_t> computeDefaultStridesContract(const std::vector<std::int64_t>& shape) {
+  std::vector<std::int64_t> s(shape.size(), 1);
+  if (shape.empty()) {
+    return s;
+  }
+  for (std::size_t i = shape.size(); i > 1; --i) {
+    s[i - 2] = s[i - 1] * shape[i - 1];
+  }
+  return s;
+}
+
+inline std::size_t numelFromShapeContract(const std::vector<std::int64_t>& shape) {
+  if (!isShapeValidContract(shape)) {
+    return 0;
+  }
+  std::size_t total = 1;
+  for (std::int64_t dim : shape) {
+    total *= static_cast<std::size_t>(dim);
+  }
+  return total;
+}
+
+inline runtime::Status validateShapeStrideContract(
+    const std::vector<std::int64_t>& shape,
+    const std::vector<std::int64_t>& strides,
+    Layout layout) {
+  if (!isShapeValidContract(shape) || shape.size() != strides.size()) {
+    return runtime::Status::kInvalidValue;
+  }
+  for (std::int64_t s : strides) {
+    if (s <= 0) {
+      return runtime::Status::kInvalidValue;
+    }
+  }
+  if (layout == Layout::kContiguous && strides != computeDefaultStridesContract(shape)) {
+    return runtime::Status::kInvalidValue;
+  }
+  return runtime::Status::kSuccess;
+}
+
+inline runtime::Status validateViewBoundsContract(
+    const std::vector<std::int64_t>& shape,
+    const std::vector<std::int64_t>& strides,
+    std::size_t offset_elements,
+    std::size_t storage_numel) {
+  if (storage_numel == 0) {
+    return runtime::Status::kInvalidValue;
+  }
+  std::size_t max_source_index = offset_elements;
+  for (std::size_t i = 0; i < shape.size(); ++i) {
+    max_source_index += static_cast<std::size_t>(shape[i] - 1) * static_cast<std::size_t>(strides[i]);
+  }
+  if (max_source_index >= storage_numel) {
+    return runtime::Status::kInvalidValue;
+  }
+  return runtime::Status::kSuccess;
+}
+
+}  // namespace detail
 
 template <typename T>
 class TensorT;
@@ -75,6 +150,18 @@ class TensorViewT {
     return "longdouble";
   }
 
+  runtime::Status validateContract() const {
+    return detail::validateShapeStrideContract(shape_, strides_, layout_);
+  }
+
+  runtime::Status validateContractForStorage(std::size_t storage_numel) const {
+    runtime::Status st = validateContract();
+    if (st != runtime::Status::kSuccess) {
+      return st;
+    }
+    return detail::validateViewBoundsContract(shape_, strides_, offset_elements_, storage_numel);
+  }
+
  private:
   template <typename U>
   friend class TensorT;
@@ -105,7 +192,7 @@ class TensorT {
 
  public:
   TensorT(const std::vector<std::int64_t>& shape, Device device = Device::kCPU)
-      : shape_(shape), strides_(computeDefaultStrides(shape)), device_(device), device_storage_(nullptr) {
+      : shape_(shape), strides_(detail::computeDefaultStridesContract(shape)), device_(device), device_storage_(nullptr) {
     allocateStorage();
   }
 
@@ -140,14 +227,7 @@ class TensorT {
   }
 
   std::size_t numel() const {
-    if (shape_.empty() || !isShapeValid(shape_)) {
-      return 0;
-    }
-    std::size_t total = 1;
-    for (std::int64_t dim : shape_) {
-      total *= static_cast<std::size_t>(dim);
-    }
-    return total;
+    return detail::numelFromShapeContract(shape_);
   }
 
   const std::vector<std::int64_t>& shape() const {
@@ -163,7 +243,7 @@ class TensorT {
   }
 
   bool isContiguous() const {
-    return strides_ == computeDefaultStrides(shape_);
+    return strides_ == detail::computeDefaultStridesContract(shape_);
   }
 
   Layout layout() const {
@@ -184,8 +264,30 @@ class TensorT {
     return device_;
   }
 
+  std::size_t storageNumel() const {
+    return numel();
+  }
+
+  runtime::Status validateContract() const {
+    runtime::Status st = detail::validateShapeStrideContract(shape_, strides_, layout());
+    if (st != runtime::Status::kSuccess) {
+      return st;
+    }
+    if (device_ == Device::kCPU) {
+      return cpu_storage_.size() == numel() ? runtime::Status::kSuccess : runtime::Status::kInvalidValue;
+    }
+    return device_storage_ != nullptr ? runtime::Status::kSuccess : runtime::Status::kInvalidValue;
+  }
+
+  runtime::Status validateViewContract(const TensorViewT<T>& view) const {
+    if (view.device() != device_) {
+      return runtime::Status::kInvalidValue;
+    }
+    return view.validateContractForStorage(storageNumel());
+  }
+
   runtime::Status reshape(const std::vector<std::int64_t>& new_shape) {
-    if (!isShapeValid(new_shape)) {
+    if (!detail::isShapeValidContract(new_shape)) {
       return runtime::Status::kInvalidValue;
     }
     std::size_t new_numel = 1;
@@ -196,12 +298,12 @@ class TensorT {
       return runtime::Status::kInvalidValue;
     }
     shape_ = new_shape;
-    strides_ = computeDefaultStrides(new_shape);
+    strides_ = detail::computeDefaultStridesContract(new_shape);
     return runtime::Status::kSuccess;
   }
 
   runtime::Status view(const std::vector<std::int64_t>& new_shape, TensorViewT<T>* out) const {
-    if (out == nullptr || !isContiguous() || !isShapeValid(new_shape)) {
+    if (out == nullptr || !isContiguous() || !detail::isShapeValidContract(new_shape)) {
       return runtime::Status::kInvalidValue;
     }
     std::size_t new_numel = 1;
@@ -211,7 +313,7 @@ class TensorT {
     if (new_numel != numel()) {
       return runtime::Status::kInvalidValue;
     }
-    *out = TensorViewT<T>(new_shape, computeDefaultStrides(new_shape), device_, 0, Layout::kContiguous);
+    *out = TensorViewT<T>(new_shape, detail::computeDefaultStridesContract(new_shape), device_, 0, Layout::kContiguous);
     return runtime::Status::kSuccess;
   }
 
@@ -232,8 +334,9 @@ class TensorT {
   }
 
   runtime::Status toHostView(const TensorViewT<T>& view, std::vector<T>* out) const {
-    if (view.device() != device_) {
-      return runtime::Status::kInvalidValue;
+    runtime::Status st = validateViewContract(view);
+    if (st != runtime::Status::kSuccess) {
+      return st;
     }
     return readStrided(view.shape(), view.strides(), view.offsetElements(), out);
   }
@@ -256,26 +359,17 @@ class TensorT {
       const std::vector<std::int64_t>& source_strides,
       std::size_t offset_elements,
       std::vector<T>* out) const {
-    if (out == nullptr || !isShapeValid(out_shape) || out_shape.size() != source_strides.size()) {
+    if (out == nullptr) {
       return runtime::Status::kInvalidValue;
     }
-    for (std::int64_t s : source_strides) {
-      if (s <= 0) {
-        return runtime::Status::kInvalidValue;
-      }
+    runtime::Status st =
+        detail::validateShapeStrideContract(out_shape, source_strides, Layout::kStrided);
+    if (st != runtime::Status::kSuccess) {
+      return st;
     }
-
-    std::size_t out_numel = 1;
-    for (std::int64_t d : out_shape) {
-      out_numel *= static_cast<std::size_t>(d);
-    }
-
-    std::size_t max_source_index = offset_elements;
-    for (std::size_t i = 0; i < out_shape.size(); ++i) {
-      max_source_index +=
-          static_cast<std::size_t>(out_shape[i] - 1) * static_cast<std::size_t>(source_strides[i]);
-    }
-    if (max_source_index >= numel()) {
+    const std::size_t out_numel = detail::numelFromShapeContract(out_shape);
+    st = detail::validateViewBoundsContract(out_shape, source_strides, offset_elements, storageNumel());
+    if (st != runtime::Status::kSuccess) {
       return runtime::Status::kInvalidValue;
     }
 
@@ -374,31 +468,8 @@ class TensorT {
   }
 
  private:
-  static bool isShapeValid(const std::vector<std::int64_t>& shape) {
-    if (shape.empty()) {
-      return false;
-    }
-    for (std::int64_t d : shape) {
-      if (d <= 0) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  static std::vector<std::int64_t> computeDefaultStrides(const std::vector<std::int64_t>& shape) {
-    std::vector<std::int64_t> s(shape.size(), 1);
-    if (shape.empty()) {
-      return s;
-    }
-    for (std::size_t i = shape.size(); i > 1; --i) {
-      s[i - 2] = s[i - 1] * shape[i - 1];
-    }
-    return s;
-  }
-
   runtime::Status allocateStorage() {
-    if (!isShapeValid(shape_)) {
+    if (!detail::isShapeValidContract(shape_)) {
       return runtime::Status::kInvalidValue;
     }
     if (device_ == Device::kCPU) {
