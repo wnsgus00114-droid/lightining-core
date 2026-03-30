@@ -12,6 +12,7 @@
 #include <pybind11/stl.h>
 
 #include "lightning_core/attention.hpp"
+#include "lightning_core/graph.hpp"
 #include "lightning_core/ops.hpp"
 #include "lightning_core/runtime.hpp"
 #include "lightning_core/tensor.hpp"
@@ -78,3 +79,4 @@ void bindRuntime(py::module_& m);
 void bindOps(py::module_& m);
 void bindAttention(py::module_& m);
 void bindIntegrated(py::module_& m);
+void bindGraph(py::module_& m);

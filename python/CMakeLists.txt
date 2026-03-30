@@ -66,6 +66,7 @@ if(pybind11_FOUND)
     bindings/bind_runtime.cpp
     bindings/bind_tensor.cpp
     bindings/bind_ops.cpp
+    bindings/bind_graph.cpp
     bindings/bind_attention.cpp
     bindings/bind_integrated.cpp
   )

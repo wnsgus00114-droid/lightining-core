@@ -256,6 +256,7 @@ Progress update (2026-03-30):
 - completed: explicit runtime sync policy object (C++/C/Python APIs + policy-based synchronize path).
 - completed: backend capability contract surfaces (compute/memory/sync/profiling descriptors via C++/C/Python APIs).
 - completed: tensor semantics contract checks (shape/stride/layout/view-bounds validators with Python exposure + tests).
+- completed: operator registry v1 + minimal graph IR prototype (C++ API, Python bindings, validation/planning test).
 
 ## 11) Release-Train Detail (v0.1.5 -> v1.0)
 

@@ -6,6 +6,7 @@ PYBIND11_MODULE(lightning_core, m) {
   bindRuntime(m);
   bindTensor(m);
   bindOps(m);
+  bindGraph(m);
   bindAttention(m);
   bindIntegrated(m);
 }

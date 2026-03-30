@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lightning_core/attention.hpp"
+#include "lightning_core/graph.hpp"
 #include "lightning_core/model_customization.hpp"
 #include "lightning_core/ops.hpp"
 #include "lightning_core/runtime.hpp"

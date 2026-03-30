@@ -32,3 +32,8 @@ add_test(NAME test_model_customization COMMAND test_model_customization)
 add_executable(test_vlm_fastpath test_vlm_fastpath.cpp)
 target_link_libraries(test_vlm_fastpath PRIVATE lightning_core::lightning_core)
 add_test(NAME test_vlm_fastpath COMMAND test_vlm_fastpath)
+
+# Operator registry + minimal graph IR contract test.
+add_executable(test_graph_ir test_graph_ir.cpp)
+target_link_libraries(test_graph_ir PRIVATE lightning_core::lightning_core)
+add_test(NAME test_graph_ir COMMAND test_graph_ir)
