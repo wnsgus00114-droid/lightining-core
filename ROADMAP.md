@@ -257,6 +257,7 @@ Progress update (2026-03-30):
 - completed: backend capability contract surfaces (compute/memory/sync/profiling descriptors via C++/C/Python APIs).
 - completed: tensor semantics contract checks (shape/stride/layout/view-bounds validators with Python exposure + tests).
 - completed: operator registry v1 + minimal graph IR prototype (C++ API, Python bindings, validation/planning test).
+- completed: graph validation report passes + grouped planner options (device fallback segmentation + sync-boundary grouping).
 
 ## 11) Release-Train Detail (v0.1.5 -> v1.0)
 

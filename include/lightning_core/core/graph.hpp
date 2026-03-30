@@ -173,6 +173,67 @@ struct GraphPlanStep {
   bool fallback{false};
 };
 
+enum class ValidationPass {
+  kTensorSpec = 0,
+  kSchemaArity,
+  kTensorReference,
+  kControlDependency,
+  kBackendCapability
+};
+
+inline const char* validationPassName(ValidationPass pass) {
+  switch (pass) {
+    case ValidationPass::kTensorSpec:
+      return "tensor_spec";
+    case ValidationPass::kSchemaArity:
+      return "schema_arity";
+    case ValidationPass::kTensorReference:
+      return "tensor_reference";
+    case ValidationPass::kControlDependency:
+      return "control_dependency";
+    case ValidationPass::kBackendCapability:
+      return "backend_capability";
+    default:
+      return "unknown";
+  }
+}
+
+struct ValidationIssue {
+  ValidationPass pass{ValidationPass::kTensorSpec};
+  runtime::Status status{runtime::Status::kInvalidValue};
+  std::int64_t node_id{-1};
+  std::int64_t tensor_id{-1};
+  std::string message;
+};
+
+struct ValidationReport {
+  std::vector<ValidationIssue> issues;
+
+  bool ok() const {
+    return issues.empty();
+  }
+
+  void clear() {
+    issues.clear();
+  }
+};
+
+struct GraphPlannerOptions {
+  runtime::Device preferred_device{runtime::Device::kMetal};
+  runtime::SyncPolicy sync_policy{};
+  bool separate_fallback_segments{true};
+  bool insert_sync_on_device_change{true};
+};
+
+struct GraphExecutionGroup {
+  std::size_t group_id{0};
+  runtime::Device assigned_device{runtime::Device::kCPU};
+  bool fallback{false};
+  bool sync_boundary_before{false};
+  bool sync_boundary_after{false};
+  std::vector<std::size_t> node_ids;
+};
+
 inline runtime::Status validateTensorSpec(const TensorSpec& spec) {
   if (!detail::isShapeValidContract(spec.shape)) {
     return runtime::Status::kInvalidValue;
@@ -248,42 +309,114 @@ class GraphIR {
   }
 
   runtime::Status validate() const {
-    for (const auto& t : tensors_) {
-      runtime::Status st = validateTensorSpec(t.spec);
+    return validateWithReport(nullptr);
+  }
+
+  runtime::Status validateWithReport(ValidationReport* out_report) const {
+    ValidationReport local_report;
+    ValidationReport* report = out_report == nullptr ? &local_report : out_report;
+    report->clear();
+
+    bool saw_not_supported = false;
+
+    for (std::size_t i = 0; i < tensors_.size(); ++i) {
+      runtime::Status st = validateTensorSpec(tensors_[i].spec);
       if (st != runtime::Status::kSuccess) {
-        return st;
+        report->issues.push_back(
+            ValidationIssue{ValidationPass::kTensorSpec,
+                            st,
+                            -1,
+                            static_cast<std::int64_t>(i),
+                            "invalid tensor spec"});
       }
     }
+
     for (std::size_t i = 0; i < nodes_.size(); ++i) {
       const GraphNode& node = nodes_[i];
       if (node.id != i) {
-        return runtime::Status::kInvalidValue;
+        report->issues.push_back(
+            ValidationIssue{ValidationPass::kControlDependency,
+                            runtime::Status::kInvalidValue,
+                            static_cast<std::int64_t>(i),
+                            -1,
+                            "node id does not match insertion order"});
       }
+
       const OperatorSchema* schema = globalOperatorRegistry().find(node.op);
       if (schema == nullptr) {
-        return runtime::Status::kNotSupported;
+        report->issues.push_back(
+            ValidationIssue{ValidationPass::kSchemaArity,
+                            runtime::Status::kNotSupported,
+                            static_cast<std::int64_t>(node.id),
+                            -1,
+                            "operator schema not found"});
+        saw_not_supported = true;
+        continue;
       }
+
       if (node.inputs.size() < schema->min_inputs || node.inputs.size() > schema->max_inputs ||
           node.outputs.size() < schema->min_outputs || node.outputs.size() > schema->max_outputs) {
-        return runtime::Status::kInvalidValue;
+        report->issues.push_back(
+            ValidationIssue{ValidationPass::kSchemaArity,
+                            runtime::Status::kInvalidValue,
+                            static_cast<std::int64_t>(node.id),
+                            -1,
+                            "node input/output arity violates schema"});
       }
+
       for (std::size_t id : node.inputs) {
         if (id >= tensors_.size()) {
-          return runtime::Status::kInvalidValue;
+          report->issues.push_back(
+              ValidationIssue{ValidationPass::kTensorReference,
+                              runtime::Status::kInvalidValue,
+                              static_cast<std::int64_t>(node.id),
+                              static_cast<std::int64_t>(id),
+                              "input tensor id out of range"});
         }
       }
       for (std::size_t id : node.outputs) {
         if (id >= tensors_.size()) {
-          return runtime::Status::kInvalidValue;
+          report->issues.push_back(
+              ValidationIssue{ValidationPass::kTensorReference,
+                              runtime::Status::kInvalidValue,
+                              static_cast<std::int64_t>(node.id),
+                              static_cast<std::int64_t>(id),
+                              "output tensor id out of range"});
         }
       }
       for (std::size_t dep : node.control_deps) {
         if (dep >= node.id) {
-          return runtime::Status::kInvalidValue;
+          report->issues.push_back(
+              ValidationIssue{ValidationPass::kControlDependency,
+                              runtime::Status::kInvalidValue,
+                              static_cast<std::int64_t>(node.id),
+                              -1,
+                              "control dependency must reference prior node"});
         }
       }
+
+      const runtime::BackendCapabilities cpu_caps = runtime::backendCapabilities(runtime::Device::kCPU);
+      const runtime::BackendCapabilities cuda_caps = runtime::backendCapabilities(runtime::Device::kCUDA);
+      const runtime::BackendCapabilities metal_caps = runtime::backendCapabilities(runtime::Device::kMetal);
+      const bool any_supported =
+          (schema->supports_cpu && cpu_caps.compute_surface) ||
+          (schema->supports_cuda && cuda_caps.compute_surface) ||
+          (schema->supports_metal && metal_caps.compute_surface);
+      if (!any_supported) {
+        report->issues.push_back(
+            ValidationIssue{ValidationPass::kBackendCapability,
+                            runtime::Status::kNotSupported,
+                            static_cast<std::int64_t>(node.id),
+                            -1,
+                            "no built backend capability for operator"});
+        saw_not_supported = true;
+      }
     }
-    return runtime::Status::kSuccess;
+
+    if (report->ok()) {
+      return runtime::Status::kSuccess;
+    }
+    return saw_not_supported ? runtime::Status::kNotSupported : runtime::Status::kInvalidValue;
   }
 
   runtime::Status planForDevice(
@@ -292,13 +425,35 @@ class GraphIR {
     if (out_steps == nullptr) {
       return runtime::Status::kInvalidValue;
     }
+    GraphPlannerOptions options;
+    options.preferred_device = preferred_device;
+    options.sync_policy.mode = runtime::SyncMode::kAuto;
+    options.sync_policy.trace_sync_boundary = false;
+    options.separate_fallback_segments = false;
+    options.insert_sync_on_device_change = true;
+
+    std::vector<GraphExecutionGroup> groups;
+    return planExecutionGroups(options, &groups, out_steps);
+  }
+
+  runtime::Status planExecutionGroups(
+      const GraphPlannerOptions& options,
+      std::vector<GraphExecutionGroup>* out_groups,
+      std::vector<GraphPlanStep>* out_steps = nullptr) const {
+    if (out_groups == nullptr) {
+      return runtime::Status::kInvalidValue;
+    }
+
     runtime::Status st = validate();
     if (st != runtime::Status::kSuccess) {
       return st;
     }
 
-    out_steps->clear();
-    out_steps->reserve(nodes_.size());
+    out_groups->clear();
+    if (out_steps != nullptr) {
+      out_steps->clear();
+      out_steps->reserve(nodes_.size());
+    }
 
     for (const GraphNode& node : nodes_) {
       const OperatorSchema* schema = globalOperatorRegistry().find(node.op);
@@ -306,36 +461,69 @@ class GraphIR {
         return runtime::Status::kNotSupported;
       }
 
-      auto choose_if_supported = [&](runtime::Device device) -> bool {
-        if (!schema->supportsDevice(device)) {
-          return false;
-        }
-        const runtime::BackendCapabilities caps = runtime::backendCapabilities(device);
-        return caps.compute_surface && caps.available;
-      };
+      runtime::Device assigned = runtime::Device::kCPU;
+      bool fallback = false;
+      st = chooseDeviceForSchema(*schema, options.preferred_device, &assigned, &fallback);
+      if (st != runtime::Status::kSuccess) {
+        return st;
+      }
 
-      runtime::Device assigned = preferred_device;
-      if (!choose_if_supported(assigned)) {
-        if (preferred_device != runtime::Device::kMetal && choose_if_supported(runtime::Device::kMetal)) {
-          assigned = runtime::Device::kMetal;
-        } else if (preferred_device != runtime::Device::kCUDA && choose_if_supported(runtime::Device::kCUDA)) {
-          assigned = runtime::Device::kCUDA;
-        } else if (preferred_device != runtime::Device::kCPU && choose_if_supported(runtime::Device::kCPU)) {
-          assigned = runtime::Device::kCPU;
-        } else if (choose_if_supported(preferred_device)) {
-          assigned = preferred_device;
-        } else {
-          return runtime::Status::kNotSupported;
+      if (out_steps != nullptr) {
+        GraphPlanStep step;
+        step.node_id = node.id;
+        step.op = node.op;
+        step.assigned_device = assigned;
+        step.fallback = fallback;
+        out_steps->push_back(step);
+      }
+
+      const bool force_single_node_group = (options.sync_policy.mode == runtime::SyncMode::kAlways);
+      bool start_new_group = out_groups->empty() || force_single_node_group;
+      if (!out_groups->empty() && !force_single_node_group) {
+        const GraphExecutionGroup& prev = out_groups->back();
+        if (prev.assigned_device != assigned) {
+          start_new_group = true;
+        }
+        if (options.separate_fallback_segments && prev.fallback != fallback) {
+          start_new_group = true;
         }
       }
 
-      GraphPlanStep step;
-      step.node_id = node.id;
-      step.op = node.op;
-      step.assigned_device = assigned;
-      step.fallback = (assigned != preferred_device);
-      out_steps->push_back(step);
+      if (start_new_group) {
+        GraphExecutionGroup group;
+        group.group_id = out_groups->size();
+        group.assigned_device = assigned;
+        group.fallback = fallback;
+        group.sync_boundary_before =
+            (!out_groups->empty()) &&
+            (options.sync_policy.mode == runtime::SyncMode::kAlways ||
+             options.sync_policy.trace_sync_boundary ||
+             options.insert_sync_on_device_change);
+        group.sync_boundary_after = false;
+        group.node_ids.push_back(node.id);
+
+        if (!out_groups->empty() && group.sync_boundary_before) {
+          out_groups->back().sync_boundary_after = true;
+        }
+        out_groups->push_back(std::move(group));
+      } else {
+        out_groups->back().node_ids.push_back(node.id);
+      }
     }
+
+    if (options.sync_policy.mode == runtime::SyncMode::kNever) {
+      for (auto& group : *out_groups) {
+        group.sync_boundary_before = false;
+        group.sync_boundary_after = false;
+      }
+    } else if (options.sync_policy.mode == runtime::SyncMode::kAlways) {
+      for (auto& group : *out_groups) {
+        group.sync_boundary_after = true;
+      }
+    } else if (options.sync_policy.trace_sync_boundary && !out_groups->empty()) {
+      out_groups->back().sync_boundary_after = true;
+    }
+
     return runtime::Status::kSuccess;
   }
 
@@ -356,6 +544,40 @@ class GraphIR {
   }
 
  private:
+  static runtime::Status chooseDeviceForSchema(
+      const OperatorSchema& schema,
+      runtime::Device preferred_device,
+      runtime::Device* out_assigned_device,
+      bool* out_fallback) {
+    if (out_assigned_device == nullptr || out_fallback == nullptr) {
+      return runtime::Status::kInvalidValue;
+    }
+    auto choose_if_supported = [&](runtime::Device device) -> bool {
+      if (!schema.supportsDevice(device)) {
+        return false;
+      }
+      const runtime::BackendCapabilities caps = runtime::backendCapabilities(device);
+      return caps.compute_surface && caps.available;
+    };
+
+    runtime::Device assigned = preferred_device;
+    if (!choose_if_supported(assigned)) {
+      if (preferred_device != runtime::Device::kMetal && choose_if_supported(runtime::Device::kMetal)) {
+        assigned = runtime::Device::kMetal;
+      } else if (preferred_device != runtime::Device::kCUDA && choose_if_supported(runtime::Device::kCUDA)) {
+        assigned = runtime::Device::kCUDA;
+      } else if (preferred_device != runtime::Device::kCPU && choose_if_supported(runtime::Device::kCPU)) {
+        assigned = runtime::Device::kCPU;
+      } else if (!choose_if_supported(preferred_device)) {
+        return runtime::Status::kNotSupported;
+      }
+    }
+
+    *out_assigned_device = assigned;
+    *out_fallback = (assigned != preferred_device);
+    return runtime::Status::kSuccess;
+  }
+
   std::vector<GraphTensorValue> tensors_;
   std::vector<GraphNode> nodes_;
 };
