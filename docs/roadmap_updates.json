@@ -45,6 +45,15 @@
     "source": ""
   },
   {
+    "id": "2026-04-01-ci-added-release-tag-benchmark-gate-with-standardized-evidence-bundle-csv-json-summary-command-environment-manifest-and-pypi-publish-dependency",
+    "date": "2026-04-01",
+    "milestone": "M-A",
+    "area": "ci",
+    "title": "Added release-tag benchmark gate with standardized evidence bundle (csv/json/summary/command/environment/manifest) and PyPI publish dependency.",
+    "status": "completed",
+    "source": ""
+  },
+  {
     "id": "2026-04-01-runtime-op-dispatch-trace",
     "date": "2026-04-01",
     "milestone": "M-A",

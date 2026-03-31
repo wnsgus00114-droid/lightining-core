@@ -4759,7 +4759,7 @@ Roadmap progress history is auto-generated from:
 
 ### Progress History (Auto-generated)
 
-- Total tracked updates: `25`
+- Total tracked updates: `26`
 - Source of truth: `docs/roadmap_updates.json`
 - Quick add command:
   `python scripts/generate_roadmap_history.py --add --date YYYY-MM-DD --milestone M-A --area runtime --title "your update"`
@@ -4768,7 +4768,7 @@ Roadmap progress history is auto-generated from:
 
 | Date | Updates | Milestones | Highlights |
 | --- | --- | --- | --- |
-| 2026-04-01 | 7 | M-A | Moved integrated API helper into package distribution and install path (wheel/editable). / Bumped to v0.1.9 and updated release baseline/docs. / ... (+5 more) |
+| 2026-04-01 | 8 | M-A | Moved integrated API helper into package distribution and install path (wheel/editable). / Bumped to v0.1.9 and updated release baseline/docs. / ... (+6 more) |
 | 2026-03-31 | 6 | M-A | Shipped docs site MVP with mkdocs and docs-pages workflow. / Re-tuned tiny one-shot conv CPU crossover default to `CJ_CONV2D_CPU_CROSSOVER_MACS=260000` via threshold sweep. / ... (+4 more) |
 | 2026-03-30 | 9 | M-B, M-A | Added operator registry v1 and minimal Graph IR prototype. / Added graph validation report passes and grouped planner options with sync-boundary/fallback segmentation. / ... (+7 more) |
 | 2026-03-29 | 2 | M-A | Split docs into quickstart/advanced/index and improved package/release guidance. / Added large GEMM auto sweep, tuned policy profiles, and cross-suite summary artifacts. |
@@ -4776,13 +4776,14 @@ Roadmap progress history is auto-generated from:
 
 **Detailed Timeline**
 
-#### 2026-04-01 (7 updates)
+#### 2026-04-01 (8 updates)
 
 - [completed] [M-A] [python] Moved integrated API helper into package distribution and install path (wheel/editable).
 - [completed] [M-A] [release] Bumped to v0.1.9 and updated release baseline/docs.
 - [completed] [M-A] [release] Bumped to v0.1.8 and aligned README roadmap baseline. (`d486d05`)
 - [completed] [M-A] [release] Bumped to v0.1.10 after removing workspace-level duplicate helper file and verifying package-only import path.
 - [completed] [M-A] [docs] Automated README/docs capability and tested-environment matrix generation.
+- [completed] [M-A] [ci] Added release-tag benchmark gate with standardized evidence bundle (csv/json/summary/command/environment/manifest) and PyPI publish dependency.
 - [completed] [M-A] [runtime] Added op-dispatch trace metadata (`op`, `requested_device`, `selected_device`, `fallback`) for timeline bottleneck analysis. (`74d31a1`)
 - [completed] [M-A] [python] Added `runtime_trace_timeline` API with sorting/grouping/hotspot extraction. (`c0a56c2`)
 
