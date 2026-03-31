@@ -8,6 +8,7 @@
 [![License: KWU-1.0](https://img.shields.io/badge/License-KWU--1.0-1f6feb.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-macOS%20Apple%20Silicon-black.svg)](https://github.com/wnsgus00114-droid/lightning-core)
 [![Wheel Publish](https://github.com/wnsgus00114-droid/lightning-core/actions/workflows/python-wheel-publish.yml/badge.svg)](https://github.com/wnsgus00114-droid/lightning-core/actions/workflows/python-wheel-publish.yml)
+[![CI Contract Tests](https://github.com/wnsgus00114-droid/lightning-core/actions/workflows/ci-contract-tests.yml/badge.svg)](https://github.com/wnsgus00114-droid/lightning-core/actions/workflows/ci-contract-tests.yml)
 [![Docs Pages](https://github.com/wnsgus00114-droid/lightning-core/actions/workflows/docs-pages.yml/badge.svg)](https://github.com/wnsgus00114-droid/lightning-core/actions/workflows/docs-pages.yml)
 
 # 3. One-line Summary

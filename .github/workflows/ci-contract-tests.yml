@@ -1,0 +1,63 @@
+name: CI Contract Tests
+
+on:
+  pull_request:
+    branches: [ main, master ]
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  cmake-ctest-gate:
+    name: CMake + CTest Gate (macOS)
+    runs-on: macos-14
+    timeout-minutes: 40
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure (tests only)
+        run: |
+          cmake -S . -B build-ci \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCJ_ENABLE_METAL=ON \
+            -DCJ_BUILD_TESTS=ON \
+            -DCJ_BUILD_BENCHMARKS=OFF \
+            -DCJ_BUILD_PYTHON=OFF \
+            -DCJ_BUILD_EXAMPLES=OFF
+
+      - name: Build
+        run: cmake --build build-ci -j 4
+
+      - name: Run CTest
+        run: |
+          set -o pipefail
+          ctest --test-dir build-ci --output-on-failure --no-tests=error | tee build-ci/ctest.log
+
+      - name: Publish CTest summary
+        if: always()
+        run: |
+          echo "## CTest Gate Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f build-ci/ctest.log ]; then
+            grep -E "100% tests passed|tests failed out of|Total Test time" build-ci/ctest.log >> "$GITHUB_STEP_SUMMARY" || true
+          else
+            echo "- ctest log not found" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload CTest artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ctest-gate-artifacts-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            build-ci/ctest.log
+            build-ci/CMakeCache.txt
+            build-ci/CMakeFiles/CMakeOutput.log
+            build-ci/CMakeFiles/CMakeError.log
+            build-ci/Testing
