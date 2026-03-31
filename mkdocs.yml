@@ -1,0 +1,20 @@
+site_name: Lightning Core Docs
+site_description: Lightning Core quickstart, advanced guides, and API index
+site_url: https://wnsgus00114-droid.github.io/lightning-core/
+repo_name: wnsgus00114-droid/lightning-core
+repo_url: https://github.com/wnsgus00114-droid/lightning-core
+
+theme:
+  name: readthedocs
+
+markdown_extensions:
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Docs Home: index.md
+  - Quickstart: quickstart.md
+  - Advanced: advanced.md
+  - API Index: api_index.md
+  - Contributor Guide: contributor.md

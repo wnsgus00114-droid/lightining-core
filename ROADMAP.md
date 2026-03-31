@@ -247,7 +247,7 @@ Each milestone tracks:
 - finalize backend abstraction interfaces and docs,
 - ship operator registry v1 and minimal graph IR prototype,
 - add CI-visible benchmark summary artifact for every main push,
-- publish docs site MVP with quickstart/advanced/API index,
+- harden docs site MVP and expand toward generated API references,
 - add tested environment matrix table to README with concrete device/OS entries.
 
 Progress update (2026-03-31):
@@ -265,6 +265,7 @@ Progress update (2026-03-31):
 - completed: tiny one-shot conv crossover (`CJ_CONV2D_CPU_CROSSOVER_MACS`) routes small Metal convs to CPU when end-to-end latency is lower.
 - completed: tiny one-shot conv crossover default re-tuned to `260000` MACs using threshold sweep (`100000..300000`) while keeping benchmark win coverage (`kernel/pipeline/ml` losing rows = 0 in validation run).
 - completed: CI-visible benchmark summary artifact workflow now runs `benchmarks/python/quick_bench.py` on every `main/master` push and uploads `csv/log/json/md` artifacts with GitHub step summary.
+- completed: docs site MVP is now deployed via GitHub Pages workflow with `quickstart`/`advanced`/`api_index` navigation (`mkdocs.yml` + `docs-pages.yml`).
 
 ## 11) Release-Train Detail (v0.1.7 -> v1.0)
 

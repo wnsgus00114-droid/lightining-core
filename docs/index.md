@@ -8,6 +8,7 @@ Use one of the paths below depending on your goal.
 | --- | --- | --- |
 | Install / First Run | [Quickstart: Install](quickstart.md#1-install) | Set up, build, import, and run your first checks quickly. |
 | Performance / Tuning | [Advanced: Benchmark Suite](advanced.md#benchmark-suite) | Benchmark, tune runtime/session behavior, and inspect profiles. |
+| API Surface Navigation | [API Index](api_index.md) | Jump directly to Python/C++/C API entry points and source links. |
 | Contribute / Code Changes | [Contributor: Validation Checklist](contributor.md#5-validation-checklist-before-commit) | Follow contribution workflow, naming rules, and validation steps. |
 | Release / Deployment Ops | [Advanced: Python Packaging and Release](advanced.md#python-packaging-and-release) | Use release workflow and repository rename operation guidance. |
 
@@ -38,6 +39,18 @@ Covers:
 - runtime profile env controls
 - model-wrapper caveats
 - release workflow and rename operations
+
+## API Navigation Path
+
+Use this when you need to find exact API entry points quickly.
+
+- [docs/api_index.md](api_index.md)
+
+Covers:
+
+- Python API surfaces (`lightning_core`, `lightning_core.api`)
+- public C++ headers
+- public C API header and implementation mapping
 
 ## Contributor Path
 
