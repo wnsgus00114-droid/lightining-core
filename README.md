@@ -415,7 +415,7 @@ Typical optimization pattern:
 More examples:
 - [docs/quickstart.md](docs/quickstart.md)
 - [docs/advanced.md](docs/advanced.md)
-- Docs site (GitHub Pages): <https://wnsgus00114-droid.github.io/lightning-core/>
+- Docs site (GitHub Pages, after repository Pages enablement): <https://wnsgus00114-droid.github.io/lightning-core/>
 - `examples/` and benchmark source files under `benchmarks/`
 
 # 27. Benchmark Overview

@@ -18,6 +18,8 @@ jobs:
   build:
     name: Build Docs Site
     runs-on: ubuntu-latest
+    outputs:
+      pages_status: ${{ steps.configure_pages.outcome }}
 
     steps:
       - name: Checkout
@@ -29,9 +31,11 @@ jobs:
           python-version: "3.12"
 
       - name: Configure Pages
+        id: configure_pages
         uses: actions/configure-pages@v5
+        continue-on-error: true
         with:
-          enablement: true
+          enablement: false
 
       - name: Install docs dependencies
         run: |
@@ -41,15 +45,36 @@ jobs:
       - name: Build docs
         run: mkdocs build --site-dir site
 
+      - name: Upload Docs Preview Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs-site-preview-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 14
+          path: site
+
       - name: Upload Pages Artifact
+        if: steps.configure_pages.outcome == 'success'
         uses: actions/upload-pages-artifact@v3
         with:
           path: site
 
+      - name: Publish docs workflow summary
+        run: |
+          echo "## Docs Pages Build Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- mkdocs build: success" >> "$GITHUB_STEP_SUMMARY"
+          echo "- configure-pages outcome: ${{ steps.configure_pages.outcome }}" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.configure_pages.outcome }}" = "success" ]; then
+            echo "- deploy eligibility: enabled" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- deploy eligibility: skipped (enable GitHub Pages in repository settings: Build and deployment -> GitHub Actions)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   deploy:
     name: Deploy Docs Site
     needs: build
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') && needs.build.outputs.pages_status == 'success'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
