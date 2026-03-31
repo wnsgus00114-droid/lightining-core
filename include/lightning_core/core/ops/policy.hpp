@@ -198,4 +198,38 @@ inline std::size_t vectorAddOneShotCrossoverN() {
   return value;
 }
 
+inline std::size_t conv2dOneShotCpuCrossoverMacs() {
+  const bool dynamic_refresh = []() {
+    if (const char* raw = std::getenv("CJ_CONV2D_CPU_CROSSOVER_DYNAMIC")) {
+      return raw[0] == '1';
+    }
+    return false;
+  }();
+
+  if (dynamic_refresh) {
+    std::size_t crossover_macs = 260000u;
+    if (const char* raw = std::getenv("CJ_CONV2D_CPU_CROSSOVER_MACS")) {
+      char* end = nullptr;
+      unsigned long long parsed = std::strtoull(raw, &end, 10);
+      if (end != raw && *end == '\0' && parsed > 0) {
+        crossover_macs = static_cast<std::size_t>(parsed);
+      }
+    }
+    return crossover_macs;
+  }
+
+  static const std::size_t value = []() {
+    std::size_t crossover_macs = 260000u;
+    if (const char* raw = std::getenv("CJ_CONV2D_CPU_CROSSOVER_MACS")) {
+      char* end = nullptr;
+      unsigned long long parsed = std::strtoull(raw, &end, 10);
+      if (end != raw && *end == '\0' && parsed > 0) {
+        crossover_macs = static_cast<std::size_t>(parsed);
+      }
+    }
+    return crossover_macs;
+  }();
+  return value;
+}
+
 }  // namespace lightning_core::ops

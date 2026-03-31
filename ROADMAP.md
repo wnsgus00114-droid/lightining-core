@@ -1,6 +1,6 @@
 # Lightning Core Roadmap
 
-Version context: v0.1.6 (2026-03-30)
+Version context: v0.1.7 (2026-03-31)
 
 ## 1) North Star
 
@@ -20,7 +20,7 @@ Lightning Core started as a macOS Apple-Silicon performance runtime. The long-te
 - Keep API ergonomics improvements performance-safe by default.
 - Keep deprecation policy explicit; no silent API behavior changes.
 
-## 3) Current Baseline (v0.1.6)
+## 3) Current Baseline (v0.1.7)
 
 - Public package on PyPI/TestPyPI.
 - C++ core + Python bindings for runtime/tensor/ops/attention/integrated APIs.
@@ -250,7 +250,7 @@ Each milestone tracks:
 - publish docs site MVP with quickstart/advanced/API index,
 - add tested environment matrix table to README with concrete device/OS entries.
 
-Progress update (2026-03-30):
+Progress update (2026-03-31):
 
 - completed: runtime trace observability API baseline (C++ runtime + Python binding + runtime smoke test).
 - completed: explicit runtime sync policy object (C++/C/Python APIs + policy-based synchronize path).
@@ -258,10 +258,16 @@ Progress update (2026-03-30):
 - completed: tensor semantics contract checks (shape/stride/layout/view-bounds validators with Python exposure + tests).
 - completed: operator registry v1 + minimal graph IR prototype (C++ API, Python bindings, validation/planning test).
 - completed: graph validation report passes + grouped planner options (device fallback segmentation + sync-boundary grouping).
+- completed: graph execution path for matmul/vector/matrix/attention/conv (C++ + Python) and integrated conv->attn graph/eager execution toggle for A/B verification.
+- completed: integrated graph validation diagnostics with actionable hints and `conv_attention_torchstrong_nchw_ab_report` API for eager-vs-graph parity/speed checks.
+- completed: attention Python bindings now reuse shape/device session cache for repeated `attention2d`/`attention_forward` calls (lower binding-path overhead).
+- completed: integrated conv->attn graph path now caches shape-keyed GraphIR sessions to remove per-call graph rebuild overhead.
+- completed: tiny one-shot conv crossover (`CJ_CONV2D_CPU_CROSSOVER_MACS`) routes small Metal convs to CPU when end-to-end latency is lower.
+- completed: tiny one-shot conv crossover default re-tuned to `260000` MACs using threshold sweep (`100000..300000`) while keeping benchmark win coverage (`kernel/pipeline/ml` losing rows = 0 in validation run).
 
-## 11) Release-Train Detail (v0.1.6 -> v1.0)
+## 11) Release-Train Detail (v0.1.7 -> v1.0)
 
-## 11.1 2026 Q2 (v0.1.6 ~ v0.1.9): Runtime Contracts
+## 11.1 2026 Q2 (v0.1.7 ~ v0.1.9): Runtime Contracts
 
 Planned scope:
 

@@ -1,3 +1,4 @@
+#include <cstring>
 #include <iostream>
 #include <unordered_map>
 #include <vector>
@@ -325,6 +326,79 @@ int main() {
       const float diff = conv_out_it->second[i] - conv_expected[i];
       if (diff > 1e-3f || diff < -1e-3f) {
         std::cerr << "conv_exec_graph output mismatch at index " << i << "\n";
+        return 1;
+      }
+    }
+
+    // chain-level A/B check: eager(conv->pack->attn) vs graph(conv)+graph(attn) path.
+    const std::size_t chain_seq = 20;
+    const std::size_t chain_dim = 20;
+    const std::size_t chain_need = chain_seq * chain_dim;
+    const std::size_t chain_total = chain_need * 3;
+
+    std::vector<float> chain_qkv(chain_total, 0.0f);
+    std::size_t copied = std::min(conv_expected.size(), chain_total);
+    std::memcpy(chain_qkv.data(), conv_expected.data(), copied * sizeof(float));
+    while (copied < chain_total) {
+      const std::size_t chunk = std::min(copied, chain_total - copied);
+      std::memcpy(chain_qkv.data() + copied, chain_qkv.data(), chunk * sizeof(float));
+      copied += chunk;
+    }
+
+    std::vector<float> eager_chain_out(chain_need, 0.0f);
+    lightning_core::AttentionConfig chain_cfg{chain_seq, chain_dim, false};
+    if (lightning_core::attentionForward(
+            chain_qkv.data(),
+            chain_qkv.data() + chain_need,
+            chain_qkv.data() + (2 * chain_need),
+            eager_chain_out.data(),
+            chain_cfg,
+            Device::kMetal) != Status::kSuccess) {
+      std::cerr << "eager chain attentionForward failed\n";
+      return 1;
+    }
+
+    GraphIR chain_attn_graph;
+    std::size_t chain_q_id = 0;
+    std::size_t chain_k_id = 0;
+    std::size_t chain_v_id = 0;
+    std::size_t chain_out_id = 0;
+    TensorSpec chain_spec;
+    chain_spec.shape = {static_cast<std::int64_t>(chain_seq), static_cast<std::int64_t>(chain_dim)};
+    chain_spec.dtype = DType::kFloat32;
+    chain_spec.layout = lightning_core::Layout::kContiguous;
+    if (chain_attn_graph.addTensorSpec(chain_spec, &chain_q_id, "chain_q", true) != Status::kSuccess ||
+        chain_attn_graph.addTensorSpec(chain_spec, &chain_k_id, "chain_k", true) != Status::kSuccess ||
+        chain_attn_graph.addTensorSpec(chain_spec, &chain_v_id, "chain_v", true) != Status::kSuccess ||
+        chain_attn_graph.addTensorSpec(chain_spec, &chain_out_id, "chain_out", false) != Status::kSuccess) {
+      std::cerr << "chain_attn_graph addTensorSpec failed\n";
+      return 1;
+    }
+    if (chain_attn_graph.addNode(OpKind::kAttentionForward, {chain_q_id, chain_k_id, chain_v_id}, {chain_out_id}) !=
+        Status::kSuccess) {
+      std::cerr << "chain_attn_graph addNode failed\n";
+      return 1;
+    }
+    std::unordered_map<std::size_t, std::vector<float>> chain_feeds;
+    chain_feeds[chain_q_id] = std::vector<float>(chain_qkv.begin(), chain_qkv.begin() + chain_need);
+    chain_feeds[chain_k_id] =
+        std::vector<float>(chain_qkv.begin() + chain_need, chain_qkv.begin() + (2 * chain_need));
+    chain_feeds[chain_v_id] =
+        std::vector<float>(chain_qkv.begin() + (2 * chain_need), chain_qkv.begin() + (3 * chain_need));
+    std::unordered_map<std::size_t, std::vector<float>> chain_values;
+    if (chain_attn_graph.executeF32(exec_options, chain_feeds, &chain_values, nullptr, nullptr) != Status::kSuccess) {
+      std::cerr << "chain_attn_graph executeF32 failed\n";
+      return 1;
+    }
+    const auto chain_out_it = chain_values.find(chain_out_id);
+    if (chain_out_it == chain_values.end() || chain_out_it->second.size() != chain_need) {
+      std::cerr << "chain_attn_graph output missing or size mismatch\n";
+      return 1;
+    }
+    for (std::size_t i = 0; i < chain_need; ++i) {
+      const float diff = chain_out_it->second[i] - eager_chain_out[i];
+      if (diff > 1e-3f || diff < -1e-3f) {
+        std::cerr << "chain eager-vs-graph mismatch at index " << i << "\n";
         return 1;
       }
     }

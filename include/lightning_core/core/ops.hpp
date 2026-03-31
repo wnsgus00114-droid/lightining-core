@@ -440,6 +440,40 @@ runtime::Status conv2dNchwWithPolicy(
 		return runtime::Status::kInvalidValue;
 	}
 
+	const bool metal_one_shot_tiny_conv =
+			device == runtime::Device::kMetal &&
+			policy.upload_x && policy.upload_w && policy.upload_bias &&
+			policy.download_out && policy.synchronize &&
+			kernel_h == 3 && kernel_w == 3 &&
+			stride_h == 1 && stride_w == 1 &&
+			pad_h == 1 && pad_w == 1 &&
+			batch <= 64 && in_channels <= 16 && out_channels <= 32;
+	if (metal_one_shot_tiny_conv) {
+		const std::size_t out_h = (in_h + (2 * pad_h) - kernel_h) / stride_h + 1;
+		const std::size_t out_w = (in_w + (2 * pad_w) - kernel_w) / stride_w + 1;
+		const std::size_t conv_macs = batch * out_h * out_w * out_channels * in_channels * kernel_h * kernel_w;
+		if (conv_macs <= conv2dOneShotCpuCrossoverMacs()) {
+			return conv2dNchw<T>(
+					x,
+					w,
+					bias,
+					out,
+					batch,
+					in_channels,
+					in_h,
+					in_w,
+					out_channels,
+					kernel_h,
+					kernel_w,
+					stride_h,
+					stride_w,
+					pad_h,
+					pad_w,
+					runtime::Device::kCPU,
+					apply_relu);
+		}
+	}
+
 	if constexpr (std::is_same_v<T, float>) {
 		const bool metal_conv3x3_shape =
 				device == runtime::Device::kMetal &&
@@ -760,6 +794,35 @@ runtime::Status conv2dNchw(
 	const std::size_t m_rows = batch * out_h * out_w;
 	const std::size_t cols_size = m_rows * k_inner;
 	const std::size_t out2d_size = m_rows * out_channels;
+	const bool metal_one_shot_tiny_conv =
+			device == runtime::Device::kMetal &&
+			kernel_h == 3 && kernel_w == 3 &&
+			stride_h == 1 && stride_w == 1 &&
+			pad_h == 1 && pad_w == 1 &&
+			batch <= 64 && in_channels <= 16 && out_channels <= 32;
+	if (metal_one_shot_tiny_conv) {
+		const std::size_t conv_macs = batch * out_h * out_w * out_channels * in_channels * kernel_h * kernel_w;
+		if (conv_macs <= conv2dOneShotCpuCrossoverMacs()) {
+			return conv2dNchw<T>(
+					x,
+					w,
+					bias,
+					out,
+					batch,
+					in_channels,
+					in_h,
+					in_w,
+					out_channels,
+					kernel_h,
+					kernel_w,
+					stride_h,
+					stride_w,
+					pad_h,
+					pad_w,
+					runtime::Device::kCPU,
+					apply_relu);
+		}
+	}
 	if constexpr (std::is_same_v<T, float>) {
 		const bool metal_conv3x3_shape =
 				device == runtime::Device::kMetal &&

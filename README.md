@@ -11,7 +11,7 @@
 
 # 3. One-line Summary
 Lightning Core is a macOS-first, Metal-backed runtime that provides low-level control (resident IO, policy routing, fused paths) with easy Python APIs.
-Current public release: **v0.1.6** (2026-03-30).
+Current public release: **v0.1.7** (2026-03-31).
 
 # 4. Abstract
 Lightning Core targets high-iteration experimentation on Apple Silicon by combining:
@@ -372,6 +372,28 @@ seq_len, head_dim = 96, 48
 z = lc.api.conv_attention_torchstrong_nchw(
     x, w, b, seq_len=seq_len, head_dim=head_dim, stride_h=1, stride_w=1, pad_h=1, pad_w=1, device="metal"
 )
+
+# Graph vs eager A/B toggle for verification
+# (current graph mode coverage for this path: conv 3x3, stride=1, pad=1 + attention)
+z_graph = lc.api.conv_attention_torchstrong_nchw(
+    x,
+    w,
+    b,
+    seq_len=seq_len,
+    head_dim=head_dim,
+    stride_h=1,
+    stride_w=1,
+    pad_h=1,
+    pad_w=1,
+    device="metal",
+    execution_mode="graph",
+)
+
+# Quick parity + speed report (eager vs graph) for the same shape
+report = lc.api.conv_attention_torchstrong_nchw_ab_report(
+    x, w, b, seq_len=seq_len, head_dim=head_dim, stride_h=1, stride_w=1, pad_h=1, pad_w=1, device="metal"
+)
+print(report["winner"], report["graph_over_eager"], report["max_abs_diff"])
 print(y.shape, z.shape)
 ```
 
@@ -386,6 +408,7 @@ Typical optimization pattern:
 - Keep inputs contiguous `float32`.
 - Separate one-shot latency benchmarks and steady-state throughput benchmarks.
 - Warm up before measurement.
+- Tiny one-shot conv Metal crossover default is tuned to `260000` MACs; override with `CJ_CONV2D_CPU_CROSSOVER_MACS` (`CJ_CONV2D_CPU_CROSSOVER_DYNAMIC=1` for dynamic refresh).
 
 # 26. API Examples
 More examples:
@@ -541,9 +564,15 @@ docs/                           # quickstart/advanced/contributor docs
 ```
 
 # 35. Roadmap
-Roadmap baseline is now aligned to **v0.1.6** and tracked in detail in [ROADMAP.md](ROADMAP.md).
+Roadmap baseline is now aligned to **v0.1.7** and tracked in detail in [ROADMAP.md](ROADMAP.md).
 
-Phase A (2026 Q2, `v0.1.6`-`v0.1.9`): Runtime Core Hardening
+Progress snapshot (2026-03-31):
+- Runtime trace/sync policy/capability contracts and tensor semantics checks are implemented.
+- Operator registry + Graph IR + validation/planner + graph execution path are implemented and benchmarked.
+- Integrated conv->attn graph sessions now use shape-keyed cache to remove per-call graph rebuild overhead.
+- Tiny one-shot conv crossover default is re-tuned to `CJ_CONV2D_CPU_CROSSOVER_MACS=260000` (sweep-validated while keeping benchmark win coverage).
+
+Phase A (2026 Q2, `v0.1.7`-`v0.1.9`): Runtime Core Hardening
 - Finalize backend contracts (compute/memory/sync/profiler split).
 - Lock tensor lifetime and metadata rules across Metal/CPU parity tests.
 - Add deterministic trace/profiling hooks and fallback behavior.
@@ -614,4 +643,4 @@ Community feedback channels we actively monitor:
 
 Lightning Core is stable enough for experimentation and benchmarking, while APIs and internals continue to evolve quickly.
 Visibility update: repository topics and benchmark discoverability documentation are actively maintained.
-Current release train: **v0.1.6**.
+Current release train: **v0.1.7**.

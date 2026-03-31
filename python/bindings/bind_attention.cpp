@@ -1,6 +1,89 @@
 #include "bind_common.hpp"
 
+#include <memory>
+#include <mutex>
+#include <unordered_map>
+
 namespace {
+
+struct AttentionSessionKey {
+  std::size_t seq_len;
+  std::size_t head_dim;
+  bool causal;
+  lc::Device device;
+
+  bool operator==(const AttentionSessionKey& other) const {
+    return seq_len == other.seq_len &&
+           head_dim == other.head_dim &&
+           causal == other.causal &&
+           device == other.device;
+  }
+};
+
+struct AttentionSessionKeyHash {
+  std::size_t operator()(const AttentionSessionKey& k) const noexcept {
+    const std::size_t h1 = std::hash<std::size_t>{}(k.seq_len);
+    const std::size_t h2 = std::hash<std::size_t>{}(k.head_dim);
+    const std::size_t h3 = std::hash<bool>{}(k.causal);
+    const std::size_t h4 = std::hash<int>{}(static_cast<int>(k.device));
+    return (((h1 * 1315423911u) ^ (h2 * 2654435761u)) ^ (h3 * 16777619u)) ^ h4;
+  }
+};
+
+std::unordered_map<AttentionSessionKey, std::shared_ptr<lc::AttentionSession>, AttentionSessionKeyHash> g_attention_sessions;
+std::mutex g_attention_sessions_mu;
+
+std::shared_ptr<lc::AttentionSession> getOrCreateAttentionSession(std::size_t seq_len,
+                                                                  std::size_t head_dim,
+                                                                  bool causal,
+                                                                  lc::Device device) {
+  AttentionSessionKey key{seq_len, head_dim, causal, device};
+  thread_local bool tls_valid = false;
+  thread_local AttentionSessionKey tls_key{0, 0, false, lc::Device::kCPU};
+  thread_local std::shared_ptr<lc::AttentionSession> tls_session;
+
+  if (tls_valid && tls_session && tls_key == key) {
+    return tls_session;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(g_attention_sessions_mu);
+    auto it = g_attention_sessions.find(key);
+    if (it != g_attention_sessions.end()) {
+      tls_key = key;
+      tls_session = it->second;
+      tls_valid = true;
+      return it->second;
+    }
+  }
+
+  auto session = std::make_shared<lc::AttentionSession>(lc::AttentionConfig{seq_len, head_dim, causal}, device);
+  {
+    std::lock_guard<std::mutex> lock(g_attention_sessions_mu);
+    g_attention_sessions[key] = session;
+  }
+  tls_key = key;
+  tls_session = session;
+  tls_valid = true;
+  return session;
+}
+
+void attentionForwardIntoCachedSession(const float* q,
+                                       const float* k,
+                                       const float* v,
+                                       float* out,
+                                       std::size_t seq_len,
+                                       std::size_t head_dim,
+                                       bool causal,
+                                       lc::Device device,
+                                       const lc::AttentionIoPolicy* policy) {
+  auto session = getOrCreateAttentionSession(seq_len, head_dim, causal, device);
+  if (policy == nullptr) {
+    throwIfNotSuccess(session->forward(q, k, v, out));
+    return;
+  }
+  throwIfNotSuccess(session->forwardWithPolicy(q, k, v, out, *policy));
+}
 
 std::vector<float> attentionForwardVec(const std::vector<float>& q,
                                        const std::vector<float>& k,
@@ -15,13 +98,9 @@ std::vector<float> attentionForwardVec(const std::vector<float>& q,
     throw std::invalid_argument("q/k/v length must match seq_len * head_dim");
   }
 
-  lc::AttentionConfig cfg{seq_len, head_dim, causal};
   std::vector<float> out(expected, 0.0f);
-  if (policy == nullptr) {
-    throwIfNotSuccess(lc::attentionForward(q.data(), k.data(), v.data(), out.data(), cfg, device));
-  } else {
-    throwIfNotSuccess(lc::attentionForwardWithPolicy(q.data(), k.data(), v.data(), out.data(), cfg, device, *policy));
-  }
+  attentionForwardIntoCachedSession(
+      q.data(), k.data(), v.data(), out.data(), seq_len, head_dim, causal, device, policy);
   return out;
 }
 
@@ -42,6 +121,11 @@ void requireAttention2D(const py::buffer_info& info,
 }  // namespace
 
 void bindAttention(py::module_& m) {
+  m.def("clear_attention2d_session_cache", []() {
+    std::lock_guard<std::mutex> lock(g_attention_sessions_mu);
+    g_attention_sessions.clear();
+  });
+
   py::class_<lc::AttentionIoPolicy>(m, "AttentionIoPolicy")
       .def(py::init<>())
       .def_readwrite("upload_q", &lc::AttentionIoPolicy::upload_q)
@@ -173,8 +257,15 @@ void bindAttention(py::module_& m) {
            std::size_t head_dim,
            bool causal,
            const std::string& device_name) {
-          auto out = attentionForwardVec(toVector(q), toVector(k), toVector(v), seq_len, head_dim, causal, parseDevice(device_name), nullptr);
-          return toNumpy(out);
+          const std::size_t expected = seq_len * head_dim;
+          requireSize(q, expected, "q");
+          requireSize(k, expected, "k");
+          requireSize(v, expected, "v");
+
+          py::array_t<float> out(expected);
+          attentionForwardIntoCachedSession(
+              q.data(), k.data(), v.data(), out.mutable_data(), seq_len, head_dim, causal, parseDevice(device_name), nullptr);
+          return out;
         },
         py::arg("q"),
         py::arg("k"),
@@ -224,9 +315,9 @@ void bindAttention(py::module_& m) {
             throw std::invalid_argument("q/k/v must have identical 2D shape [seq_len, head_dim]");
           }
 
-          lc::AttentionConfig cfg{seq_len, head_dim, causal};
           py::array_t<float> out({static_cast<py::ssize_t>(seq_len), static_cast<py::ssize_t>(head_dim)});
-          throwIfNotSuccess(lc::attentionForward(q.data(), k.data(), v.data(), out.mutable_data(), cfg, parseDevice(device_name)));
+          attentionForwardIntoCachedSession(
+              q.data(), k.data(), v.data(), out.mutable_data(), seq_len, head_dim, causal, parseDevice(device_name), nullptr);
           return out;
         },
         py::arg("q"),
@@ -263,8 +354,8 @@ void bindAttention(py::module_& m) {
             throw std::invalid_argument("out must be a 2D float32 array shaped [seq_len, head_dim]");
           }
 
-          lc::AttentionConfig cfg{seq_len, head_dim, causal};
-          throwIfNotSuccess(lc::attentionForward(q.data(), k.data(), v.data(), out.mutable_data(), cfg, parseDevice(device_name)));
+          attentionForwardIntoCachedSession(
+              q.data(), k.data(), v.data(), out.mutable_data(), seq_len, head_dim, causal, parseDevice(device_name), nullptr);
         },
         py::arg("q"),
         py::arg("k"),
