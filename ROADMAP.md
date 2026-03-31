@@ -268,6 +268,7 @@ Progress update (2026-03-31):
 - completed: CI correctness gate workflow now runs CMake configure/build + CTest on every `main/master` push and pull request.
 - completed: per-op Metal/CPU parity coverage is now enforced in CI via `test_backend_parity` (matmul/vector/matrix/attention/conv).
 - completed: Python runtime timeline API (`runtime_trace_timeline`) now provides trace sorting, bottleneck grouping, and hotspot extraction for immediate runtime-path diagnosis.
+- completed: op-dispatch trace points are now emitted on matmul/vector/matrix/conv/attention paths with dispatch metadata (`op`, `requested_device`, `selected_device`, `fallback`) for kernel-path bottleneck grouping.
 - completed: docs site MVP pipeline is implemented (`mkdocs.yml` + `docs-pages.yml`) with `quickstart`/`advanced`/`api_index` navigation; deploy auto-runs when repository Pages is enabled for GitHub Actions.
 
 ## 11) Release-Train Detail (v0.1.7 -> v1.0)

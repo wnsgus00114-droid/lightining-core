@@ -1,5 +1,7 @@
 #include <iostream>
+#include <vector>
 
+#include "lightning_core/ops.hpp"
 #include "lightning_core/runtime.hpp"
 
 int main() {
@@ -59,6 +61,31 @@ int main() {
   }
   if (!saw_backend_name) {
     std::cerr << "runtime trace missing backend_name event\n";
+    return 1;
+  }
+
+  // op-dispatch trace smoke: a tiny matmul should emit op_dispatch metadata.
+  setRuntimeTraceEnabled(true);
+  const std::vector<float> a = {1.0f, 2.0f, 3.0f, 4.0f};
+  const std::vector<float> b = {5.0f, 6.0f, 7.0f, 8.0f};
+  std::vector<float> c(4, 0.0f);
+  if (lightning_core::ops::matMul<float>(a.data(), b.data(), c.data(), 2, 2, 2, Device::kCPU) != Status::kSuccess) {
+    std::cerr << "matMul CPU failed in runtime trace smoke\n";
+    return 1;
+  }
+  setRuntimeTraceEnabled(false);
+  bool saw_op_dispatch = false;
+  bool saw_matmul_dispatch = false;
+  for (const auto& ev : runtimeTraceEvents()) {
+    if (ev.type == RuntimeTraceEventType::kOpDispatch) {
+      saw_op_dispatch = true;
+      if (static_cast<RuntimeTraceOpKind>(ev.detail0) == RuntimeTraceOpKind::kMatMul) {
+        saw_matmul_dispatch = true;
+      }
+    }
+  }
+  if (!saw_op_dispatch || !saw_matmul_dispatch) {
+    std::cerr << "runtime trace missing op_dispatch/matmul metadata\n";
     return 1;
   }
   clearRuntimeTraceEvents();

@@ -593,10 +593,91 @@ const char* runtimeTraceEventTypeName(RuntimeTraceEventType type) {
       return "is_metal_available";
     case RuntimeTraceEventType::kPreferredDeviceFor:
       return "preferred_device_for";
+    case RuntimeTraceEventType::kOpDispatch:
+      return "op_dispatch";
     case RuntimeTraceEventType::kBackendName:
     default:
       return "backend_name";
   }
+}
+
+const char* runtimeTraceOpKindName(RuntimeTraceOpKind op) {
+  switch (op) {
+    case RuntimeTraceOpKind::kMatMul:
+      return "matmul";
+    case RuntimeTraceOpKind::kVectorAdd:
+      return "vector_add";
+    case RuntimeTraceOpKind::kMatrixSub:
+      return "matrix_sub";
+    case RuntimeTraceOpKind::kMatrixDiv:
+      return "matrix_div";
+    case RuntimeTraceOpKind::kConv2dNchw:
+      return "conv2d_nchw";
+    case RuntimeTraceOpKind::kAttentionForward:
+      return "attention_forward";
+    case RuntimeTraceOpKind::kUnknown:
+    default:
+      return "unknown";
+  }
+}
+
+int encodeRuntimeTraceDispatchDetail(Device requested_device, Device selected_device, bool fallback) {
+  const int requested_raw = static_cast<int>(requested_device) & 0x0F;
+  const int selected_raw = static_cast<int>(selected_device) & 0x0F;
+  const int fallback_raw = fallback ? (1 << 8) : 0;
+  return requested_raw | (selected_raw << 4) | fallback_raw;
+}
+
+bool decodeRuntimeTraceDispatchDetail(int encoded,
+                                      Device* requested_device,
+                                      Device* selected_device,
+                                      bool* fallback) {
+  if (requested_device == nullptr || selected_device == nullptr || fallback == nullptr) {
+    return false;
+  }
+  const int requested_raw = encoded & 0x0F;
+  const int selected_raw = (encoded >> 4) & 0x0F;
+  const bool fallback_raw = ((encoded >> 8) & 0x01) != 0;
+
+  auto decode_device = [](int raw, Device* out) -> bool {
+    if (out == nullptr) {
+      return false;
+    }
+    switch (raw) {
+      case static_cast<int>(Device::kCPU):
+        *out = Device::kCPU;
+        return true;
+      case static_cast<int>(Device::kCUDA):
+        *out = Device::kCUDA;
+        return true;
+      case static_cast<int>(Device::kMetal):
+        *out = Device::kMetal;
+        return true;
+      default:
+        return false;
+    }
+  };
+
+  if (!decode_device(requested_raw, requested_device)) {
+    return false;
+  }
+  if (!decode_device(selected_raw, selected_device)) {
+    return false;
+  }
+  *fallback = fallback_raw;
+  return true;
+}
+
+void traceOpDispatch(RuntimeTraceOpKind op,
+                     Device requested_device,
+                     Device selected_device,
+                     bool fallback,
+                     std::size_t workload_hint) {
+  recordRuntimeTraceEvent(RuntimeTraceEventType::kOpDispatch,
+                          Status::kSuccess,
+                          workload_hint,
+                          static_cast<int>(op),
+                          encodeRuntimeTraceDispatchDetail(requested_device, selected_device, fallback));
 }
 
 const char* getErrorString(Status status) {

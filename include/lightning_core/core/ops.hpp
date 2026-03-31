@@ -86,6 +86,7 @@ runtime::Status vectorAddWithPolicy(
 		runtime::Device device,
 		const VectorAddIoPolicy& policy) {
 	static_assert(std::is_floating_point_v<T>, "vectorAdd<T> supports floating-point types only");
+	const runtime::Device requested_device = device;
 	if ((policy.upload_a && a == nullptr) || (policy.upload_b && b == nullptr) ||
 			(policy.download_out && out == nullptr) || n == 0) {
 		return runtime::Status::kInvalidValue;
@@ -95,6 +96,12 @@ runtime::Status vectorAddWithPolicy(
 		if (a == nullptr || b == nullptr || out == nullptr) {
 			return runtime::Status::kInvalidValue;
 		}
+		runtime::traceOpDispatch(
+				runtime::RuntimeTraceOpKind::kVectorAdd,
+				requested_device,
+				runtime::Device::kCPU,
+				requested_device != runtime::Device::kCPU,
+				n);
 		return detail::vectorAddCpuWithPolicy(
 				a,
 				b,
@@ -106,6 +113,12 @@ runtime::Status vectorAddWithPolicy(
 				policy.synchronize);
 	}
 	if (device == runtime::Device::kCUDA) {
+		runtime::traceOpDispatch(
+				runtime::RuntimeTraceOpKind::kVectorAdd,
+				requested_device,
+				runtime::Device::kCUDA,
+				false,
+				n);
 		runtime::Status st = detail::vectorAddCudaWithPolicy(
 				a,
 				b,
@@ -119,6 +132,12 @@ runtime::Status vectorAddWithPolicy(
 			if (a == nullptr || b == nullptr || out == nullptr) {
 				return runtime::Status::kNotSupported;
 			}
+			runtime::traceOpDispatch(
+					runtime::RuntimeTraceOpKind::kVectorAdd,
+					requested_device,
+					runtime::Device::kCPU,
+					true,
+					n);
 			return detail::vectorAddCpu(a, b, out, n);
 		}
 		return st;
@@ -132,9 +151,21 @@ runtime::Status vectorAddWithPolicy(
 			}
 			const std::size_t crossover_n = vectorAddOneShotCrossoverN();
 			if (n <= crossover_n) {
+				runtime::traceOpDispatch(
+						runtime::RuntimeTraceOpKind::kVectorAdd,
+						requested_device,
+						runtime::Device::kCPU,
+						true,
+						n);
 				return detail::vectorAddCpu(a, b, out, n);
 			}
 		}
+		runtime::traceOpDispatch(
+				runtime::RuntimeTraceOpKind::kVectorAdd,
+				requested_device,
+				runtime::Device::kMetal,
+				false,
+				n);
 		runtime::Status st = detail::vectorAddMetalWithPolicy(
 				a,
 				b,
@@ -148,6 +179,12 @@ runtime::Status vectorAddWithPolicy(
 			if (a == nullptr || b == nullptr || out == nullptr) {
 				return runtime::Status::kNotSupported;
 			}
+			runtime::traceOpDispatch(
+					runtime::RuntimeTraceOpKind::kVectorAdd,
+					requested_device,
+					runtime::Device::kCPU,
+					true,
+					n);
 			return detail::vectorAddCpu(a, b, out, n);
 		}
 		return st;
@@ -325,6 +362,8 @@ runtime::Status matMulWithPolicy(
 		runtime::Device device,
 		const MatMulIoPolicy& policy) {
 	static_assert(std::is_floating_point_v<T>, "matMul<T> supports floating-point types only");
+	const runtime::Device requested_device = device;
+	const std::size_t workload_hint = m * k * n;
 	if ((policy.upload_a && a == nullptr) || (policy.upload_b && b == nullptr) ||
 			(policy.download_out && out == nullptr) || m == 0 || k == 0 || n == 0) {
 		return runtime::Status::kInvalidValue;
@@ -334,6 +373,12 @@ runtime::Status matMulWithPolicy(
 		if (a == nullptr || b == nullptr || out == nullptr) {
 			return runtime::Status::kInvalidValue;
 		}
+		runtime::traceOpDispatch(
+				runtime::RuntimeTraceOpKind::kMatMul,
+				requested_device,
+				runtime::Device::kCPU,
+				requested_device != runtime::Device::kCPU,
+				workload_hint);
 		return detail::matMulCpuWithPolicy(
 				a,
 				b,
@@ -347,6 +392,12 @@ runtime::Status matMulWithPolicy(
 				policy.synchronize);
 	}
 	if (device == runtime::Device::kCUDA) {
+		runtime::traceOpDispatch(
+				runtime::RuntimeTraceOpKind::kMatMul,
+				requested_device,
+				runtime::Device::kCUDA,
+				false,
+				workload_hint);
 		runtime::Status st = detail::matMulCudaWithPolicy(
 				a,
 				b,
@@ -362,11 +413,23 @@ runtime::Status matMulWithPolicy(
 			if (a == nullptr || b == nullptr || out == nullptr) {
 				return runtime::Status::kNotSupported;
 			}
+			runtime::traceOpDispatch(
+					runtime::RuntimeTraceOpKind::kMatMul,
+					requested_device,
+					runtime::Device::kCPU,
+					true,
+					workload_hint);
 			return detail::matMulCpu(a, b, out, m, k, n);
 		}
 		return st;
 	}
 	if (device == runtime::Device::kMetal) {
+		runtime::traceOpDispatch(
+				runtime::RuntimeTraceOpKind::kMatMul,
+				requested_device,
+				runtime::Device::kMetal,
+				false,
+				workload_hint);
 		runtime::Status st = detail::matMulMetalWithPolicy(
 				a,
 				b,
@@ -382,6 +445,12 @@ runtime::Status matMulWithPolicy(
 			if (a == nullptr || b == nullptr || out == nullptr) {
 				return runtime::Status::kNotSupported;
 			}
+			runtime::traceOpDispatch(
+					runtime::RuntimeTraceOpKind::kMatMul,
+					requested_device,
+					runtime::Device::kCPU,
+					true,
+					workload_hint);
 			return detail::matMulCpu(a, b, out, m, k, n);
 		}
 		return st;
@@ -430,6 +499,7 @@ runtime::Status conv2dNchwWithPolicy(
 		const Conv2dIoPolicy& policy,
 		bool apply_relu = false) {
 	static_assert(std::is_floating_point_v<T>, "conv2dNchwWithPolicy<T> supports floating-point types only");
+	const runtime::Device requested_device = device;
 	if ((policy.upload_x && x == nullptr) || (policy.upload_w && w == nullptr) ||
 			(policy.upload_bias && bias == nullptr) || (policy.download_out && out == nullptr) ||
 			batch == 0 || in_channels == 0 || in_h == 0 || in_w == 0 || out_channels == 0 ||
@@ -439,6 +509,9 @@ runtime::Status conv2dNchwWithPolicy(
 	if (in_h + (2 * pad_h) < kernel_h || in_w + (2 * pad_w) < kernel_w) {
 		return runtime::Status::kInvalidValue;
 	}
+	const std::size_t out_h = (in_h + (2 * pad_h) - kernel_h) / stride_h + 1;
+	const std::size_t out_w = (in_w + (2 * pad_w) - kernel_w) / stride_w + 1;
+	const std::size_t workload_hint = batch * out_h * out_w * out_channels * in_channels * kernel_h * kernel_w;
 
 	const bool metal_one_shot_tiny_conv =
 			device == runtime::Device::kMetal &&
@@ -449,10 +522,13 @@ runtime::Status conv2dNchwWithPolicy(
 			pad_h == 1 && pad_w == 1 &&
 			batch <= 64 && in_channels <= 16 && out_channels <= 32;
 	if (metal_one_shot_tiny_conv) {
-		const std::size_t out_h = (in_h + (2 * pad_h) - kernel_h) / stride_h + 1;
-		const std::size_t out_w = (in_w + (2 * pad_w) - kernel_w) / stride_w + 1;
-		const std::size_t conv_macs = batch * out_h * out_w * out_channels * in_channels * kernel_h * kernel_w;
-		if (conv_macs <= conv2dOneShotCpuCrossoverMacs()) {
+		if (workload_hint <= conv2dOneShotCpuCrossoverMacs()) {
+			runtime::traceOpDispatch(
+					runtime::RuntimeTraceOpKind::kConv2dNchw,
+					requested_device,
+					runtime::Device::kCPU,
+					true,
+					workload_hint);
 			return conv2dNchw<T>(
 					x,
 					w,
@@ -482,6 +558,12 @@ runtime::Status conv2dNchwWithPolicy(
 				pad_h == 1 && pad_w == 1 &&
 				batch <= 64 && in_channels <= 64 && out_channels <= 128;
 		if (metal_conv3x3_shape) {
+			runtime::traceOpDispatch(
+					runtime::RuntimeTraceOpKind::kConv2dNchw,
+					requested_device,
+					runtime::Device::kMetal,
+					false,
+					workload_hint);
 			return detail::conv2dNchw3x3s1p1MetalWithPolicy(
 					reinterpret_cast<const float*>(x),
 					reinterpret_cast<const float*>(w),
@@ -502,9 +584,21 @@ runtime::Status conv2dNchwWithPolicy(
 	}
 
 	if (!policy.upload_x || !policy.upload_w || !policy.upload_bias || !policy.download_out || !policy.synchronize) {
+		runtime::traceOpDispatch(
+				runtime::RuntimeTraceOpKind::kConv2dNchw,
+				requested_device,
+				device,
+				false,
+				workload_hint);
 		return runtime::Status::kNotSupported;
 	}
 
+	runtime::traceOpDispatch(
+			runtime::RuntimeTraceOpKind::kConv2dNchw,
+			requested_device,
+			device,
+			false,
+			workload_hint);
 	return conv2dNchw<T>(
 			x,
 			w,
@@ -778,6 +872,7 @@ runtime::Status conv2dNchw(
 		runtime::Device device,
 		bool apply_relu) {
 	static_assert(std::is_floating_point_v<T>, "conv2dNchw<T> supports floating-point types only");
+	const runtime::Device requested_device = device;
 	if (x == nullptr || w == nullptr || out == nullptr ||
 				batch == 0 || in_channels == 0 || in_h == 0 || in_w == 0 ||
 				out_channels == 0 || kernel_h == 0 || kernel_w == 0 ||
@@ -792,6 +887,7 @@ runtime::Status conv2dNchw(
 	const std::size_t out_w = (in_w + (2 * pad_w) - kernel_w) / stride_w + 1;
 	const std::size_t k_inner = in_channels * kernel_h * kernel_w;
 	const std::size_t m_rows = batch * out_h * out_w;
+	const std::size_t workload_hint = batch * out_h * out_w * out_channels * in_channels * kernel_h * kernel_w;
 	const std::size_t cols_size = m_rows * k_inner;
 	const std::size_t out2d_size = m_rows * out_channels;
 	const bool metal_one_shot_tiny_conv =
@@ -801,8 +897,13 @@ runtime::Status conv2dNchw(
 			pad_h == 1 && pad_w == 1 &&
 			batch <= 64 && in_channels <= 16 && out_channels <= 32;
 	if (metal_one_shot_tiny_conv) {
-		const std::size_t conv_macs = batch * out_h * out_w * out_channels * in_channels * kernel_h * kernel_w;
-		if (conv_macs <= conv2dOneShotCpuCrossoverMacs()) {
+		if (workload_hint <= conv2dOneShotCpuCrossoverMacs()) {
+			runtime::traceOpDispatch(
+					runtime::RuntimeTraceOpKind::kConv2dNchw,
+					requested_device,
+					runtime::Device::kCPU,
+					true,
+					workload_hint);
 			return conv2dNchw<T>(
 					x,
 					w,
@@ -831,6 +932,12 @@ runtime::Status conv2dNchw(
 				pad_h == 1 && pad_w == 1 &&
 				batch <= 64 && in_channels <= 64 && out_channels <= 128;
 		if (metal_conv3x3_shape) {
+			runtime::traceOpDispatch(
+					runtime::RuntimeTraceOpKind::kConv2dNchw,
+					requested_device,
+					runtime::Device::kMetal,
+					false,
+					workload_hint);
 			runtime::Status metal_st = detail::conv2dNchw3x3s1p1Metal(
 					reinterpret_cast<const float*>(x),
 					reinterpret_cast<const float*>(w),
@@ -863,6 +970,12 @@ runtime::Status conv2dNchw(
 			batch <= 64;
 
 	if (torchstrong_direct_shape) {
+		runtime::traceOpDispatch(
+				runtime::RuntimeTraceOpKind::kConv2dNchw,
+				requested_device,
+				runtime::Device::kCPU,
+				true,
+				workload_hint);
 		const std::size_t pad_h_i = in_h + 2;
 		const std::size_t pad_w_i = in_w + 2;
 		const std::size_t per_ch_pad = pad_h_i * pad_w_i;
@@ -1062,6 +1175,12 @@ runtime::Status conv2dNchw(
 			}
 		}
 	}
+	runtime::traceOpDispatch(
+			runtime::RuntimeTraceOpKind::kConv2dNchw,
+			requested_device,
+			device,
+			requested_device != device,
+			workload_hint);
 	runtime::Status mm_st = matMulWithPolicy<T>(
 				cols,
 				w_col,
@@ -1342,6 +1461,8 @@ runtime::Status matrixSubWithPolicy(
 		runtime::Device device,
 		const MatrixElementwiseIoPolicy& policy) {
 	static_assert(std::is_floating_point_v<T>, "matrixSub<T> supports floating-point types only");
+	const runtime::Device requested_device = device;
+	const std::size_t workload_hint = rows * cols;
 	if ((policy.upload_a && a == nullptr) || (policy.upload_b && b == nullptr) ||
 			(policy.download_out && out == nullptr) || rows == 0 || cols == 0) {
 		return runtime::Status::kInvalidValue;
@@ -1351,6 +1472,12 @@ runtime::Status matrixSubWithPolicy(
 		if (a == nullptr || b == nullptr || out == nullptr) {
 			return runtime::Status::kInvalidValue;
 		}
+		runtime::traceOpDispatch(
+				runtime::RuntimeTraceOpKind::kMatrixSub,
+				requested_device,
+				runtime::Device::kCPU,
+				requested_device != runtime::Device::kCPU,
+				workload_hint);
 		return detail::matrixSubCpuWithPolicy(
 				a,
 				b,
@@ -1363,6 +1490,12 @@ runtime::Status matrixSubWithPolicy(
 				policy.synchronize);
 	}
 	if (device == runtime::Device::kCUDA) {
+		runtime::traceOpDispatch(
+				runtime::RuntimeTraceOpKind::kMatrixSub,
+				requested_device,
+				runtime::Device::kCUDA,
+				false,
+				workload_hint);
 		runtime::Status st = detail::matrixSubCudaWithPolicy(
 				a,
 				b,
@@ -1377,11 +1510,23 @@ runtime::Status matrixSubWithPolicy(
 			if (a == nullptr || b == nullptr || out == nullptr) {
 				return runtime::Status::kNotSupported;
 			}
+			runtime::traceOpDispatch(
+					runtime::RuntimeTraceOpKind::kMatrixSub,
+					requested_device,
+					runtime::Device::kCPU,
+					true,
+					workload_hint);
 			return detail::matrixSubCpu(a, b, out, rows, cols);
 		}
 		return st;
 	}
 	if (device == runtime::Device::kMetal) {
+		runtime::traceOpDispatch(
+				runtime::RuntimeTraceOpKind::kMatrixSub,
+				requested_device,
+				runtime::Device::kMetal,
+				false,
+				workload_hint);
 		runtime::Status st = detail::matrixSubMetalWithPolicy(
 				a,
 				b,
@@ -1396,6 +1541,12 @@ runtime::Status matrixSubWithPolicy(
 			if (a == nullptr || b == nullptr || out == nullptr) {
 				return runtime::Status::kNotSupported;
 			}
+			runtime::traceOpDispatch(
+					runtime::RuntimeTraceOpKind::kMatrixSub,
+					requested_device,
+					runtime::Device::kCPU,
+					true,
+					workload_hint);
 			return detail::matrixSubCpu(a, b, out, rows, cols);
 		}
 		return st;
@@ -1413,6 +1564,8 @@ runtime::Status matrixDivWithPolicy(
 		runtime::Device device,
 		const MatrixElementwiseIoPolicy& policy) {
 	static_assert(std::is_floating_point_v<T>, "matrixDiv<T> supports floating-point types only");
+	const runtime::Device requested_device = device;
+	const std::size_t workload_hint = rows * cols;
 	if ((policy.upload_a && a == nullptr) || (policy.upload_b && b == nullptr) ||
 			(policy.download_out && out == nullptr) || rows == 0 || cols == 0) {
 		return runtime::Status::kInvalidValue;
@@ -1422,6 +1575,12 @@ runtime::Status matrixDivWithPolicy(
 		if (a == nullptr || b == nullptr || out == nullptr) {
 			return runtime::Status::kInvalidValue;
 		}
+		runtime::traceOpDispatch(
+				runtime::RuntimeTraceOpKind::kMatrixDiv,
+				requested_device,
+				runtime::Device::kCPU,
+				requested_device != runtime::Device::kCPU,
+				workload_hint);
 		return detail::matrixDivCpuWithPolicy(
 				a,
 				b,
@@ -1434,6 +1593,12 @@ runtime::Status matrixDivWithPolicy(
 				policy.synchronize);
 	}
 	if (device == runtime::Device::kCUDA) {
+		runtime::traceOpDispatch(
+				runtime::RuntimeTraceOpKind::kMatrixDiv,
+				requested_device,
+				runtime::Device::kCUDA,
+				false,
+				workload_hint);
 		runtime::Status st = detail::matrixDivCudaWithPolicy(
 				a,
 				b,
@@ -1448,11 +1613,23 @@ runtime::Status matrixDivWithPolicy(
 			if (a == nullptr || b == nullptr || out == nullptr) {
 				return runtime::Status::kNotSupported;
 			}
+			runtime::traceOpDispatch(
+					runtime::RuntimeTraceOpKind::kMatrixDiv,
+					requested_device,
+					runtime::Device::kCPU,
+					true,
+					workload_hint);
 			return detail::matrixDivCpu(a, b, out, rows, cols);
 		}
 		return st;
 	}
 	if (device == runtime::Device::kMetal) {
+		runtime::traceOpDispatch(
+				runtime::RuntimeTraceOpKind::kMatrixDiv,
+				requested_device,
+				runtime::Device::kMetal,
+				false,
+				workload_hint);
 		runtime::Status st = detail::matrixDivMetalWithPolicy(
 				a,
 				b,
@@ -1467,6 +1644,12 @@ runtime::Status matrixDivWithPolicy(
 			if (a == nullptr || b == nullptr || out == nullptr) {
 				return runtime::Status::kNotSupported;
 			}
+			runtime::traceOpDispatch(
+					runtime::RuntimeTraceOpKind::kMatrixDiv,
+					requested_device,
+					runtime::Device::kCPU,
+					true,
+					workload_hint);
 			return detail::matrixDivCpu(a, b, out, rows, cols);
 		}
 		return st;

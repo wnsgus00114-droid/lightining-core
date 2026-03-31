@@ -38,6 +38,10 @@ struct TimelineEventRow {
   std::size_t index{0};
   std::string type;
   std::string status;
+  std::string op;
+  std::string requested_device;
+  std::string selected_device;
+  bool fallback{false};
   std::uint64_t timestamp_ns{0};
   std::uint64_t offset_ns{0};
   std::uint64_t delta_prev_ns{0};
@@ -62,6 +66,33 @@ bool orderedLess(T lhs, T rhs, bool descending) {
   return descending ? lhs > rhs : lhs < rhs;
 }
 
+void decodeOpDispatchMeta(int detail0,
+                          int detail1,
+                          std::string* op,
+                          std::string* requested_device,
+                          std::string* selected_device,
+                          bool* fallback) {
+  if (op == nullptr || requested_device == nullptr || selected_device == nullptr || fallback == nullptr) {
+    return;
+  }
+  *op = "";
+  *requested_device = "";
+  *selected_device = "";
+  *fallback = false;
+
+  const auto op_kind = static_cast<lc::runtime::RuntimeTraceOpKind>(detail0);
+  *op = lc::runtime::runtimeTraceOpKindName(op_kind);
+
+  lc::runtime::Device requested = lc::runtime::Device::kCPU;
+  lc::runtime::Device selected = lc::runtime::Device::kCPU;
+  bool is_fallback = false;
+  if (lc::runtime::decodeRuntimeTraceDispatchDetail(detail1, &requested, &selected, &is_fallback)) {
+    *requested_device = toString(requested);
+    *selected_device = toString(selected);
+    *fallback = is_fallback;
+  }
+}
+
 std::vector<TimelineEventRow> buildTimelineRows(const std::vector<lc::runtime::RuntimeTraceEvent>& events) {
   std::vector<TimelineEventRow> rows;
   rows.reserve(events.size());
@@ -76,6 +107,10 @@ std::vector<TimelineEventRow> buildTimelineRows(const std::vector<lc::runtime::R
     row.index = i;
     row.type = lc::runtime::runtimeTraceEventTypeName(ev.type);
     row.status = lc::runtime::getErrorString(ev.status);
+    if (ev.type == lc::runtime::RuntimeTraceEventType::kOpDispatch) {
+      decodeOpDispatchMeta(
+          ev.detail0, ev.detail1, &row.op, &row.requested_device, &row.selected_device, &row.fallback);
+    }
     row.timestamp_ns = ev.timestamp_ns;
     row.offset_ns = (ev.timestamp_ns >= base_ts) ? (ev.timestamp_ns - base_ts) : 0;
     row.delta_prev_ns = (i > 0 && ev.timestamp_ns >= events[i - 1].timestamp_ns)
@@ -98,6 +133,10 @@ py::dict toTimelineEventDict(const TimelineEventRow& row) {
   out["index"] = row.index;
   out["type"] = row.type;
   out["status"] = row.status;
+  out["op"] = row.op;
+  out["requested_device"] = row.requested_device;
+  out["selected_device"] = row.selected_device;
+  out["fallback"] = row.fallback;
   out["timestamp_ns"] = row.timestamp_ns;
   out["offset_ns"] = row.offset_ns;
   out["delta_prev_ns"] = row.delta_prev_ns;
@@ -118,7 +157,24 @@ std::string makeGroupKey(const TimelineEventRow& row, const std::string& group_b
   if (group_by == "type_status") {
     return row.type + "|" + row.status;
   }
-  throw std::invalid_argument("group_by must be 'type', 'status', or 'type_status'");
+  if (group_by == "op") {
+    return row.op.empty() ? "non_op" : row.op;
+  }
+  if (group_by == "op_selected_device") {
+    if (row.op.empty()) {
+      return "non_op";
+    }
+    return row.op + "|" + (row.selected_device.empty() ? std::string("unknown") : row.selected_device);
+  }
+  if (group_by == "op_path") {
+    if (row.op.empty()) {
+      return "non_op";
+    }
+    const std::string selected = row.selected_device.empty() ? "unknown" : row.selected_device;
+    return row.op + "|" + selected + "|" + (row.fallback ? "fallback" : "direct");
+  }
+  throw std::invalid_argument(
+      "group_by must be one of: type, status, type_status, op, op_selected_device, op_path");
 }
 
 void sortTimelineEvents(std::vector<TimelineEventRow>* rows,
@@ -337,6 +393,17 @@ void bindRuntime(py::module_& m) {
       row["size_bytes"] = ev.size_bytes;
       row["detail0"] = ev.detail0;
       row["detail1"] = ev.detail1;
+      std::string op;
+      std::string requested_device;
+      std::string selected_device;
+      bool fallback = false;
+      if (ev.type == lc::runtime::RuntimeTraceEventType::kOpDispatch) {
+        decodeOpDispatchMeta(ev.detail0, ev.detail1, &op, &requested_device, &selected_device, &fallback);
+      }
+      row["op"] = op;
+      row["requested_device"] = requested_device;
+      row["selected_device"] = selected_device;
+      row["fallback"] = fallback;
       out.append(row);
     }
     return out;

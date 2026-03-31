@@ -190,7 +190,7 @@ lc.runtime_trace_enable(False)
 report = lc.runtime_trace_timeline(
     event_sort_by="timestamp_ns",
     event_descending=False,
-    group_by="type",
+    group_by="op_path",
     group_sort_by="total_delta_next_ns",
     group_descending=True,
     hotspot_top_k=8,
@@ -203,7 +203,7 @@ print("hotspots:", report["hotspots"][:5])
 
 Interpretation:
 
-- `groups`: aggregated by event type/status for where time is concentrated.
+- `groups`: aggregated by op/path (`op|selected_device|direct_or_fallback`) to show where time is concentrated.
 - `hotspots`: top single runtime events by `delta_next_ns` (time until next event).
 - `events`: full timeline rows for manual inspection/export.
 

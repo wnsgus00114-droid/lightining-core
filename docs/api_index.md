@@ -13,7 +13,7 @@ import lightning_core as lc
 Main Python surfaces:
 
 - Runtime helpers: `backend_name`, `runtime_capability`, `runtime_trace_*`, `runtime_sync_*`
-- Runtime timeline helper: `runtime_trace_timeline` (sorting/grouping/hotspot summary in Python)
+- Runtime timeline helper: `runtime_trace_timeline` (sorting/grouping/hotspot summary, including `group_by="op_path"` for dispatch bottlenecks)
 - Tensor ops: `vector_add`, `matrix_add`, `matrix_sub`, `matmul2d`, `conv2d_nchw`
 - Attention: `attention2d`, `attention_forward`, `AttentionSession`
 - Integrated API namespace: `lc.api.*` (clean operation names for conv/attention/integrated paths)

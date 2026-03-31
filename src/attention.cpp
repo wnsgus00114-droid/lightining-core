@@ -142,11 +142,19 @@ runtime::Status attentionForwardWithPolicy(
     const AttentionConfig& cfg,
     runtime::Device device,
     const AttentionIoPolicy& policy) {
+  const runtime::Device requested_device = device;
   if (q == nullptr || k == nullptr || v == nullptr || out == nullptr || cfg.seq_len == 0 || cfg.head_dim == 0) {
     return runtime::Status::kInvalidValue;
   }
+  const std::size_t workload_hint = cfg.seq_len * cfg.seq_len * cfg.head_dim;
 
   if (device == runtime::Device::kCPU) {
+    runtime::traceOpDispatch(
+        runtime::RuntimeTraceOpKind::kAttentionForward,
+        requested_device,
+        runtime::Device::kCPU,
+        requested_device != runtime::Device::kCPU,
+        workload_hint);
     runtime::Status st = detail::attentionForwardCpu(q, k, v, out, cfg);
     if (st == runtime::Status::kSuccess) {
       applyForwardPostprocess(out, cfg, policy);
@@ -155,14 +163,32 @@ runtime::Status attentionForwardWithPolicy(
   }
   if (device == runtime::Device::kMetal) {
     if (useCpuCrossoverForMetalForward(cfg, policy)) {
+      runtime::traceOpDispatch(
+          runtime::RuntimeTraceOpKind::kAttentionForward,
+          requested_device,
+          runtime::Device::kCPU,
+          true,
+          workload_hint);
       runtime::Status st = detail::attentionForwardCpu(q, k, v, out, cfg);
       if (st == runtime::Status::kSuccess) {
         applyForwardPostprocess(out, cfg, policy);
       }
       return st;
     }
+    runtime::traceOpDispatch(
+        runtime::RuntimeTraceOpKind::kAttentionForward,
+        requested_device,
+        runtime::Device::kMetal,
+        false,
+        workload_hint);
     runtime::Status st = detail::attentionForwardMetalWithPolicy(q, k, v, out, cfg, policy);
     if (st == runtime::Status::kNotSupported) {
+      runtime::traceOpDispatch(
+          runtime::RuntimeTraceOpKind::kAttentionForward,
+          requested_device,
+          runtime::Device::kCPU,
+          true,
+          workload_hint);
       st = detail::attentionForwardCpu(q, k, v, out, cfg);
       if (st == runtime::Status::kSuccess) {
         applyForwardPostprocess(out, cfg, policy);

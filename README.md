@@ -411,7 +411,7 @@ Typical optimization pattern:
 - Separate one-shot latency benchmarks and steady-state throughput benchmarks.
 - Warm up before measurement.
 - Tiny one-shot conv Metal crossover default is tuned to `260000` MACs; override with `CJ_CONV2D_CPU_CROSSOVER_MACS` (`CJ_CONV2D_CPU_CROSSOVER_DYNAMIC=1` for dynamic refresh).
-- Use `runtime_trace_timeline()` to identify hot runtime segments (`groups` + `hotspots`) directly in Python.
+- Use `runtime_trace_timeline(group_by="op_path")` to identify op-dispatch bottlenecks (`op|selected_device|direct/fallback`) directly in Python.
 
 # 26. API Examples
 More examples:

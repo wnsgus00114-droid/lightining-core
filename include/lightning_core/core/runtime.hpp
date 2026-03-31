@@ -57,7 +57,19 @@ enum class RuntimeTraceEventType {
   kIsCudaAvailable,
   kIsMetalAvailable,
   kPreferredDeviceFor,
-  kBackendName
+  kBackendName,
+  kOpDispatch
+};
+
+// 런타임 trace에서 추적할 연산 분류.
+enum class RuntimeTraceOpKind {
+  kUnknown = 0,
+  kMatMul,
+  kVectorAdd,
+  kMatrixSub,
+  kMatrixDiv,
+  kConv2dNchw,
+  kAttentionForward
 };
 
 // 런타임 API 호출 추적용 이벤트.
@@ -175,6 +187,25 @@ std::size_t runtimeTraceEventCapacity();
 
 // RuntimeTraceEventType을 사람이 읽을 수 있는 문자열로 변환.
 const char* runtimeTraceEventTypeName(RuntimeTraceEventType type);
+
+// RuntimeTraceOpKind를 사람이 읽을 수 있는 문자열로 변환.
+const char* runtimeTraceOpKindName(RuntimeTraceOpKind op);
+
+// dispatch 메타데이터를 trace detail1 비트필드로 인코딩.
+int encodeRuntimeTraceDispatchDetail(Device requested_device, Device selected_device, bool fallback);
+
+// trace detail1 비트필드를 dispatch 메타데이터로 디코딩.
+bool decodeRuntimeTraceDispatchDetail(int encoded,
+                                      Device* requested_device,
+                                      Device* selected_device,
+                                      bool* fallback);
+
+// op dispatch trace 포인트 기록.
+void traceOpDispatch(RuntimeTraceOpKind op,
+                     Device requested_device,
+                     Device selected_device,
+                     bool fallback,
+                     std::size_t workload_hint = 0);
 
 // Status를 사람이 읽을 수 있는 문자열로 변환.
 const char* getErrorString(Status status);
