@@ -4752,6 +4752,13 @@ docs/                           # quickstart/advanced/contributor docs
 # 35. Roadmap
 Roadmap baseline is now aligned to **v0.1.10** and tracked in detail in [ROADMAP.md](ROADMAP.md).
 
+Immediate replan (2026-04-01, roadmap-aligned):
+1. Complete backend abstraction split (compute/memory/sync/profiler) and lock public docs/examples.
+2. Add benchmark stability gate (`<=2% variance`) to release-tag benchmark evidence pipeline.
+3. Expand graph/eager A/B benchmark reporting with host-dispatch delta and fallback counters.
+4. Publish generated C++/Python API references in docs workflow.
+5. Expand parity/contract tests for graph path + sync-policy scenarios.
+
 Roadmap progress history is auto-generated from:
 - `docs/roadmap_updates.json`
 

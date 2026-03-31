@@ -244,11 +244,29 @@ Each milestone tracks:
 
 ## 10) Immediate Next 90 Days
 
-- finalize backend abstraction interfaces and docs,
-- ship operator registry v1 and minimal graph IR prototype,
-- add CI-visible benchmark summary artifact for every main push,
-- harden docs site MVP and expand toward generated API references,
-- add tested environment matrix table to README with concrete device/OS entries.
+- [completed] ship operator registry v1 and minimal graph IR prototype.
+- [completed] add CI-visible benchmark summary artifact for every main push.
+- [completed] add tested environment matrix table to README with concrete device/OS entries.
+- [in-progress] finalize backend abstraction interfaces and docs.
+- [in-progress] harden docs site MVP and expand toward generated API references.
+
+### Next Execution Queue (2026-04-01 Replan)
+
+1. Backend abstraction split completion (M-A, runtime/api/docs)
+   - deliverable: explicit compute/memory/sync/profiler interface boundaries and backend adapter wiring.
+   - acceptance: public docs/examples updated and parity tests pass without behavior drift.
+2. Benchmark stability gate (M-A, ci/benchmark)
+   - deliverable: variance check (`<=2%`) in release-tag benchmark evidence pipeline.
+   - acceptance: gate emits pass/fail summary with reproducible seed/workload metadata.
+3. Graph-mode benchmark adoption pass (M-B, graph/benchmark)
+   - deliverable: run graph/eager A/B in shipped pipeline benchmarks and publish host-dispatch delta.
+   - acceptance: CSV/JSON include graph metrics and explicit fallback counters.
+4. Generated API reference pipeline (M-A docs + M-B docs)
+   - deliverable: docs site build includes generated C++/Python API reference pages.
+   - acceptance: docs workflow publishes reference pages and link checks stay green.
+5. Parity + contract coverage expansion (M-A test/runtime)
+   - deliverable: extend Metal/CPU parity to graph path and runtime sync policy scenarios.
+   - acceptance: CI contract suite blocks merge on regression in shape/layout/lifetime semantics.
 
 Progress update history is auto-generated from:
 
