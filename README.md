@@ -13,7 +13,7 @@
 
 # 3. One-line Summary
 Lightning Core is a macOS-first, Metal-backed runtime that provides low-level control (resident IO, policy routing, fused paths) with easy Python APIs.
-Current public release: **v0.1.7** (2026-03-31).
+Current public release: **v0.1.8** (2026-04-01).
 
 # 4. Abstract
 Lightning Core targets high-iteration experimentation on Apple Silicon by combining:
@@ -420,6 +420,32 @@ More examples:
 - Docs site (GitHub Pages, after repository Pages enablement): <https://wnsgus00114-droid.github.io/lightning-core/>
 - `examples/` and benchmark source files under `benchmarks/`
 
+Runtime timeline bottleneck readout (`op_dispatch` path):
+
+```python
+import numpy as np
+import lightning_core as lc
+
+lc.runtime_trace_clear()
+lc.runtime_trace_enable(True)
+
+a = np.random.rand(256, 256).astype(np.float32)
+b = np.random.rand(256, 256).astype(np.float32)
+for _ in range(40):
+    lc.matmul2d(a, b, "metal")
+
+lc.runtime_trace_enable(False)
+report = lc.runtime_trace_timeline(
+    group_by="op_path",                  # op|selected_device|direct_or_fallback
+    group_sort_by="total_delta_next_ns", # bottleneck-first
+    group_descending=True,
+    hotspot_top_k=8,
+)
+
+print(report["groups"][:3])    # aggregated bottleneck paths
+print(report["hotspots"][:5])  # top single-event hotspots
+```
+
 # 27. Benchmark Overview
 Lightning Core includes:
 - Native C++ benchmark binaries in `benchmarks/`
@@ -569,15 +595,15 @@ docs/                           # quickstart/advanced/contributor docs
 ```
 
 # 35. Roadmap
-Roadmap baseline is now aligned to **v0.1.7** and tracked in detail in [ROADMAP.md](ROADMAP.md).
+Roadmap baseline is now aligned to **v0.1.8** and tracked in detail in [ROADMAP.md](ROADMAP.md).
 
-Progress snapshot (2026-03-31):
+Progress snapshot (2026-04-01):
 - Runtime trace/sync policy/capability contracts and tensor semantics checks are implemented.
 - Operator registry + Graph IR + validation/planner + graph execution path are implemented and benchmarked.
 - Integrated conv->attn graph sessions now use shape-keyed cache to remove per-call graph rebuild overhead.
 - Tiny one-shot conv crossover default is re-tuned to `CJ_CONV2D_CPU_CROSSOVER_MACS=260000` (sweep-validated while keeping benchmark win coverage).
 
-Phase A (2026 Q2, `v0.1.7`-`v0.1.9`): Runtime Core Hardening
+Phase A (2026 Q2, `v0.1.8`-`v0.1.9`): Runtime Core Hardening
 - Finalize backend contracts (compute/memory/sync/profiler split).
 - Lock tensor lifetime and metadata rules across Metal/CPU parity tests.
 - Add deterministic trace/profiling hooks and fallback behavior.
@@ -648,4 +674,4 @@ Community feedback channels we actively monitor:
 
 Lightning Core is stable enough for experimentation and benchmarking, while APIs and internals continue to evolve quickly.
 Visibility update: repository topics and benchmark discoverability documentation are actively maintained.
-Current release train: **v0.1.7**.
+Current release train: **v0.1.8**.

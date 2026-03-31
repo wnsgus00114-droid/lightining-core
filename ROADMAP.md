@@ -1,6 +1,6 @@
 # Lightning Core Roadmap
 
-Version context: v0.1.7 (2026-03-31)
+Version context: v0.1.8 (2026-04-01)
 
 ## 1) North Star
 
@@ -20,7 +20,7 @@ Lightning Core started as a macOS Apple-Silicon performance runtime. The long-te
 - Keep API ergonomics improvements performance-safe by default.
 - Keep deprecation policy explicit; no silent API behavior changes.
 
-## 3) Current Baseline (v0.1.7)
+## 3) Current Baseline (v0.1.8)
 
 - Public package on PyPI/TestPyPI.
 - C++ core + Python bindings for runtime/tensor/ops/attention/integrated APIs.
@@ -250,7 +250,7 @@ Each milestone tracks:
 - harden docs site MVP and expand toward generated API references,
 - add tested environment matrix table to README with concrete device/OS entries.
 
-Progress update (2026-03-31):
+Progress update (2026-04-01):
 
 - completed: runtime trace observability API baseline (C++ runtime + Python binding + runtime smoke test).
 - completed: explicit runtime sync policy object (C++/C/Python APIs + policy-based synchronize path).
@@ -271,9 +271,9 @@ Progress update (2026-03-31):
 - completed: op-dispatch trace points are now emitted on matmul/vector/matrix/conv/attention paths with dispatch metadata (`op`, `requested_device`, `selected_device`, `fallback`) for kernel-path bottleneck grouping.
 - completed: docs site MVP pipeline is implemented (`mkdocs.yml` + `docs-pages.yml`) with `quickstart`/`advanced`/`api_index` navigation; deploy auto-runs when repository Pages is enabled for GitHub Actions.
 
-## 11) Release-Train Detail (v0.1.7 -> v1.0)
+## 11) Release-Train Detail (v0.1.8 -> v1.0)
 
-## 11.1 2026 Q2 (v0.1.7 ~ v0.1.9): Runtime Contracts
+## 11.1 2026 Q2 (v0.1.8 ~ v0.1.9): Runtime Contracts
 
 Planned scope:
 
