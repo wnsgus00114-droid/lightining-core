@@ -1,0 +1,65 @@
+{
+  "generated_at_utc": "2026-03-31T15:54:26+00:00",
+  "source": "runtime_api",
+  "backend_name": "cpu",
+  "memory_model_name": "host-managed-compat",
+  "timeline_api": {
+    "runtime_trace_enable": true,
+    "runtime_trace_events": true,
+    "runtime_trace_timeline": true,
+    "runtime_trace_clear": true
+  },
+  "backends": [
+    {
+      "device": "metal",
+      "built": true,
+      "available": false,
+      "compute_surface": true,
+      "memory_surface": true,
+      "sync_surface": true,
+      "profiling_surface": false,
+      "runtime_trace_surface": true,
+      "sync_policy_surface": true,
+      "memory_model": "host-managed-compat",
+      "query_status": "ok"
+    },
+    {
+      "device": "cpu",
+      "built": true,
+      "available": true,
+      "compute_surface": true,
+      "memory_surface": false,
+      "sync_surface": false,
+      "profiling_surface": false,
+      "runtime_trace_surface": true,
+      "sync_policy_surface": true,
+      "memory_model": "host-managed-compat",
+      "query_status": "ok"
+    },
+    {
+      "device": "cuda",
+      "built": false,
+      "available": false,
+      "compute_surface": false,
+      "memory_surface": false,
+      "sync_surface": false,
+      "profiling_surface": false,
+      "runtime_trace_surface": true,
+      "sync_policy_surface": true,
+      "memory_model": "native-device",
+      "query_status": "ok"
+    }
+  ],
+  "active_backend_capabilities": {
+    "device": "cpu",
+    "built": true,
+    "available": true,
+    "compute_surface": true,
+    "memory_surface": false,
+    "sync_surface": false,
+    "profiling_surface": false,
+    "runtime_trace_surface": true,
+    "sync_policy_surface": true,
+    "memory_model": "host-managed-compat"
+  }
+}

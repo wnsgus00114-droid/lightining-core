@@ -16,5 +16,6 @@ nav:
   - Docs Home: index.md
   - Quickstart: quickstart.md
   - Advanced: advanced.md
+  - Capability Matrix: capability_matrix.md
   - API Index: api_index.md
   - Contributor Guide: contributor.md

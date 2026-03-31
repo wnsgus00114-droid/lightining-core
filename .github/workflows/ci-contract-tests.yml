@@ -19,6 +19,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Verify generated docs blocks are up-to-date
+        run: |
+          python3 scripts/generate_capability_docs.py --check
+          python3 scripts/generate_roadmap_history.py --check
+
       - name: Configure (tests only)
         run: |
           cmake -S . -B build-ci \

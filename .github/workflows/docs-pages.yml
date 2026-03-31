@@ -42,6 +42,11 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install mkdocs
 
+      - name: Refresh generated docs blocks
+        run: |
+          python scripts/generate_capability_docs.py
+          python scripts/generate_roadmap_history.py
+
       - name: Build docs
         run: mkdocs build --site-dir site
 

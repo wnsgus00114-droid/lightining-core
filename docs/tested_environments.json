@@ -1,0 +1,29 @@
+[
+  {
+    "date": "2026-03-30",
+    "scope": "Local benchmark snapshot",
+    "hardware": "Apple Silicon macOS (Metal enabled)",
+    "python": "3.14",
+    "torch": "2.11.0",
+    "status": "validated",
+    "notes": "README benchmark snapshot run (ai_model_all_bench.py / ml_all_bench.py / dl_all_bench.py)."
+  },
+  {
+    "date": "2026-04-01",
+    "scope": "CI contract tests",
+    "hardware": "GitHub Actions macos-14",
+    "python": "3.12",
+    "torch": "n/a",
+    "status": "validated",
+    "notes": "CMake + CTest quality gate workflow."
+  },
+  {
+    "date": "2026-04-01",
+    "scope": "CI wheel build and publish",
+    "hardware": "GitHub Actions macos-14",
+    "python": "3.12",
+    "torch": "n/a",
+    "status": "validated",
+    "notes": "Wheel build + distribution validation in publish workflow."
+  }
+]

@@ -250,26 +250,69 @@ Each milestone tracks:
 - harden docs site MVP and expand toward generated API references,
 - add tested environment matrix table to README with concrete device/OS entries.
 
-Progress update (2026-04-01):
+Progress update history is auto-generated from:
 
-- completed: runtime trace observability API baseline (C++ runtime + Python binding + runtime smoke test).
-- completed: explicit runtime sync policy object (C++/C/Python APIs + policy-based synchronize path).
-- completed: backend capability contract surfaces (compute/memory/sync/profiling descriptors via C++/C/Python APIs).
-- completed: tensor semantics contract checks (shape/stride/layout/view-bounds validators with Python exposure + tests).
-- completed: operator registry v1 + minimal graph IR prototype (C++ API, Python bindings, validation/planning test).
-- completed: graph validation report passes + grouped planner options (device fallback segmentation + sync-boundary grouping).
-- completed: graph execution path for matmul/vector/matrix/attention/conv (C++ + Python) and integrated conv->attn graph/eager execution toggle for A/B verification.
-- completed: integrated graph validation diagnostics with actionable hints and `conv_attention_torchstrong_nchw_ab_report` API for eager-vs-graph parity/speed checks.
-- completed: attention Python bindings now reuse shape/device session cache for repeated `attention2d`/`attention_forward` calls (lower binding-path overhead).
-- completed: integrated conv->attn graph path now caches shape-keyed GraphIR sessions to remove per-call graph rebuild overhead.
-- completed: tiny one-shot conv crossover (`CJ_CONV2D_CPU_CROSSOVER_MACS`) routes small Metal convs to CPU when end-to-end latency is lower.
-- completed: tiny one-shot conv crossover default re-tuned to `260000` MACs using threshold sweep (`100000..300000`) while keeping benchmark win coverage (`kernel/pipeline/ml` losing rows = 0 in validation run).
-- completed: CI-visible benchmark summary artifact workflow now runs `benchmarks/python/quick_bench.py` on every `main/master` push and uploads `csv/log/json/md` artifacts with GitHub step summary.
-- completed: CI correctness gate workflow now runs CMake configure/build + CTest on every `main/master` push and pull request.
-- completed: per-op Metal/CPU parity coverage is now enforced in CI via `test_backend_parity` (matmul/vector/matrix/attention/conv).
-- completed: Python runtime timeline API (`runtime_trace_timeline`) now provides trace sorting, bottleneck grouping, and hotspot extraction for immediate runtime-path diagnosis.
-- completed: op-dispatch trace points are now emitted on matmul/vector/matrix/conv/attention paths with dispatch metadata (`op`, `requested_device`, `selected_device`, `fallback`) for kernel-path bottleneck grouping.
-- completed: docs site MVP pipeline is implemented (`mkdocs.yml` + `docs-pages.yml`) with `quickstart`/`advanced`/`api_index` navigation; deploy auto-runs when repository Pages is enabled for GitHub Actions.
+- `docs/roadmap_updates.json`
+
+<!-- AUTO-ROADMAP-HISTORY:BEGIN -->
+
+### Progress History (Auto-generated)
+
+- Total tracked updates: `22`
+- Source of truth: `docs/roadmap_updates.json`
+- Quick add command:
+  `python scripts/generate_roadmap_history.py --add --date YYYY-MM-DD --milestone M-A --area runtime --title "your update"`
+
+**Date Summary**
+
+| Date | Updates | Milestones | Highlights |
+| --- | --- | --- | --- |
+| 2026-04-01 | 4 | M-A | Bumped to v0.1.8 and aligned README roadmap baseline. / Automated README/docs capability and tested-environment matrix generation. / ... (+2 more) |
+| 2026-03-31 | 6 | M-A | Shipped docs site MVP with mkdocs and docs-pages workflow. / Re-tuned tiny one-shot conv CPU crossover default to `CJ_CONV2D_CPU_CROSSOVER_MACS=260000` via threshold sweep. / ... (+4 more) |
+| 2026-03-30 | 9 | M-B, M-A | Added operator registry v1 and minimal Graph IR prototype. / Added graph validation report passes and grouped planner options with sync-boundary/fallback segmentation. / ... (+7 more) |
+| 2026-03-29 | 2 | M-A | Split docs into quickstart/advanced/index and improved package/release guidance. / Added large GEMM auto sweep, tuned policy profiles, and cross-suite summary artifacts. |
+| 2026-03-28 | 1 | M-A | Initial macOS package and release workflow launch. |
+
+**Detailed Timeline**
+
+#### 2026-04-01 (4 updates)
+
+- [completed] [M-A] [release] Bumped to v0.1.8 and aligned README roadmap baseline. (`d486d05`)
+- [completed] [M-A] [docs] Automated README/docs capability and tested-environment matrix generation.
+- [completed] [M-A] [runtime] Added op-dispatch trace metadata (`op`, `requested_device`, `selected_device`, `fallback`) for timeline bottleneck analysis. (`74d31a1`)
+- [completed] [M-A] [python] Added `runtime_trace_timeline` API with sorting/grouping/hotspot extraction. (`c0a56c2`)
+
+#### 2026-03-31 (6 updates)
+
+- [completed] [M-A] [docs] Shipped docs site MVP with mkdocs and docs-pages workflow. (`bc8adf7`)
+- [completed] [M-A] [conv] Re-tuned tiny one-shot conv CPU crossover default to `CJ_CONV2D_CPU_CROSSOVER_MACS=260000` via threshold sweep. (`3f32888`)
+- [completed] [M-A] [integrated] Enabled shape-keyed graph/session caching on conv->attn path to reduce per-call rebuild overhead. (`3f32888`)
+- [completed] [M-A] [ci] Added quick benchmark artifact workflow and summary publishing. (`7bab6cb`)
+- [completed] [M-A] [ci] Added contract-test quality gate workflow with CMake + CTest. (`e873de2`)
+- [completed] [M-A] [test] Added Metal/CPU backend parity coverage for matmul/vector/matrix/attention/conv. (`cfd1272`)
+
+#### 2026-03-30 (9 updates)
+
+- [completed] [M-B] [graph] Added operator registry v1 and minimal Graph IR prototype. (`8c4993b`)
+- [completed] [M-B] [graph] Added graph validation report passes and grouped planner options with sync-boundary/fallback segmentation. (`7bd57a3`)
+- [completed] [M-B] [graph] Added graph execution path for matmul/vector/matrix/attention/conv and integrated graph/eager A/B toggle. (`567b633`)
+- [completed] [M-A] [api] Removed legacy `cudajun` forwarding headers and unified canonical `lightning_core` include surface. (`60eff32`)
+- [completed] [M-A] [docs] Expanded README roadmap details and bumped docs/version narrative to v0.1.5. (`dfc49d1`)
+- [completed] [M-A] [tensor] Added tensor semantics contract validators (shape/stride/layout/view bounds) and Python exposure. (`f1932f6`)
+- [completed] [M-A] [runtime] Added runtime trace observability baseline and Python bindings. (`fe9912d`)
+- [completed] [M-A] [runtime] Added explicit runtime sync policy API across C++/C/Python. (`468069c`)
+- [completed] [M-A] [runtime] Added backend capability contract surfaces across C++/C/Python. (`b75551d`)
+
+#### 2026-03-29 (2 updates)
+
+- [completed] [M-A] [docs] Split docs into quickstart/advanced/index and improved package/release guidance. (`a25b1ed`)
+- [completed] [M-A] [benchmark] Added large GEMM auto sweep, tuned policy profiles, and cross-suite summary artifacts. (`7be1280`)
+
+#### 2026-03-28 (1 updates)
+
+- [completed] [M-A] [release] Initial macOS package and release workflow launch. (`8b1d456`)
+
+<!-- AUTO-ROADMAP-HISTORY:END -->
 
 ## 11) Release-Train Detail (v0.1.8 -> v1.0)
 
