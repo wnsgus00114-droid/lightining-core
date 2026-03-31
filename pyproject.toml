@@ -7,7 +7,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "lightning-core"
-version = "0.1.9"
+version = "0.1.10"
 description = "Lightning Core: macOS-first CUDA-style runtime with Metal backend"
 readme = "README.md"
 requires-python = ">=3.9"

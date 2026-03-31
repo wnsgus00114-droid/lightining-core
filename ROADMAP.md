@@ -1,6 +1,6 @@
 # Lightning Core Roadmap
 
-Version context: v0.1.9 (2026-04-01)
+Version context: v0.1.10 (2026-04-01)
 
 ## 1) North Star
 
@@ -20,7 +20,7 @@ Lightning Core started as a macOS Apple-Silicon performance runtime. The long-te
 - Keep API ergonomics improvements performance-safe by default.
 - Keep deprecation policy explicit; no silent API behavior changes.
 
-## 3) Current Baseline (v0.1.9)
+## 3) Current Baseline (v0.1.10)
 
 - Public package on PyPI/TestPyPI.
 - C++ core + Python bindings for runtime/tensor/ops/attention/integrated APIs.
@@ -258,7 +258,7 @@ Progress update history is auto-generated from:
 
 ### Progress History (Auto-generated)
 
-- Total tracked updates: `24`
+- Total tracked updates: `25`
 - Source of truth: `docs/roadmap_updates.json`
 - Quick add command:
   `python scripts/generate_roadmap_history.py --add --date YYYY-MM-DD --milestone M-A --area runtime --title "your update"`
@@ -267,7 +267,7 @@ Progress update history is auto-generated from:
 
 | Date | Updates | Milestones | Highlights |
 | --- | --- | --- | --- |
-| 2026-04-01 | 6 | M-A | Moved integrated API helper into package distribution and install path (wheel/editable). / Bumped to v0.1.9 and updated release baseline/docs. / ... (+4 more) |
+| 2026-04-01 | 7 | M-A | Moved integrated API helper into package distribution and install path (wheel/editable). / Bumped to v0.1.9 and updated release baseline/docs. / ... (+5 more) |
 | 2026-03-31 | 6 | M-A | Shipped docs site MVP with mkdocs and docs-pages workflow. / Re-tuned tiny one-shot conv CPU crossover default to `CJ_CONV2D_CPU_CROSSOVER_MACS=260000` via threshold sweep. / ... (+4 more) |
 | 2026-03-30 | 9 | M-B, M-A | Added operator registry v1 and minimal Graph IR prototype. / Added graph validation report passes and grouped planner options with sync-boundary/fallback segmentation. / ... (+7 more) |
 | 2026-03-29 | 2 | M-A | Split docs into quickstart/advanced/index and improved package/release guidance. / Added large GEMM auto sweep, tuned policy profiles, and cross-suite summary artifacts. |
@@ -275,11 +275,12 @@ Progress update history is auto-generated from:
 
 **Detailed Timeline**
 
-#### 2026-04-01 (6 updates)
+#### 2026-04-01 (7 updates)
 
 - [completed] [M-A] [python] Moved integrated API helper into package distribution and install path (wheel/editable).
 - [completed] [M-A] [release] Bumped to v0.1.9 and updated release baseline/docs.
 - [completed] [M-A] [release] Bumped to v0.1.8 and aligned README roadmap baseline. (`d486d05`)
+- [completed] [M-A] [release] Bumped to v0.1.10 after removing workspace-level duplicate helper file and verifying package-only import path.
 - [completed] [M-A] [docs] Automated README/docs capability and tested-environment matrix generation.
 - [completed] [M-A] [runtime] Added op-dispatch trace metadata (`op`, `requested_device`, `selected_device`, `fallback`) for timeline bottleneck analysis. (`74d31a1`)
 - [completed] [M-A] [python] Added `runtime_trace_timeline` API with sorting/grouping/hotspot extraction. (`c0a56c2`)
@@ -316,9 +317,9 @@ Progress update history is auto-generated from:
 
 <!-- AUTO-ROADMAP-HISTORY:END -->
 
-## 11) Release-Train Detail (v0.1.9 -> v1.0)
+## 11) Release-Train Detail (v0.1.10 -> v1.0)
 
-## 11.1 2026 Q2 (v0.1.9 ~ v0.2.0): Runtime Contracts
+## 11.1 2026 Q2 (v0.1.10 ~ v0.2.0): Runtime Contracts
 
 Planned scope:
 
