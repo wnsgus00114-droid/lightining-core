@@ -4,6 +4,7 @@
 Usage:
   python benchmarks/python/quick_bench.py
   python benchmarks/python/quick_bench.py --iters 200 --warmup 40 --out benchmark_results/quick_bench.csv
+  python benchmarks/python/quick_bench.py --device cpu --iters 100 --warmup 20
 """
 
 from __future__ import annotations
@@ -42,14 +43,14 @@ def _torch_mps_available() -> bool:
     return torch is not None and torch.backends.mps.is_available()  # type: ignore[union-attr]
 
 
-def bench_matmul(warmup: int, iters: int):
+def bench_matmul(warmup: int, iters: int, device: str):
     cases = [(256, 256, 256), (1024, 1024, 1024), (2048, 2048, 2048)]
     out = []
     for m, k, n in cases:
         a = np.random.rand(m, k).astype(np.float32)
         b = np.random.rand(k, n).astype(np.float32)
 
-        lc_ms = _time_ms(lambda: lc.matmul2d(a, b, "metal"), warmup, iters)
+        lc_ms = _time_ms(lambda: lc.matmul2d(a, b, device), warmup, iters)
 
         torch_mps_ms = float("nan")
         if _torch_mps_available():
@@ -76,7 +77,7 @@ def bench_matmul(warmup: int, iters: int):
     return out
 
 
-def bench_attention(warmup: int, iters: int):
+def bench_attention(warmup: int, iters: int, device: str):
     cases = [(8, 16), (96, 48), (256, 64)]
     out = []
     for seq, dim in cases:
@@ -84,7 +85,7 @@ def bench_attention(warmup: int, iters: int):
         k = np.random.rand(seq, dim).astype(np.float32)
         v = np.random.rand(seq, dim).astype(np.float32)
 
-        lc_ms = _time_ms(lambda: lc.attention2d(q, k, v, False, "metal"), warmup, iters)
+        lc_ms = _time_ms(lambda: lc.attention2d(q, k, v, False, device), warmup, iters)
 
         torch_mps_ms = float("nan")
         if _torch_mps_available():
@@ -112,7 +113,7 @@ def bench_attention(warmup: int, iters: int):
     return out
 
 
-def bench_conv(warmup: int, iters: int):
+def bench_conv(warmup: int, iters: int, device: str):
     cases = [(1, 3, 16, 16, 16, 3), (1, 3, 32, 32, 16, 3), (2, 3, 32, 32, 16, 3)]
     out = []
     for n, c, h, w, oc, ksz in cases:
@@ -120,7 +121,7 @@ def bench_conv(warmup: int, iters: int):
         wgt = np.random.rand(oc, c, ksz, ksz).astype(np.float32)
         b = np.random.rand(oc).astype(np.float32)
 
-        lc_ms = _time_ms(lambda: lc.conv2d_nchw(x, wgt, b, 1, 1, 1, 1, "metal"), warmup, iters)
+        lc_ms = _time_ms(lambda: lc.conv2d_nchw(x, wgt, b, 1, 1, 1, 1, device), warmup, iters)
 
         torch_mps_ms = float("nan")
         if _torch_mps_available():
@@ -162,15 +163,28 @@ def main() -> None:
     p.add_argument("--warmup", type=int, default=40)
     p.add_argument("--iters", type=int, default=200)
     p.add_argument("--out", type=Path, default=Path("benchmark_results/quick_bench.csv"))
+    p.add_argument(
+        "--device",
+        type=str,
+        default="auto",
+        choices=["auto", "metal", "cpu"],
+        help="LC execution device. 'auto' picks metal when backend reports metal, otherwise cpu.",
+    )
     args = p.parse_args()
 
+    if args.device == "auto":
+        lc_device = "metal" if lc.backend_name().lower() == "metal" else "cpu"
+    else:
+        lc_device = args.device
+
     rows = []
-    rows.extend(bench_attention(args.warmup, args.iters))
-    rows.extend(bench_conv(args.warmup, args.iters))
-    rows.extend(bench_matmul(args.warmup, args.iters))
+    rows.extend(bench_attention(args.warmup, args.iters, lc_device))
+    rows.extend(bench_conv(args.warmup, args.iters, lc_device))
+    rows.extend(bench_matmul(args.warmup, args.iters, lc_device))
 
     save_csv(args.out, rows)
 
+    print(f"backend={lc.backend_name()} device={lc_device} torch_mps_available={_torch_mps_available()}")
     print("saved:", args.out)
     print("\n=== Quick Bench (median ms) ===")
     for r in rows:

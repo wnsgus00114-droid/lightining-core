@@ -25,13 +25,14 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install numpy torch
+          python -m pip install numpy
           python -m pip install -e .
 
       - name: Run quick benchmark
         run: |
           mkdir -p benchmarks/reports/ci
           python benchmarks/python/quick_bench.py \
+            --device cpu \
             --warmup 10 \
             --iters 40 \
             --out benchmarks/reports/ci/quick_bench.csv \
