@@ -422,6 +422,7 @@ Lightning Core includes:
 - Public Python benchmark scripts in `benchmarks/python/`
 - CSV/JSON artifacts for reproducibility and comparison
 - Full benchmark source is open in this repository (C++ + Python)
+- CI quick benchmark artifact workflow on every `main/master` push (`.github/workflows/benchmark-artifacts.yml`)
 
 # 28. Benchmark Directory Structure
 ```text
