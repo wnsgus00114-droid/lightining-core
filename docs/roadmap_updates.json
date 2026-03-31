@@ -1,5 +1,14 @@
 [
   {
+    "id": "2026-04-01-release-bumped-to-v0-1-9-and-updated-release-baseline-docs",
+    "date": "2026-04-01",
+    "milestone": "M-A",
+    "area": "release",
+    "title": "Bumped to v0.1.9 and updated release baseline/docs.",
+    "status": "completed",
+    "source": ""
+  },
+  {
     "id": "2026-04-01-release-v018",
     "date": "2026-04-01",
     "milestone": "M-A",
@@ -7,6 +16,15 @@
     "title": "Bumped to v0.1.8 and aligned README roadmap baseline.",
     "status": "completed",
     "source": "d486d05"
+  },
+  {
+    "id": "2026-04-01-docs-capability-matrix-automation",
+    "date": "2026-04-01",
+    "milestone": "M-A",
+    "area": "docs",
+    "title": "Automated README/docs capability and tested-environment matrix generation.",
+    "status": "completed",
+    "source": ""
   },
   {
     "id": "2026-04-01-runtime-op-dispatch-trace",
@@ -27,33 +45,6 @@
     "source": "c0a56c2"
   },
   {
-    "id": "2026-04-01-docs-capability-matrix-automation",
-    "date": "2026-04-01",
-    "milestone": "M-A",
-    "area": "docs",
-    "title": "Automated README/docs capability and tested-environment matrix generation.",
-    "status": "completed",
-    "source": ""
-  },
-  {
-    "id": "2026-03-31-backend-parity-ci",
-    "date": "2026-03-31",
-    "milestone": "M-A",
-    "area": "test",
-    "title": "Added Metal/CPU backend parity coverage for matmul/vector/matrix/attention/conv.",
-    "status": "completed",
-    "source": "cfd1272"
-  },
-  {
-    "id": "2026-03-31-contract-test-gate",
-    "date": "2026-03-31",
-    "milestone": "M-A",
-    "area": "ci",
-    "title": "Added contract-test quality gate workflow with CMake + CTest.",
-    "status": "completed",
-    "source": "e873de2"
-  },
-  {
     "id": "2026-03-31-docs-pages-mvp",
     "date": "2026-03-31",
     "milestone": "M-A",
@@ -61,24 +52,6 @@
     "title": "Shipped docs site MVP with mkdocs and docs-pages workflow.",
     "status": "completed",
     "source": "bc8adf7"
-  },
-  {
-    "id": "2026-03-31-benchmark-artifact-workflow",
-    "date": "2026-03-31",
-    "milestone": "M-A",
-    "area": "ci",
-    "title": "Added quick benchmark artifact workflow and summary publishing.",
-    "status": "completed",
-    "source": "7bab6cb"
-  },
-  {
-    "id": "2026-03-31-conv-attn-shape-cache",
-    "date": "2026-03-31",
-    "milestone": "M-A",
-    "area": "integrated",
-    "title": "Enabled shape-keyed graph/session caching on conv->attn path to reduce per-call rebuild overhead.",
-    "status": "completed",
-    "source": "3f32888"
   },
   {
     "id": "2026-03-31-conv-crossover-retune",
@@ -90,22 +63,40 @@
     "source": "3f32888"
   },
   {
-    "id": "2026-03-30-graph-execution-path",
-    "date": "2026-03-30",
-    "milestone": "M-B",
-    "area": "graph",
-    "title": "Added graph execution path for matmul/vector/matrix/attention/conv and integrated graph/eager A/B toggle.",
+    "id": "2026-03-31-conv-attn-shape-cache",
+    "date": "2026-03-31",
+    "milestone": "M-A",
+    "area": "integrated",
+    "title": "Enabled shape-keyed graph/session caching on conv->attn path to reduce per-call rebuild overhead.",
     "status": "completed",
-    "source": "567b633"
+    "source": "3f32888"
   },
   {
-    "id": "2026-03-30-graph-validation-planner",
-    "date": "2026-03-30",
-    "milestone": "M-B",
-    "area": "graph",
-    "title": "Added graph validation report passes and grouped planner options with sync-boundary/fallback segmentation.",
+    "id": "2026-03-31-benchmark-artifact-workflow",
+    "date": "2026-03-31",
+    "milestone": "M-A",
+    "area": "ci",
+    "title": "Added quick benchmark artifact workflow and summary publishing.",
     "status": "completed",
-    "source": "7bd57a3"
+    "source": "7bab6cb"
+  },
+  {
+    "id": "2026-03-31-contract-test-gate",
+    "date": "2026-03-31",
+    "milestone": "M-A",
+    "area": "ci",
+    "title": "Added contract-test quality gate workflow with CMake + CTest.",
+    "status": "completed",
+    "source": "e873de2"
+  },
+  {
+    "id": "2026-03-31-backend-parity-ci",
+    "date": "2026-03-31",
+    "milestone": "M-A",
+    "area": "test",
+    "title": "Added Metal/CPU backend parity coverage for matmul/vector/matrix/attention/conv.",
+    "status": "completed",
+    "source": "cfd1272"
   },
   {
     "id": "2026-03-30-operator-registry-ir",
@@ -117,49 +108,22 @@
     "source": "8c4993b"
   },
   {
-    "id": "2026-03-30-tensor-semantics-contract",
+    "id": "2026-03-30-graph-validation-planner",
     "date": "2026-03-30",
-    "milestone": "M-A",
-    "area": "tensor",
-    "title": "Added tensor semantics contract validators (shape/stride/layout/view bounds) and Python exposure.",
+    "milestone": "M-B",
+    "area": "graph",
+    "title": "Added graph validation report passes and grouped planner options with sync-boundary/fallback segmentation.",
     "status": "completed",
-    "source": "f1932f6"
+    "source": "7bd57a3"
   },
   {
-    "id": "2026-03-30-backend-capability-contract",
+    "id": "2026-03-30-graph-execution-path",
     "date": "2026-03-30",
-    "milestone": "M-A",
-    "area": "runtime",
-    "title": "Added backend capability contract surfaces across C++/C/Python.",
+    "milestone": "M-B",
+    "area": "graph",
+    "title": "Added graph execution path for matmul/vector/matrix/attention/conv and integrated graph/eager A/B toggle.",
     "status": "completed",
-    "source": "b75551d"
-  },
-  {
-    "id": "2026-03-30-sync-policy-api",
-    "date": "2026-03-30",
-    "milestone": "M-A",
-    "area": "runtime",
-    "title": "Added explicit runtime sync policy API across C++/C/Python.",
-    "status": "completed",
-    "source": "468069c"
-  },
-  {
-    "id": "2026-03-30-runtime-trace-baseline",
-    "date": "2026-03-30",
-    "milestone": "M-A",
-    "area": "runtime",
-    "title": "Added runtime trace observability baseline and Python bindings.",
-    "status": "completed",
-    "source": "fe9912d"
-  },
-  {
-    "id": "2026-03-30-v015-roadmap-expansion",
-    "date": "2026-03-30",
-    "milestone": "M-A",
-    "area": "docs",
-    "title": "Expanded README roadmap details and bumped docs/version narrative to v0.1.5.",
-    "status": "completed",
-    "source": "dfc49d1"
+    "source": "567b633"
   },
   {
     "id": "2026-03-30-remove-cudajun-shims",
@@ -171,13 +135,49 @@
     "source": "60eff32"
   },
   {
-    "id": "2026-03-29-large-gemm-sweep",
-    "date": "2026-03-29",
+    "id": "2026-03-30-v015-roadmap-expansion",
+    "date": "2026-03-30",
     "milestone": "M-A",
-    "area": "benchmark",
-    "title": "Added large GEMM auto sweep, tuned policy profiles, and cross-suite summary artifacts.",
+    "area": "docs",
+    "title": "Expanded README roadmap details and bumped docs/version narrative to v0.1.5.",
     "status": "completed",
-    "source": "7be1280"
+    "source": "dfc49d1"
+  },
+  {
+    "id": "2026-03-30-tensor-semantics-contract",
+    "date": "2026-03-30",
+    "milestone": "M-A",
+    "area": "tensor",
+    "title": "Added tensor semantics contract validators (shape/stride/layout/view bounds) and Python exposure.",
+    "status": "completed",
+    "source": "f1932f6"
+  },
+  {
+    "id": "2026-03-30-runtime-trace-baseline",
+    "date": "2026-03-30",
+    "milestone": "M-A",
+    "area": "runtime",
+    "title": "Added runtime trace observability baseline and Python bindings.",
+    "status": "completed",
+    "source": "fe9912d"
+  },
+  {
+    "id": "2026-03-30-sync-policy-api",
+    "date": "2026-03-30",
+    "milestone": "M-A",
+    "area": "runtime",
+    "title": "Added explicit runtime sync policy API across C++/C/Python.",
+    "status": "completed",
+    "source": "468069c"
+  },
+  {
+    "id": "2026-03-30-backend-capability-contract",
+    "date": "2026-03-30",
+    "milestone": "M-A",
+    "area": "runtime",
+    "title": "Added backend capability contract surfaces across C++/C/Python.",
+    "status": "completed",
+    "source": "b75551d"
   },
   {
     "id": "2026-03-29-docs-quickstart-advanced-split",
@@ -187,6 +187,15 @@
     "title": "Split docs into quickstart/advanced/index and improved package/release guidance.",
     "status": "completed",
     "source": "a25b1ed"
+  },
+  {
+    "id": "2026-03-29-large-gemm-sweep",
+    "date": "2026-03-29",
+    "milestone": "M-A",
+    "area": "benchmark",
+    "title": "Added large GEMM auto sweep, tuned policy profiles, and cross-suite summary artifacts.",
+    "status": "completed",
+    "source": "7be1280"
   },
   {
     "id": "2026-03-28-macos-package-launch",
