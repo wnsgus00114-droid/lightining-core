@@ -285,7 +285,7 @@ print(y.shape)
 
 # 18. Core API Overview
 Core categories:
-- Runtime: `backend_name`, `metal_available`, `cuda_available`
+- Runtime: `backend_name`, `metal_available`, `cuda_available`, `runtime_trace_*`, `runtime_trace_timeline`
 - Tensor: `Tensor`, `Tensor64`, `TensorView`
 - Ops: matmul/conv/vector/matrix (+ resident sessions)
 - Attention: forward/train + policy + session
@@ -411,6 +411,7 @@ Typical optimization pattern:
 - Separate one-shot latency benchmarks and steady-state throughput benchmarks.
 - Warm up before measurement.
 - Tiny one-shot conv Metal crossover default is tuned to `260000` MACs; override with `CJ_CONV2D_CPU_CROSSOVER_MACS` (`CJ_CONV2D_CPU_CROSSOVER_DYNAMIC=1` for dynamic refresh).
+- Use `runtime_trace_timeline()` to identify hot runtime segments (`groups` + `hotspots`) directly in Python.
 
 # 26. API Examples
 More examples:

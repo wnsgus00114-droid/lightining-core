@@ -169,6 +169,44 @@ bash benchmarks/generate_model_profile_env.sh
 source build/benchmarks/model_runtime_profile.env
 ```
 
+## Runtime Trace Timeline (Python)
+
+You can profile runtime-level bottlenecks directly from Python.
+
+```python
+import lightning_core as lc
+import numpy as np
+
+lc.runtime_trace_clear()
+lc.runtime_trace_enable(True)
+
+a = np.random.rand(512, 512).astype(np.float32)
+b = np.random.rand(512, 512).astype(np.float32)
+for _ in range(20):
+    lc.matmul2d(a, b, "metal")
+
+lc.runtime_trace_enable(False)
+
+report = lc.runtime_trace_timeline(
+    event_sort_by="timestamp_ns",
+    event_descending=False,
+    group_by="type",
+    group_sort_by="total_delta_next_ns",
+    group_descending=True,
+    hotspot_top_k=8,
+)
+
+print("window_ns:", report["window_ns"])
+print("top groups:", report["groups"][:3])
+print("hotspots:", report["hotspots"][:5])
+```
+
+Interpretation:
+
+- `groups`: aggregated by event type/status for where time is concentrated.
+- `hotspots`: top single runtime events by `delta_next_ns` (time until next event).
+- `events`: full timeline rows for manual inspection/export.
+
 ## Namespace/Compatibility
 
 Canonical internal headers:
