@@ -37,3 +37,8 @@ add_test(NAME test_vlm_fastpath COMMAND test_vlm_fastpath)
 add_executable(test_graph_ir test_graph_ir.cpp)
 target_link_libraries(test_graph_ir PRIVATE lightning_core::lightning_core)
 add_test(NAME test_graph_ir COMMAND test_graph_ir)
+
+# Metal/CPU backend parity test for core ops.
+add_executable(test_backend_parity test_backend_parity.cpp)
+target_link_libraries(test_backend_parity PRIVATE lightning_core::lightning_core)
+add_test(NAME test_backend_parity COMMAND test_backend_parity)

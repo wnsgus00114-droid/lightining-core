@@ -266,6 +266,7 @@ Progress update (2026-03-31):
 - completed: tiny one-shot conv crossover default re-tuned to `260000` MACs using threshold sweep (`100000..300000`) while keeping benchmark win coverage (`kernel/pipeline/ml` losing rows = 0 in validation run).
 - completed: CI-visible benchmark summary artifact workflow now runs `benchmarks/python/quick_bench.py` on every `main/master` push and uploads `csv/log/json/md` artifacts with GitHub step summary.
 - completed: CI correctness gate workflow now runs CMake configure/build + CTest on every `main/master` push and pull request.
+- completed: per-op Metal/CPU parity coverage is now enforced in CI via `test_backend_parity` (matmul/vector/matrix/attention/conv).
 - completed: docs site MVP pipeline is implemented (`mkdocs.yml` + `docs-pages.yml`) with `quickstart`/`advanced`/`api_index` navigation; deploy auto-runs when repository Pages is enabled for GitHub Actions.
 
 ## 11) Release-Train Detail (v0.1.7 -> v1.0)
