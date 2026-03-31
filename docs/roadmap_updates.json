@@ -1,5 +1,14 @@
 [
   {
+    "id": "2026-04-01-python-moved-integrated-api-helper-into-package-distribution-and-install-path-wheel-editable",
+    "date": "2026-04-01",
+    "milestone": "M-A",
+    "area": "python",
+    "title": "Moved integrated API helper into package distribution and install path (wheel/editable).",
+    "status": "completed",
+    "source": ""
+  },
+  {
     "id": "2026-04-01-release-bumped-to-v0-1-9-and-updated-release-baseline-docs",
     "date": "2026-04-01",
     "milestone": "M-A",
