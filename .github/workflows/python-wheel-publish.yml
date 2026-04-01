@@ -59,10 +59,10 @@ jobs:
       QB_WARMUP: "10"
       QB_ITERS: "40"
       QB_SEED: "20260401"
-      QB_VAR_REPEATS: "5"
+      QB_VAR_REPEATS: "9"
       QB_VAR_WARMUP: "20"
-      QB_VAR_ITERS: "120"
-      QB_VAR_TRIM_RUNS: "1"
+      QB_VAR_ITERS: "160"
+      QB_VAR_TRIM_RUNS: "2"
       QB_VAR_THRESHOLD_PCT: "2.0"
     permissions:
       contents: read
