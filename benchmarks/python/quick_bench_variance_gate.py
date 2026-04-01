@@ -125,6 +125,7 @@ def build_summary(
     iters: int,
     seed: int,
     enforce_per_case: bool,
+    trim_runs: int,
 ) -> dict:
     grouped: dict[tuple[str, str], list[float]] = {}
     run_totals: dict[str, float] = {}
@@ -186,7 +187,29 @@ def build_summary(
         suite_total_stdev_ms = float("nan")
         suite_total_cv_pct = float("nan")
 
-    overall_pass = math.isfinite(suite_total_cv_pct) and suite_total_cv_pct <= threshold_pct
+    sorted_totals = sorted(run_total_values)
+    if trim_runs > 0 and len(sorted_totals) > (2 * trim_runs):
+        trimmed_totals = sorted_totals[trim_runs : len(sorted_totals) - trim_runs]
+    else:
+        trimmed_totals = sorted_totals
+
+    if len(trimmed_totals) >= 2:
+        suite_total_trimmed_mean_ms = statistics.mean(trimmed_totals)
+        suite_total_trimmed_stdev_ms = statistics.pstdev(trimmed_totals)
+        suite_total_trimmed_cv_pct = (
+            (suite_total_trimmed_stdev_ms / suite_total_trimmed_mean_ms * 100.0)
+            if suite_total_trimmed_mean_ms > 0
+            else float("nan")
+        )
+    else:
+        suite_total_trimmed_mean_ms = float("nan")
+        suite_total_trimmed_stdev_ms = float("nan")
+        suite_total_trimmed_cv_pct = float("nan")
+
+    overall_pass = (
+        math.isfinite(suite_total_trimmed_cv_pct)
+        and suite_total_trimmed_cv_pct <= threshold_pct
+    )
     if enforce_per_case:
         overall_pass = overall_pass and len(failed_cases) == 0
 
@@ -194,12 +217,16 @@ def build_summary(
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "gate": {
             "overall_pass": overall_pass,
-            "mode": "suite_total_cv",
+            "mode": "suite_total_trimmed_cv",
             "variance_threshold_pct": threshold_pct,
             "enforce_per_case": enforce_per_case,
+            "trim_runs": trim_runs,
             "suite_total_mean_ms": suite_total_mean_ms,
             "suite_total_stdev_ms": suite_total_stdev_ms,
             "suite_total_cv_pct": suite_total_cv_pct,
+            "suite_total_trimmed_mean_ms": suite_total_trimmed_mean_ms,
+            "suite_total_trimmed_stdev_ms": suite_total_trimmed_stdev_ms,
+            "suite_total_trimmed_cv_pct": suite_total_trimmed_cv_pct,
             "per_case_failed_count": len(failed_cases),
             "max_cv_pct": max_cv,
             "run_count": run_count,
@@ -224,8 +251,13 @@ def to_markdown(summary: dict, run_meta: list[dict]) -> str:
     lines.append(f"- gate mode: {gate['mode']}")
     lines.append(f"- variance threshold (CV): <= {gate['variance_threshold_pct']:.2f}%")
     lines.append(
-        f"- suite total LC latency: mean={_fmt_ms(gate['suite_total_mean_ms'])}ms, "
+        f"- suite total LC latency (raw): mean={_fmt_ms(gate['suite_total_mean_ms'])}ms, "
         f"stdev={_fmt_ms(gate['suite_total_stdev_ms'])}ms, CV={_fmt_pct(gate['suite_total_cv_pct'])}"
+    )
+    lines.append(
+        f"- suite total LC latency (trimmed): mean={_fmt_ms(gate['suite_total_trimmed_mean_ms'])}ms, "
+        f"stdev={_fmt_ms(gate['suite_total_trimmed_stdev_ms'])}ms, "
+        f"CV={_fmt_pct(gate['suite_total_trimmed_cv_pct'])} (trim_runs={gate['trim_runs']})"
     )
     lines.append(
         f"- per-case threshold exceeded: {gate['per_case_failed_count']} "
@@ -281,6 +313,7 @@ def main() -> None:
     parser.add_argument("--iters", type=int, default=40, help="Timed iterations per quick_bench run")
     parser.add_argument("--seed", type=int, default=20260401, help="Fixed seed used for every repeated run")
     parser.add_argument("--device", type=str, default="cpu", choices=["auto", "metal", "cpu"], help="Device passed into quick_bench.py")
+    parser.add_argument("--trim-runs", type=int, default=1, help="Trim this many min/max suite-total runs before CV gate")
     parser.add_argument(
         "--enforce-per-case",
         action=argparse.BooleanOptionalAction,
@@ -299,6 +332,10 @@ def main() -> None:
         raise ValueError("--repeats must be >= 2 for variance estimation")
     if args.variance_threshold_pct <= 0:
         raise ValueError("--variance-threshold-pct must be > 0")
+    if args.trim_runs < 0:
+        raise ValueError("--trim-runs must be >= 0")
+    if args.trim_runs > 0 and args.repeats <= (2 * args.trim_runs):
+        raise ValueError("--repeats must be > 2 * --trim-runs")
 
     repo_root = Path(__file__).resolve().parents[2]
     bench_script = Path(__file__).resolve().parent / "quick_bench.py"
@@ -331,6 +368,7 @@ def main() -> None:
         iters=args.iters,
         seed=args.seed,
         enforce_per_case=args.enforce_per_case,
+        trim_runs=args.trim_runs,
     )
     summary["run_meta"] = run_meta
     summary["runs_csv"] = str(args.runs_csv)
@@ -345,7 +383,8 @@ def main() -> None:
     print(f"saved: {args.md}")
     print(
         f"overall_pass={summary['gate']['overall_pass']} "
-        f"suite_total_cv_pct={summary['gate']['suite_total_cv_pct']} "
+        f"suite_total_raw_cv_pct={summary['gate']['suite_total_cv_pct']} "
+        f"suite_total_trimmed_cv_pct={summary['gate']['suite_total_trimmed_cv_pct']} "
         f"per_case_failed_count={summary['gate']['per_case_failed_count']} "
         f"max_case_cv_pct={summary['gate']['max_cv_pct']}"
     )

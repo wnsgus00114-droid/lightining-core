@@ -1,6 +1,6 @@
 # Lightning Core Roadmap
 
-Version context: v0.1.11 (2026-04-01)
+Version context: v0.1.12 (2026-04-01)
 
 ## 1) North Star
 
@@ -20,7 +20,7 @@ Lightning Core started as a macOS Apple-Silicon performance runtime. The long-te
 - Keep API ergonomics improvements performance-safe by default.
 - Keep deprecation policy explicit; no silent API behavior changes.
 
-## 3) Current Baseline (v0.1.11)
+## 3) Current Baseline (v0.1.12)
 
 - Public package on PyPI/TestPyPI.
 - C++ core + Python bindings for runtime/tensor/ops/attention/integrated APIs.
@@ -342,9 +342,9 @@ Progress update history is auto-generated from:
 
 <!-- AUTO-ROADMAP-HISTORY:END -->
 
-## 11) Release-Train Detail (v0.1.11 -> v1.0)
+## 11) Release-Train Detail (v0.1.12 -> v1.0)
 
-## 11.1 2026 Q2 (v0.1.11 ~ v0.2.0): Runtime Contracts
+## 11.1 2026 Q2 (v0.1.12 ~ v0.2.0): Runtime Contracts
 
 Planned scope:
 

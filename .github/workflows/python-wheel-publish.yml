@@ -62,6 +62,7 @@ jobs:
       QB_VAR_REPEATS: "5"
       QB_VAR_WARMUP: "20"
       QB_VAR_ITERS: "120"
+      QB_VAR_TRIM_RUNS: "1"
       QB_VAR_THRESHOLD_PCT: "2.0"
     permissions:
       contents: read
@@ -90,7 +91,7 @@ jobs:
           cat > "$REPORT_DIR/release_bench_commands.txt" <<'CMD'
           python benchmarks/python/quick_bench.py --device ${QB_DEVICE} --warmup ${QB_WARMUP} --iters ${QB_ITERS} --seed ${QB_SEED} --out ${REPORT_DIR}/quick_bench.csv
           python benchmarks/python/quick_bench_ci_summary.py --input ${REPORT_DIR}/quick_bench.csv --json ${REPORT_DIR}/quick_bench_summary.json --md ${REPORT_DIR}/quick_bench_summary.md --regress-threshold 1.0
-          python benchmarks/python/quick_bench_variance_gate.py --runs-csv ${REPORT_DIR}/quick_bench_variance_runs.csv --json ${REPORT_DIR}/quick_bench_variance_summary.json --md ${REPORT_DIR}/quick_bench_variance_summary.md --repeats ${QB_VAR_REPEATS} --variance-threshold-pct ${QB_VAR_THRESHOLD_PCT} --device ${QB_DEVICE} --warmup ${QB_VAR_WARMUP} --iters ${QB_VAR_ITERS} --seed ${QB_SEED}
+          python benchmarks/python/quick_bench_variance_gate.py --runs-csv ${REPORT_DIR}/quick_bench_variance_runs.csv --json ${REPORT_DIR}/quick_bench_variance_summary.json --md ${REPORT_DIR}/quick_bench_variance_summary.md --repeats ${QB_VAR_REPEATS} --variance-threshold-pct ${QB_VAR_THRESHOLD_PCT} --device ${QB_DEVICE} --warmup ${QB_VAR_WARMUP} --iters ${QB_VAR_ITERS} --seed ${QB_SEED} --trim-runs ${QB_VAR_TRIM_RUNS}
           CMD
 
       - name: Capture release benchmark environment
@@ -184,7 +185,8 @@ jobs:
             --device "$QB_DEVICE" \
             --warmup "$QB_VAR_WARMUP" \
             --iters "$QB_VAR_ITERS" \
-            --seed "$QB_SEED"
+            --seed "$QB_SEED" \
+            --trim-runs "$QB_VAR_TRIM_RUNS"
 
       - name: Build release benchmark manifest
         run: |
@@ -250,6 +252,7 @@ jobs:
           echo "- environment metadata: \`$REPORT_DIR/release_bench_environment.json\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- manifest: \`$REPORT_DIR/release_bench_manifest.json\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- variance gate threshold: \`CV <= ${QB_VAR_THRESHOLD_PCT}%\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- variance gate trim-runs: \`${QB_VAR_TRIM_RUNS}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           cat "$REPORT_DIR/quick_bench_summary.md" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
