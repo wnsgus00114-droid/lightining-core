@@ -54,6 +54,15 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: macos-14
     timeout-minutes: 45
+    env:
+      QB_DEVICE: cpu
+      QB_WARMUP: "10"
+      QB_ITERS: "40"
+      QB_SEED: "20260401"
+      QB_VAR_REPEATS: "5"
+      QB_VAR_WARMUP: "20"
+      QB_VAR_ITERS: "120"
+      QB_VAR_THRESHOLD_PCT: "2.0"
     permissions:
       contents: read
 
@@ -79,8 +88,9 @@ jobs:
           echo "REPORT_DIR=$REPORT_DIR" >> "$GITHUB_ENV"
 
           cat > "$REPORT_DIR/release_bench_commands.txt" <<'CMD'
-          python benchmarks/python/quick_bench.py --device cpu --warmup 10 --iters 40 --out ${REPORT_DIR}/quick_bench.csv
+          python benchmarks/python/quick_bench.py --device ${QB_DEVICE} --warmup ${QB_WARMUP} --iters ${QB_ITERS} --seed ${QB_SEED} --out ${REPORT_DIR}/quick_bench.csv
           python benchmarks/python/quick_bench_ci_summary.py --input ${REPORT_DIR}/quick_bench.csv --json ${REPORT_DIR}/quick_bench_summary.json --md ${REPORT_DIR}/quick_bench_summary.md --regress-threshold 1.0
+          python benchmarks/python/quick_bench_variance_gate.py --runs-csv ${REPORT_DIR}/quick_bench_variance_runs.csv --json ${REPORT_DIR}/quick_bench_variance_summary.json --md ${REPORT_DIR}/quick_bench_variance_summary.md --repeats ${QB_VAR_REPEATS} --variance-threshold-pct ${QB_VAR_THRESHOLD_PCT} --device ${QB_DEVICE} --warmup ${QB_VAR_WARMUP} --iters ${QB_VAR_ITERS} --seed ${QB_SEED}
           CMD
 
       - name: Capture release benchmark environment
@@ -147,9 +157,10 @@ jobs:
       - name: Run release quick benchmark
         run: |
           python benchmarks/python/quick_bench.py \
-            --device cpu \
-            --warmup 10 \
-            --iters 40 \
+            --device "$QB_DEVICE" \
+            --warmup "$QB_WARMUP" \
+            --iters "$QB_ITERS" \
+            --seed "$QB_SEED" \
             --out "$REPORT_DIR/quick_bench.csv" \
             > "$REPORT_DIR/quick_bench.log"
           cat "$REPORT_DIR/quick_bench.log"
@@ -161,6 +172,19 @@ jobs:
             --json "$REPORT_DIR/quick_bench_summary.json" \
             --md "$REPORT_DIR/quick_bench_summary.md" \
             --regress-threshold 1.0
+
+      - name: Run release quick benchmark variance gate
+        run: |
+          python benchmarks/python/quick_bench_variance_gate.py \
+            --runs-csv "$REPORT_DIR/quick_bench_variance_runs.csv" \
+            --json "$REPORT_DIR/quick_bench_variance_summary.json" \
+            --md "$REPORT_DIR/quick_bench_variance_summary.md" \
+            --repeats "$QB_VAR_REPEATS" \
+            --variance-threshold-pct "$QB_VAR_THRESHOLD_PCT" \
+            --device "$QB_DEVICE" \
+            --warmup "$QB_VAR_WARMUP" \
+            --iters "$QB_VAR_ITERS" \
+            --seed "$QB_SEED"
 
       - name: Build release benchmark manifest
         run: |
@@ -176,22 +200,32 @@ jobs:
               "quick_bench.log",
               "quick_bench_summary.json",
               "quick_bench_summary.md",
+              "quick_bench_variance_runs.csv",
+              "quick_bench_variance_summary.json",
+              "quick_bench_variance_summary.md",
               "release_bench_environment.json",
               "release_bench_commands.txt",
           ]
           files = []
-          for name in names:
-              p = report_dir / name
+          def _append_file(p: Path):
               h = hashlib.sha256(p.read_bytes()).hexdigest() if p.exists() else ""
               files.append(
                   {
-                      "name": name,
+                      "name": p.name,
                       "path": str(p),
                       "exists": p.exists(),
                       "size_bytes": p.stat().st_size if p.exists() else 0,
                       "sha256": h,
                   }
               )
+
+          for name in names:
+              p = report_dir / name
+              _append_file(p)
+          for p in sorted(report_dir.glob("quick_bench_run_*.csv")):
+              _append_file(p)
+          for p in sorted(report_dir.glob("quick_bench_run_*.log")):
+              _append_file(p)
           manifest = {
               "release_tag": os.environ.get("GITHUB_REF_NAME", ""),
               "git_sha": os.environ.get("GITHUB_SHA", ""),
@@ -215,8 +249,11 @@ jobs:
           echo "- benchmark command metadata: \`$REPORT_DIR/release_bench_commands.txt\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- environment metadata: \`$REPORT_DIR/release_bench_environment.json\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- manifest: \`$REPORT_DIR/release_bench_manifest.json\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- variance gate threshold: \`CV <= ${QB_VAR_THRESHOLD_PCT}%\`" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           cat "$REPORT_DIR/quick_bench_summary.md" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          cat "$REPORT_DIR/quick_bench_variance_summary.md" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload release benchmark evidence
         uses: actions/upload-artifact@v4
@@ -229,6 +266,11 @@ jobs:
             ${{ env.REPORT_DIR }}/quick_bench.log
             ${{ env.REPORT_DIR }}/quick_bench_summary.json
             ${{ env.REPORT_DIR }}/quick_bench_summary.md
+            ${{ env.REPORT_DIR }}/quick_bench_variance_runs.csv
+            ${{ env.REPORT_DIR }}/quick_bench_variance_summary.json
+            ${{ env.REPORT_DIR }}/quick_bench_variance_summary.md
+            ${{ env.REPORT_DIR }}/quick_bench_run_*.csv
+            ${{ env.REPORT_DIR }}/quick_bench_run_*.log
             ${{ env.REPORT_DIR }}/release_bench_environment.json
             ${{ env.REPORT_DIR }}/release_bench_commands.txt
             ${{ env.REPORT_DIR }}/release_bench_manifest.json

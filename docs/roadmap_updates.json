@@ -36,6 +36,15 @@
     "source": "d486d05"
   },
   {
+    "id": "2026-04-01-release-bumped-to-v0-1-11-with-release-benchmark-stability-gate-suite-total-cv-2-and-updated-release-baseline-docs",
+    "date": "2026-04-01",
+    "milestone": "M-A",
+    "area": "release",
+    "title": "Bumped to v0.1.11 with release benchmark stability gate (suite-total CV<=2%) and updated release baseline/docs.",
+    "status": "completed",
+    "source": ""
+  },
+  {
     "id": "2026-04-01-release-bumped-to-v0-1-10-after-removing-workspace-level-duplicate-helper-file-and-verifying-package-only-import-path",
     "date": "2026-04-01",
     "milestone": "M-A",
@@ -59,6 +68,15 @@
     "milestone": "M-A",
     "area": "ci",
     "title": "Added release-tag benchmark gate with standardized evidence bundle (csv/json/summary/command/environment/manifest) and PyPI publish dependency.",
+    "status": "completed",
+    "source": ""
+  },
+  {
+    "id": "2026-04-01-ci-added-release-benchmark-stability-gate-with-fixed-seed-repeated-quick-bench-runs-and-cv-2-enforcement",
+    "date": "2026-04-01",
+    "milestone": "M-A",
+    "area": "ci",
+    "title": "Added release benchmark stability gate with fixed-seed repeated quick-bench runs and CV<=2% enforcement.",
     "status": "completed",
     "source": ""
   },

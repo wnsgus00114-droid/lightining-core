@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import random
 import time
 from pathlib import Path
 from statistics import median
@@ -162,6 +163,7 @@ def main() -> None:
     p = argparse.ArgumentParser(description="Lightning Core quick benchmark")
     p.add_argument("--warmup", type=int, default=40)
     p.add_argument("--iters", type=int, default=200)
+    p.add_argument("--seed", type=int, default=20260401)
     p.add_argument("--out", type=Path, default=Path("benchmark_results/quick_bench.csv"))
     p.add_argument(
         "--device",
@@ -171,6 +173,14 @@ def main() -> None:
         help="LC execution device. 'auto' picks metal when backend reports metal, otherwise cpu.",
     )
     args = p.parse_args()
+
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    if torch is not None:
+        try:
+            torch.manual_seed(args.seed)
+        except Exception:
+            pass
 
     if args.device == "auto":
         lc_device = "metal" if lc.backend_name().lower() == "metal" else "cpu"
@@ -184,7 +194,10 @@ def main() -> None:
 
     save_csv(args.out, rows)
 
-    print(f"backend={lc.backend_name()} device={lc_device} torch_mps_available={_torch_mps_available()}")
+    print(
+        f"backend={lc.backend_name()} device={lc_device} torch_mps_available={_torch_mps_available()} "
+        f"seed={args.seed} warmup={args.warmup} iters={args.iters}"
+    )
     print("saved:", args.out)
     print("\n=== Quick Bench (median ms) ===")
     for r in rows:

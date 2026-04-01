@@ -1,6 +1,6 @@
 # Lightning Core Roadmap
 
-Version context: v0.1.10 (2026-04-01)
+Version context: v0.1.11 (2026-04-01)
 
 ## 1) North Star
 
@@ -20,7 +20,7 @@ Lightning Core started as a macOS Apple-Silicon performance runtime. The long-te
 - Keep API ergonomics improvements performance-safe by default.
 - Keep deprecation policy explicit; no silent API behavior changes.
 
-## 3) Current Baseline (v0.1.10)
+## 3) Current Baseline (v0.1.11)
 
 - Public package on PyPI/TestPyPI.
 - C++ core + Python bindings for runtime/tensor/ops/attention/integrated APIs.
@@ -252,10 +252,10 @@ Each milestone tracks:
 
 ### Next Execution Queue (2026-04-01 Replan)
 
-1. Backend abstraction split completion (M-A, runtime/api/docs)
+1. [completed] Backend abstraction split completion (M-A, runtime/api/docs)
    - deliverable: explicit compute/memory/sync/profiler interface boundaries and backend adapter wiring.
    - acceptance: public docs/examples updated and parity tests pass without behavior drift.
-2. Benchmark stability gate (M-A, ci/benchmark)
+2. [completed] Benchmark stability gate (M-A, ci/benchmark)
    - deliverable: variance check (`<=2%`) in release-tag benchmark evidence pipeline.
    - acceptance: gate emits pass/fail summary with reproducible seed/workload metadata.
 3. Graph-mode benchmark adoption pass (M-B, graph/benchmark)
@@ -279,7 +279,7 @@ Progress update history is auto-generated from:
 
 ### Progress History (Auto-generated)
 
-- Total tracked updates: `27`
+- Total tracked updates: `29`
 - Source of truth: `docs/roadmap_updates.json`
 - Quick add command:
   `python scripts/generate_roadmap_history.py --add --date YYYY-MM-DD --milestone M-A --area runtime --title "your update"`
@@ -288,7 +288,7 @@ Progress update history is auto-generated from:
 
 | Date | Updates | Milestones | Highlights |
 | --- | --- | --- | --- |
-| 2026-04-01 | 9 | M-A | Moved integrated API helper into package distribution and install path (wheel/editable). / Completed backend interface split contracts across C++/C/Python and added integrated engine selector (lightning/torch/auto). / ... (+7 more) |
+| 2026-04-01 | 11 | M-A | Moved integrated API helper into package distribution and install path (wheel/editable). / Completed backend interface split contracts across C++/C/Python and added integrated engine selector (lightning/torch/auto). / ... (+9 more) |
 | 2026-03-31 | 6 | M-A | Shipped docs site MVP with mkdocs and docs-pages workflow. / Re-tuned tiny one-shot conv CPU crossover default to `CJ_CONV2D_CPU_CROSSOVER_MACS=260000` via threshold sweep. / ... (+4 more) |
 | 2026-03-30 | 9 | M-B, M-A | Added operator registry v1 and minimal Graph IR prototype. / Added graph validation report passes and grouped planner options with sync-boundary/fallback segmentation. / ... (+7 more) |
 | 2026-03-29 | 2 | M-A | Split docs into quickstart/advanced/index and improved package/release guidance. / Added large GEMM auto sweep, tuned policy profiles, and cross-suite summary artifacts. |
@@ -296,15 +296,17 @@ Progress update history is auto-generated from:
 
 **Detailed Timeline**
 
-#### 2026-04-01 (9 updates)
+#### 2026-04-01 (11 updates)
 
 - [completed] [M-A] [python] Moved integrated API helper into package distribution and install path (wheel/editable).
 - [completed] [M-A] [runtime] Completed backend interface split contracts across C++/C/Python and added integrated engine selector (lightning/torch/auto).
 - [completed] [M-A] [release] Bumped to v0.1.9 and updated release baseline/docs.
 - [completed] [M-A] [release] Bumped to v0.1.8 and aligned README roadmap baseline. (`d486d05`)
+- [completed] [M-A] [release] Bumped to v0.1.11 with release benchmark stability gate (suite-total CV<=2%) and updated release baseline/docs.
 - [completed] [M-A] [release] Bumped to v0.1.10 after removing workspace-level duplicate helper file and verifying package-only import path.
 - [completed] [M-A] [docs] Automated README/docs capability and tested-environment matrix generation.
 - [completed] [M-A] [ci] Added release-tag benchmark gate with standardized evidence bundle (csv/json/summary/command/environment/manifest) and PyPI publish dependency.
+- [completed] [M-A] [ci] Added release benchmark stability gate with fixed-seed repeated quick-bench runs and CV<=2% enforcement.
 - [completed] [M-A] [runtime] Added op-dispatch trace metadata (`op`, `requested_device`, `selected_device`, `fallback`) for timeline bottleneck analysis. (`74d31a1`)
 - [completed] [M-A] [python] Added `runtime_trace_timeline` API with sorting/grouping/hotspot extraction. (`c0a56c2`)
 
@@ -340,9 +342,9 @@ Progress update history is auto-generated from:
 
 <!-- AUTO-ROADMAP-HISTORY:END -->
 
-## 11) Release-Train Detail (v0.1.10 -> v1.0)
+## 11) Release-Train Detail (v0.1.11 -> v1.0)
 
-## 11.1 2026 Q2 (v0.1.10 ~ v0.2.0): Runtime Contracts
+## 11.1 2026 Q2 (v0.1.11 ~ v0.2.0): Runtime Contracts
 
 Planned scope:
 
@@ -356,7 +358,8 @@ Quality gates:
 
 - no new public API without docs + example,
 - per-op parity tests across Metal and CPU in CI,
-- benchmark scripts publish CSV/JSON artifacts on every release tag.
+- benchmark scripts publish CSV/JSON artifacts on every release tag,
+- release benchmark gate enforces suite-total LC variance (`CV <= 2%`) on fixed seed/workload repeats and publishes per-case CV diagnostics.
 
 Success metrics:
 
