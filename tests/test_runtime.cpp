@@ -109,27 +109,56 @@ int main() {
   SyncPolicy always_policy;
   always_policy.mode = SyncMode::kAlways;
   always_policy.trace_sync_boundary = true;
-  clearRuntimeTraceEvents();
-  setRuntimeTraceEnabled(true);
-  const Status sync_status = deviceSynchronizeWithPolicy(always_policy);
-  setRuntimeTraceEnabled(false);
-  if (sync_status != Status::kSuccess && sync_status != Status::kNotSupported) {
-    std::cerr << "deviceSynchronizeWithPolicy(always) unexpected status: " << getErrorString(sync_status)
-              << "\n";
-    return 1;
-  }
-  bool saw_apply_sync = false;
-  for (const auto& ev : runtimeTraceEvents()) {
-    if (ev.type == RuntimeTraceEventType::kApplySyncPolicy) {
+  const auto run_sync_policy_case = [](SyncMode mode, bool trace_boundary) -> bool {
+    SyncPolicy policy{};
+    policy.mode = mode;
+    policy.trace_sync_boundary = trace_boundary;
+
+    clearRuntimeTraceEvents();
+    setRuntimeTraceEnabled(true);
+    const Status st = deviceSynchronizeWithPolicy(policy);
+    setRuntimeTraceEnabled(false);
+    if (st != Status::kSuccess && st != Status::kNotSupported) {
+      std::cerr << "deviceSynchronizeWithPolicy unexpected status for mode "
+                << static_cast<int>(mode) << ": " << getErrorString(st) << "\n";
+      return false;
+    }
+    bool saw_apply_sync = false;
+    for (const auto& ev : runtimeTraceEvents()) {
+      if (ev.type != RuntimeTraceEventType::kApplySyncPolicy) {
+        continue;
+      }
       saw_apply_sync = true;
+      if (ev.detail0 != static_cast<int>(mode)) {
+        std::cerr << "apply_sync_policy trace detail0(mode) mismatch: expected="
+                  << static_cast<int>(mode) << " got=" << ev.detail0 << "\n";
+        return false;
+      }
+      const int expected_trace_flag = trace_boundary ? 1 : 0;
+      if (ev.detail1 != expected_trace_flag) {
+        std::cerr << "apply_sync_policy trace detail1(trace_boundary) mismatch: expected="
+                  << expected_trace_flag << " got=" << ev.detail1 << "\n";
+        return false;
+      }
       break;
     }
-  }
-  if (!saw_apply_sync) {
-    std::cerr << "runtime trace missing apply_sync_policy event\n";
+    clearRuntimeTraceEvents();
+    if (!saw_apply_sync) {
+      std::cerr << "runtime trace missing apply_sync_policy event\n";
+      return false;
+    }
+    return true;
+  };
+
+  if (!run_sync_policy_case(always_policy.mode, always_policy.trace_sync_boundary)) {
     return 1;
   }
-  clearRuntimeTraceEvents();
+  if (!run_sync_policy_case(SyncMode::kNever, false)) {
+    return 1;
+  }
+  if (!run_sync_policy_case(SyncMode::kAuto, true)) {
+    return 1;
+  }
 
   SyncPolicy auto_policy;
   auto_policy.mode = SyncMode::kAuto;

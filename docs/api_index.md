@@ -55,4 +55,6 @@ Implementation:
 ## Notes
 
 - This is an index-style page for quick navigation.
-- Generated API reference (Sphinx/Breathe style) is planned in roadmap and not yet the default documentation path.
+- Generated API reference pages are available in docs:
+  - [Python API (generated)](reference/python_api_generated.md)
+  - [C/C++ API (generated)](reference/cpp_api_generated.md)

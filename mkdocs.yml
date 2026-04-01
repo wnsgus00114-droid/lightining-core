@@ -17,5 +17,8 @@ nav:
   - Quickstart: quickstart.md
   - Advanced: advanced.md
   - Capability Matrix: capability_matrix.md
-  - API Index: api_index.md
+  - API:
+      - API Index: api_index.md
+      - Python API (Generated): reference/python_api_generated.md
+      - C/C++ API (Generated): reference/cpp_api_generated.md
   - Contributor Guide: contributor.md

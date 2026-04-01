@@ -23,6 +23,8 @@ jobs:
         run: |
           python3 scripts/generate_capability_docs.py --check
           python3 scripts/generate_roadmap_history.py --check
+          python3 scripts/generate_api_reference_docs.py --check
+          python3 scripts/check_docs_links.py README.md docs
 
       - name: Configure (tests only)
         run: |

@@ -13,7 +13,7 @@
 
 # 3. One-line Summary
 Lightning Core is a macOS-first, Metal-backed runtime that provides low-level control (resident IO, policy routing, fused paths) with easy Python APIs.
-Current public release: **v0.1.13** (2026-04-01).
+Current public release: **v0.1.14** (2026-04-01).
 
 # 4. Abstract
 Lightning Core targets high-iteration experimentation on Apple Silicon by combining:
@@ -457,6 +457,8 @@ Typical optimization pattern:
 More examples:
 - [docs/quickstart.md](docs/quickstart.md)
 - [docs/advanced.md](docs/advanced.md)
+- [docs/reference/python_api_generated.md](docs/reference/python_api_generated.md) (auto-generated pybind API reference)
+- [docs/reference/cpp_api_generated.md](docs/reference/cpp_api_generated.md) (auto-generated C/C++ API reference)
 - Docs site (GitHub Pages, after repository Pages enablement): <https://wnsgus00114-droid.github.io/lightning-core/>
 - `examples/` and benchmark source files under `benchmarks/`
 
@@ -491,19 +493,27 @@ Lightning Core benchmark docs are now **Python-first** for reproducibility and c
 
 Primary public benchmark path:
 - `benchmarks/python/quick_bench.py` (quick public comparison)
+- `benchmarks/python/graph_eager_ab_bench.py` (graph/eager A/B + host-dispatch/fallback metrics)
 - `benchmarks/large_gemm_auto_sweep.py` (large GEMM policy sweep)
 - `benchmarks/generate_cross_suite_summary.py` (cross-suite summary report)
 
-All three Python scripts are included below as **full code blocks** so users can copy-paste directly from README without opening separate files.
+Core Python benchmark scripts are included below as **full code blocks** so users can copy-paste directly from README without opening separate files.
+For graph/eager A/B pipeline metrics, run `benchmarks/python/graph_eager_ab_bench.py` directly from the repository.
 
 Optional:
 - native C++ binaries in `benchmarks/` are still available for low-level kernel validation.
+
+Engine split rule for fair reporting:
+- pure-LC path: `lightning_core` runtime path or `lightning_core_integrated_api.set_backend("lightning")`
+- interop path: `lightning_core_integrated_api.set_backend("torch")`
+- benchmark tables/reports should keep these paths separated and never mix them into one aggregate speedup.
 
 # 28. Benchmark Directory Structure
 ```text
 benchmarks/
   python/
     quick_bench.py
+    graph_eager_ab_bench.py
   large_gemm_auto_sweep.py
   generate_cross_suite_summary.py
   # optional native benchmarks (low-level):
@@ -528,8 +538,29 @@ Python benchmarks (recommended):
 
 ```bash
 python benchmarks/python/quick_bench.py --warmup 40 --iters 200 --out benchmark_results/quick_bench.csv
+python benchmarks/python/graph_eager_ab_bench.py --device auto --warmup 6 --iters 24 --trace-iters 8
 python benchmarks/large_gemm_auto_sweep.py
 python benchmarks/generate_cross_suite_summary.py
+```
+
+Integrated API engine A/B (same API surface, different engine backend):
+
+```bash
+python - <<'PY'
+import numpy as np
+import lightning_core_integrated_api as lc_api
+
+x = np.random.rand(128, 256).astype(np.float32)
+w = np.random.rand(256, 64).astype(np.float32)
+
+lc_api.set_backend("lightning")  # pure-LC path
+y_lc = lc_api.lightning_matmul(x, w, device="metal")
+
+lc_api.set_backend("torch")      # interop path (Torch backend)
+y_torch = lc_api.lightning_matmul(x, w, device="metal")
+
+print("shapes:", y_lc.shape, y_torch.shape)
+PY
 ```
 
 Workspace Python benchmark harness (same environment used for README snapshot):
@@ -4698,6 +4729,9 @@ Typical outputs:
 - `benchmark_results/pipeline_bench.csv`
 - `benchmark_results/ml_all_bench.csv`
 - `benchmark_results/large_gemm_auto_sweep.csv`
+- `benchmarks/reports/ci/graph_eager_ab.csv`
+- `benchmarks/reports/ci/graph_eager_ab.json`
+- `benchmarks/reports/ci/graph_eager_ab.md`
 - corresponding `.json` files for each suite
 
 Native build outputs can also appear under `build/benchmarks/*.csv`.
@@ -4708,6 +4742,9 @@ Common columns:
 - `torch_mps_ms`: Torch MPS latency
 - `integrated_api_ms`: higher-level integrated API latency
 - `ours_best_vs_mps`: best(LC, integrated) against Torch MPS
+- `graph_over_eager`: graph path latency over eager path (`< 1.0` means graph faster)
+- `dispatch_delta_pct`: host-dispatch event delta of graph vs eager from runtime trace (`group_by="op_path"`)
+- `fallback_delta_per_iter`: fallback-dispatch delta per iteration of graph vs eager
   - `> 1.0`: ours is faster
   - `< 1.0`: Torch MPS is faster
 
@@ -4741,6 +4778,7 @@ Then checked by scanning `ours_best_vs_mps` from:
 - Thermal state can affect absolute numbers; compare relative metrics and rerun if needed.
 - For fair comparison, synchronize MPS paths and separate one-shot vs resident scenarios.
 - For API overhead, compare `lightning_core_ms` vs `integrated_api_ms` directly (they answer different questions than kernel-vs-MPS).
+- Graph/eager A/B benchmarks include runtime trace-derived host dispatch/fallback counters to identify connectivity-path bottlenecks.
 
 # 34. Repository Structure
 ```text
@@ -4756,14 +4794,15 @@ docs/                           # quickstart/advanced/contributor docs
 ```
 
 # 35. Roadmap
-Roadmap baseline is now aligned to **v0.1.13** and tracked in detail in [ROADMAP.md](ROADMAP.md).
+Roadmap baseline is now aligned to **v0.1.14** and tracked in detail in [ROADMAP.md](ROADMAP.md).
 
 Immediate replan (2026-04-01, roadmap-aligned):
-1. Complete backend abstraction split (compute/memory/sync/profiler) and lock public docs/examples.
-2. Add benchmark stability gate (`<=2% variance`) to release-tag benchmark evidence pipeline.
-3. Expand graph/eager A/B benchmark reporting with host-dispatch delta and fallback counters.
-4. Publish generated C++/Python API references in docs workflow.
-5. Expand parity/contract tests for graph path + sync-policy scenarios.
+1. [completed] Complete backend abstraction split (compute/memory/sync/profiler) and lock public docs/examples.
+2. [completed] Add benchmark stability gate (`<=2% variance`) to release-tag benchmark evidence pipeline.
+3. [completed] Expand graph/eager A/B benchmark reporting with host-dispatch delta and fallback counters.
+4. [completed] Publish generated C++/Python API references in docs workflow.
+5. [completed] Expand parity/contract tests for graph path + sync-policy scenarios.
+6. [completed] Stabilize macOS-first generic engine mode (`lightning`/`torch`/`auto`) and keep pure-LC vs interop benchmark evidence separated.
 
 Roadmap progress history is auto-generated from:
 - `docs/roadmap_updates.json`
@@ -4772,7 +4811,7 @@ Roadmap progress history is auto-generated from:
 
 ### Progress History (Auto-generated)
 
-- Total tracked updates: `29`
+- Total tracked updates: `34`
 - Source of truth: `docs/roadmap_updates.json`
 - Quick add command:
   `python scripts/generate_roadmap_history.py --add --date YYYY-MM-DD --milestone M-A --area runtime --title "your update"`
@@ -4781,7 +4820,7 @@ Roadmap progress history is auto-generated from:
 
 | Date | Updates | Milestones | Highlights |
 | --- | --- | --- | --- |
-| 2026-04-01 | 11 | M-A | Moved integrated API helper into package distribution and install path (wheel/editable). / Completed backend interface split contracts across C++/C/Python and added integrated engine selector (lightning/torch/auto). / ... (+9 more) |
+| 2026-04-01 | 16 | M-B, M-A | Completed generated API reference pipeline with auto-built Python/C++ reference pages and docs link-check gate in CI/docs workflows. / Added graph/eager A/B benchmark script with runtime host-dispatch delta and fallback counters, plus CI artifact publishing. / ... (+14 more) |
 | 2026-03-31 | 6 | M-A | Shipped docs site MVP with mkdocs and docs-pages workflow. / Re-tuned tiny one-shot conv CPU crossover default to `CJ_CONV2D_CPU_CROSSOVER_MACS=260000` via threshold sweep. / ... (+4 more) |
 | 2026-03-30 | 9 | M-B, M-A | Added operator registry v1 and minimal Graph IR prototype. / Added graph validation report passes and grouped planner options with sync-boundary/fallback segmentation. / ... (+7 more) |
 | 2026-03-29 | 2 | M-A | Split docs into quickstart/advanced/index and improved package/release guidance. / Added large GEMM auto sweep, tuned policy profiles, and cross-suite summary artifacts. |
@@ -4789,14 +4828,19 @@ Roadmap progress history is auto-generated from:
 
 **Detailed Timeline**
 
-#### 2026-04-01 (11 updates)
+#### 2026-04-01 (16 updates)
 
+- [completed] [M-B] [docs] Completed generated API reference pipeline with auto-built Python/C++ reference pages and docs link-check gate in CI/docs workflows.
+- [completed] [M-B] [benchmark] Added graph/eager A/B benchmark script with runtime host-dispatch delta and fallback counters, plus CI artifact publishing.
 - [completed] [M-A] [python] Moved integrated API helper into package distribution and install path (wheel/editable).
+- [completed] [M-A] [test] Expanded contract coverage with graph planned-path Metal/CPU parity checks and runtime sync-policy trace-detail assertions.
+- [completed] [M-A] [python] Completed macOS-first generic engine mode + Torch bridge milestone with documented pure-LC vs interop benchmark separation.
 - [completed] [M-A] [runtime] Completed backend interface split contracts across C++/C/Python and added integrated engine selector (lightning/torch/auto).
 - [completed] [M-A] [release] Bumped to v0.1.9 and updated release baseline/docs.
 - [completed] [M-A] [release] Bumped to v0.1.8 and aligned README roadmap baseline. (`d486d05`)
 - [completed] [M-A] [release] Bumped to v0.1.11 with release benchmark stability gate (suite-total CV<=2%) and updated release baseline/docs.
 - [completed] [M-A] [release] Bumped to v0.1.10 after removing workspace-level duplicate helper file and verifying package-only import path.
+- [completed] [M-A] [release] Bumped release baseline to v0.1.14 after completing roadmap queue items 1-6.
 - [completed] [M-A] [docs] Automated README/docs capability and tested-environment matrix generation.
 - [completed] [M-A] [ci] Added release-tag benchmark gate with standardized evidence bundle (csv/json/summary/command/environment/manifest) and PyPI publish dependency.
 - [completed] [M-A] [ci] Added release benchmark stability gate with fixed-seed repeated quick-bench runs and CV<=2% enforcement.
@@ -4835,7 +4879,7 @@ Roadmap progress history is auto-generated from:
 
 <!-- AUTO-ROADMAP-HISTORY:END -->
 
-Phase A (2026 Q2, `v0.1.13`-`v0.2.0`): Runtime Core Hardening
+Phase A (2026 Q2, `v0.1.14`-`v0.2.0`): Runtime Core Hardening
 - Finalize backend contracts (compute/memory/sync/profiler split).
 - Stabilize integrated engine selector (`lightning` / `torch` / `auto`) for macOS-first workflows.
 - Lock tensor lifetime and metadata rules across Metal/CPU parity tests.
@@ -4907,4 +4951,4 @@ Community feedback channels we actively monitor:
 
 Lightning Core is stable enough for experimentation and benchmarking, while APIs and internals continue to evolve quickly.
 Visibility update: repository topics and benchmark discoverability documentation are actively maintained.
-Current release train: **v0.1.13**.
+Current release train: **v0.1.14**.

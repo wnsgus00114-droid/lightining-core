@@ -52,6 +52,22 @@ Helper script:
 
 The script checks target repo availability with git ls-remote and safely skips when rename is not ready.
 
+## Docs Generation and Link Gate
+
+The docs workflow now regenerates API references and validates markdown links before `mkdocs build`.
+
+```bash
+python3 scripts/generate_capability_docs.py
+python3 scripts/generate_roadmap_history.py
+python3 scripts/generate_api_reference_docs.py
+python3 scripts/check_docs_links.py README.md docs
+```
+
+Generated API reference outputs:
+
+- [docs/reference/python_api_generated.md](reference/python_api_generated.md)
+- [docs/reference/cpp_api_generated.md](reference/cpp_api_generated.md)
+
 ## Benchmark Suite
 
 Run all benchmark binaries:
@@ -66,6 +82,33 @@ Run all benchmark binaries:
 ./build/benchmarks/bench_cnn_dnn
 ./build/benchmarks/bench_vlm
 ```
+
+Graph/eager A/B benchmark (Python, with host-dispatch/fallback counters):
+
+```bash
+python benchmarks/python/graph_eager_ab_bench.py \
+  --device auto \
+  --warmup 6 \
+  --iters 24 \
+  --trace-iters 8 \
+  --csv benchmarks/reports/ci/graph_eager_ab.csv \
+  --json benchmarks/reports/ci/graph_eager_ab.json \
+  --md benchmarks/reports/ci/graph_eager_ab.md
+```
+
+Engine split benchmark policy (pure-LC vs interop):
+
+```python
+import lightning_core_integrated_api as lc_api
+
+lc_api.set_backend("lightning")  # pure-LC
+# ... run integrated API benchmark rows for LC path
+
+lc_api.set_backend("torch")      # interop
+# ... run the same API rows for Torch bridge path
+```
+
+When publishing results, keep the two paths in separate sections/tables.
 
 ### Attention benchmark parameters
 

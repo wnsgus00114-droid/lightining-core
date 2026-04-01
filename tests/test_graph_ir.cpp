@@ -173,10 +173,45 @@ int main() {
     return 1;
   }
 
+  // graph parity baseline: explicit CPU planning path must match expected output.
+  lightning_core::graph::GraphPlannerOptions cpu_exec_options = exec_options;
+  cpu_exec_options.preferred_device = Device::kCPU;
+  std::unordered_map<std::size_t, std::vector<float>> exec_values_cpu;
+  if (exec_graph.executeF32(cpu_exec_options, exec_feeds, &exec_values_cpu, nullptr, nullptr) != Status::kSuccess) {
+    std::cerr << "executeF32(CPU planned) should succeed for matmul->vector_add graph\n";
+    return 1;
+  }
+  const auto cpu_out_it = exec_values_cpu.find(exec_out);
+  if (cpu_out_it == exec_values_cpu.end() || cpu_out_it->second.size() != expected_out.size()) {
+    std::cerr << "executeF32(CPU planned) output missing or size mismatch\n";
+    return 1;
+  }
+  for (std::size_t i = 0; i < expected_out.size(); ++i) {
+    const float diff = cpu_out_it->second[i] - expected_out[i];
+    if (diff > 1e-4f || diff < -1e-4f) {
+      std::cerr << "executeF32(CPU planned) output mismatch at index " << i << "\n";
+      return 1;
+    }
+  }
+
   const lightning_core::runtime::BackendCapabilities metal_caps =
       lightning_core::runtime::backendCapabilities(Device::kMetal);
   const bool metal_compute_built = metal_caps.compute_surface;
   const bool metal_exec_available = metal_caps.compute_surface && metal_caps.available;
+  if (metal_exec_available) {
+    // graph parity: preferred-metal plan vs preferred-cpu plan should match numerically.
+    if (out_it->second.size() != cpu_out_it->second.size()) {
+      std::cerr << "graph parity size mismatch between metal/cpu planned runs\n";
+      return 1;
+    }
+    for (std::size_t i = 0; i < out_it->second.size(); ++i) {
+      const float diff = out_it->second[i] - cpu_out_it->second[i];
+      if (diff > 1e-3f || diff < -1e-3f) {
+        std::cerr << "graph parity mismatch (metal vs cpu planned) at index " << i << "\n";
+        return 1;
+      }
+    }
+  }
   if (metal_exec_available) {
     // attention dispatch validation: graph output must match direct attentionForward call.
     GraphIR attn_graph;

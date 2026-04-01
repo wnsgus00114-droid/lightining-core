@@ -1,6 +1,6 @@
 # Lightning Core Roadmap
 
-Version context: v0.1.13 (2026-04-01)
+Version context: v0.1.14 (2026-04-01)
 
 ## 1) North Star
 
@@ -20,7 +20,7 @@ Lightning Core started as a macOS Apple-Silicon performance runtime. The long-te
 - Keep API ergonomics improvements performance-safe by default.
 - Keep deprecation policy explicit; no silent API behavior changes.
 
-## 3) Current Baseline (v0.1.13)
+## 3) Current Baseline (v0.1.14)
 
 - Public package on PyPI/TestPyPI.
 - C++ core + Python bindings for runtime/tensor/ops/attention/integrated APIs.
@@ -247,8 +247,8 @@ Each milestone tracks:
 - [completed] ship operator registry v1 and minimal graph IR prototype.
 - [completed] add CI-visible benchmark summary artifact for every main push.
 - [completed] add tested environment matrix table to README with concrete device/OS entries.
-- [in-progress] finalize backend abstraction interfaces and docs.
-- [in-progress] harden docs site MVP and expand toward generated API references.
+- [completed] finalize backend abstraction interfaces and docs.
+- [completed] harden docs site MVP and expand toward generated API references.
 
 ### Next Execution Queue (2026-04-01 Replan)
 
@@ -258,16 +258,16 @@ Each milestone tracks:
 2. [completed] Benchmark stability gate (M-A, ci/benchmark)
    - deliverable: variance check (`<=2%`) in release-tag benchmark evidence pipeline.
    - acceptance: gate emits pass/fail summary with reproducible seed/workload metadata.
-3. Graph-mode benchmark adoption pass (M-B, graph/benchmark)
+3. [completed] Graph-mode benchmark adoption pass (M-B, graph/benchmark)
    - deliverable: run graph/eager A/B in shipped pipeline benchmarks and publish host-dispatch delta.
    - acceptance: CSV/JSON include graph metrics and explicit fallback counters.
-4. Generated API reference pipeline (M-A docs + M-B docs)
+4. [completed] Generated API reference pipeline (M-A docs + M-B docs)
    - deliverable: docs site build includes generated C++/Python API reference pages.
    - acceptance: docs workflow publishes reference pages and link checks stay green.
-5. Parity + contract coverage expansion (M-A test/runtime)
+5. [completed] Parity + contract coverage expansion (M-A test/runtime)
    - deliverable: extend Metal/CPU parity to graph path and runtime sync policy scenarios.
    - acceptance: CI contract suite blocks merge on regression in shape/layout/lifetime semantics.
-6. macOS-first generic engine mode + Torch bridge (M-A python/runtime)
+6. [completed] macOS-first generic engine mode + Torch bridge (M-A python/runtime)
    - deliverable: integrated API engine selector (`lightning`/`torch`/`auto`) with documented fallback behavior.
    - acceptance: same API surface runs with both engines and benchmark docs separate pure-LC vs interop paths.
 
@@ -279,7 +279,7 @@ Progress update history is auto-generated from:
 
 ### Progress History (Auto-generated)
 
-- Total tracked updates: `29`
+- Total tracked updates: `34`
 - Source of truth: `docs/roadmap_updates.json`
 - Quick add command:
   `python scripts/generate_roadmap_history.py --add --date YYYY-MM-DD --milestone M-A --area runtime --title "your update"`
@@ -288,7 +288,7 @@ Progress update history is auto-generated from:
 
 | Date | Updates | Milestones | Highlights |
 | --- | --- | --- | --- |
-| 2026-04-01 | 11 | M-A | Moved integrated API helper into package distribution and install path (wheel/editable). / Completed backend interface split contracts across C++/C/Python and added integrated engine selector (lightning/torch/auto). / ... (+9 more) |
+| 2026-04-01 | 16 | M-B, M-A | Completed generated API reference pipeline with auto-built Python/C++ reference pages and docs link-check gate in CI/docs workflows. / Added graph/eager A/B benchmark script with runtime host-dispatch delta and fallback counters, plus CI artifact publishing. / ... (+14 more) |
 | 2026-03-31 | 6 | M-A | Shipped docs site MVP with mkdocs and docs-pages workflow. / Re-tuned tiny one-shot conv CPU crossover default to `CJ_CONV2D_CPU_CROSSOVER_MACS=260000` via threshold sweep. / ... (+4 more) |
 | 2026-03-30 | 9 | M-B, M-A | Added operator registry v1 and minimal Graph IR prototype. / Added graph validation report passes and grouped planner options with sync-boundary/fallback segmentation. / ... (+7 more) |
 | 2026-03-29 | 2 | M-A | Split docs into quickstart/advanced/index and improved package/release guidance. / Added large GEMM auto sweep, tuned policy profiles, and cross-suite summary artifacts. |
@@ -296,14 +296,19 @@ Progress update history is auto-generated from:
 
 **Detailed Timeline**
 
-#### 2026-04-01 (11 updates)
+#### 2026-04-01 (16 updates)
 
+- [completed] [M-B] [docs] Completed generated API reference pipeline with auto-built Python/C++ reference pages and docs link-check gate in CI/docs workflows.
+- [completed] [M-B] [benchmark] Added graph/eager A/B benchmark script with runtime host-dispatch delta and fallback counters, plus CI artifact publishing.
 - [completed] [M-A] [python] Moved integrated API helper into package distribution and install path (wheel/editable).
+- [completed] [M-A] [test] Expanded contract coverage with graph planned-path Metal/CPU parity checks and runtime sync-policy trace-detail assertions.
+- [completed] [M-A] [python] Completed macOS-first generic engine mode + Torch bridge milestone with documented pure-LC vs interop benchmark separation.
 - [completed] [M-A] [runtime] Completed backend interface split contracts across C++/C/Python and added integrated engine selector (lightning/torch/auto).
 - [completed] [M-A] [release] Bumped to v0.1.9 and updated release baseline/docs.
 - [completed] [M-A] [release] Bumped to v0.1.8 and aligned README roadmap baseline. (`d486d05`)
 - [completed] [M-A] [release] Bumped to v0.1.11 with release benchmark stability gate (suite-total CV<=2%) and updated release baseline/docs.
 - [completed] [M-A] [release] Bumped to v0.1.10 after removing workspace-level duplicate helper file and verifying package-only import path.
+- [completed] [M-A] [release] Bumped release baseline to v0.1.14 after completing roadmap queue items 1-6.
 - [completed] [M-A] [docs] Automated README/docs capability and tested-environment matrix generation.
 - [completed] [M-A] [ci] Added release-tag benchmark gate with standardized evidence bundle (csv/json/summary/command/environment/manifest) and PyPI publish dependency.
 - [completed] [M-A] [ci] Added release benchmark stability gate with fixed-seed repeated quick-bench runs and CV<=2% enforcement.
@@ -342,9 +347,9 @@ Progress update history is auto-generated from:
 
 <!-- AUTO-ROADMAP-HISTORY:END -->
 
-## 11) Release-Train Detail (v0.1.13 -> v1.0)
+## 11) Release-Train Detail (v0.1.14 -> v1.0)
 
-## 11.1 2026 Q2 (v0.1.13 ~ v0.2.0): Runtime Contracts
+## 11.1 2026 Q2 (v0.1.14 ~ v0.2.0): Runtime Contracts
 
 Planned scope:
 

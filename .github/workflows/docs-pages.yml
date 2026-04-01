@@ -46,6 +46,11 @@ jobs:
         run: |
           python scripts/generate_capability_docs.py
           python scripts/generate_roadmap_history.py
+          python scripts/generate_api_reference_docs.py
+
+      - name: Check docs links
+        run: |
+          python scripts/check_docs_links.py README.md docs
 
       - name: Build docs
         run: mkdocs build --site-dir site
@@ -68,6 +73,8 @@ jobs:
         run: |
           echo "## Docs Pages Build Summary" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- generated docs blocks: capability + roadmap history + API reference" >> "$GITHUB_STEP_SUMMARY"
+          echo "- docs link check: success" >> "$GITHUB_STEP_SUMMARY"
           echo "- mkdocs build: success" >> "$GITHUB_STEP_SUMMARY"
           echo "- configure-pages outcome: ${{ steps.configure_pages.outcome }}" >> "$GITHUB_STEP_SUMMARY"
           if [ "${{ steps.configure_pages.outcome }}" = "success" ]; then

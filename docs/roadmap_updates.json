@@ -1,10 +1,46 @@
 [
   {
+    "id": "2026-04-01-docs-completed-generated-api-reference-pipeline-with-auto-built-python-c-reference-pages-and-docs-link-check-gate-in-ci-docs-workflows",
+    "date": "2026-04-01",
+    "milestone": "M-B",
+    "area": "docs",
+    "title": "Completed generated API reference pipeline with auto-built Python/C++ reference pages and docs link-check gate in CI/docs workflows.",
+    "status": "completed",
+    "source": ""
+  },
+  {
+    "id": "2026-04-01-benchmark-added-graph-eager-a-b-benchmark-script-with-runtime-host-dispatch-delta-and-fallback-counters-plus-ci-artifact-publishing",
+    "date": "2026-04-01",
+    "milestone": "M-B",
+    "area": "benchmark",
+    "title": "Added graph/eager A/B benchmark script with runtime host-dispatch delta and fallback counters, plus CI artifact publishing.",
+    "status": "completed",
+    "source": ""
+  },
+  {
     "id": "2026-04-01-python-moved-integrated-api-helper-into-package-distribution-and-install-path-wheel-editable",
     "date": "2026-04-01",
     "milestone": "M-A",
     "area": "python",
     "title": "Moved integrated API helper into package distribution and install path (wheel/editable).",
+    "status": "completed",
+    "source": ""
+  },
+  {
+    "id": "2026-04-01-test-expanded-contract-coverage-with-graph-planned-path-metal-cpu-parity-checks-and-runtime-sync-policy-trace-detail-assertions",
+    "date": "2026-04-01",
+    "milestone": "M-A",
+    "area": "test",
+    "title": "Expanded contract coverage with graph planned-path Metal/CPU parity checks and runtime sync-policy trace-detail assertions.",
+    "status": "completed",
+    "source": ""
+  },
+  {
+    "id": "2026-04-01-python-completed-macos-first-generic-engine-mode-torch-bridge-milestone-with-documented-pure-lc-vs-interop-benchmark-separation",
+    "date": "2026-04-01",
+    "milestone": "M-A",
+    "area": "python",
+    "title": "Completed macOS-first generic engine mode + Torch bridge milestone with documented pure-LC vs interop benchmark separation.",
     "status": "completed",
     "source": ""
   },
@@ -50,6 +86,15 @@
     "milestone": "M-A",
     "area": "release",
     "title": "Bumped to v0.1.10 after removing workspace-level duplicate helper file and verifying package-only import path.",
+    "status": "completed",
+    "source": ""
+  },
+  {
+    "id": "2026-04-01-release-bumped-release-baseline-to-v0-1-14-after-completing-roadmap-queue-items-1-6",
+    "date": "2026-04-01",
+    "milestone": "M-A",
+    "area": "release",
+    "title": "Bumped release baseline to v0.1.14 after completing roadmap queue items 1-6.",
     "status": "completed",
     "source": ""
   },

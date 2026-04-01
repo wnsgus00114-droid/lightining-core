@@ -41,7 +41,11 @@ ctest --test-dir build --output-on-failure
 1. Build succeeds with tests/benchmarks/python enabled.
 2. ctest passes.
 3. At least one python import/runtime smoke check succeeds.
-4. README/docs links still resolve.
+4. Generated docs blocks are up-to-date:
+   - `python3 scripts/generate_capability_docs.py --check`
+   - `python3 scripts/generate_roadmap_history.py --check`
+   - `python3 scripts/generate_api_reference_docs.py --check`
+5. README/docs links still resolve: `python3 scripts/check_docs_links.py README.md docs`
 
 ## 6) Documentation policy
 
