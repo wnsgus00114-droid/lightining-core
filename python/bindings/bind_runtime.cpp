@@ -34,6 +34,43 @@ py::dict toBackendCapabilitiesDict(const lc::runtime::BackendCapabilities& caps)
   return out;
 }
 
+py::dict toBackendInterfaceContractDict(const lc::runtime::BackendInterfaceContract& contract) {
+  py::dict out;
+  out["device"] = toString(contract.device);
+  out["capabilities"] = toBackendCapabilitiesDict(contract.capabilities);
+
+  py::dict compute;
+  compute["available"] = contract.compute.available;
+  compute["op_dispatch_trace_surface"] = contract.compute.op_dispatch_trace_surface;
+  compute["driver_tag"] = contract.compute.driver_tag;
+  out["compute"] = compute;
+
+  py::dict memory;
+  memory["available"] = contract.memory.available;
+  memory["allocator_surface"] = contract.memory.allocator_surface;
+  memory["memcpy_surface"] = contract.memory.memcpy_surface;
+  memory["memory_model"] = lc::runtime::memoryModelName(contract.memory.memory_model);
+  memory["driver_tag"] = contract.memory.driver_tag;
+  out["memory"] = memory;
+
+  py::dict sync;
+  sync["available"] = contract.sync.available;
+  sync["sync_policy_surface"] = contract.sync.sync_policy_surface;
+  sync["trace_sync_boundary_surface"] = contract.sync.trace_sync_boundary_surface;
+  sync["driver_tag"] = contract.sync.driver_tag;
+  out["sync"] = sync;
+
+  py::dict profiler;
+  profiler["available"] = contract.profiler.available;
+  profiler["runtime_trace_surface"] = contract.profiler.runtime_trace_surface;
+  profiler["op_dispatch_trace_surface"] = contract.profiler.op_dispatch_trace_surface;
+  profiler["trace_capacity"] = contract.profiler.trace_capacity;
+  profiler["driver_tag"] = contract.profiler.driver_tag;
+  out["profiler"] = profiler;
+
+  return out;
+}
+
 struct TimelineEventRow {
   std::size_t index{0};
   std::string type;
@@ -378,6 +415,13 @@ void bindRuntime(py::module_& m) {
         py::arg("device"));
   m.def("runtime_active_backend_capabilities",
         [] { return toBackendCapabilitiesDict(lc::runtime::activeBackendCapabilities()); });
+  m.def("runtime_backend_interfaces",
+        [](const std::string& device) {
+          return toBackendInterfaceContractDict(lc::runtime::backendInterfaceContract(parseDevice(device)));
+        },
+        py::arg("device"));
+  m.def("runtime_active_backend_interfaces",
+        [] { return toBackendInterfaceContractDict(lc::runtime::activeBackendInterfaceContract()); });
   m.def("runtime_trace_enable", [](bool enabled) { lc::runtime::setRuntimeTraceEnabled(enabled); }, py::arg("enabled"));
   m.def("runtime_trace_enabled", [] { return lc::runtime::isRuntimeTraceEnabled(); });
   m.def("runtime_trace_clear", [] { lc::runtime::clearRuntimeTraceEvents(); });

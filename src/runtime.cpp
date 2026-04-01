@@ -538,6 +538,85 @@ BackendCapabilities activeBackendCapabilities() {
   return backendCapabilities(preferredDeviceFor(WorkloadKind::kInference));
 }
 
+namespace {
+
+const char* computeDriverTag(Device device) {
+  switch (device) {
+    case Device::kCUDA:
+      return "cuda.runtime.dispatch";
+    case Device::kMetal:
+      return "metal.compute.dispatch";
+    case Device::kCPU:
+    default:
+      return "cpu.eager.dispatch";
+  }
+}
+
+const char* memoryDriverTag(Device device) {
+  switch (device) {
+    case Device::kCUDA:
+      return "cuda.memory";
+    case Device::kMetal:
+      return "metal.host_managed_memory";
+    case Device::kCPU:
+    default:
+      return "cpu.host_memory";
+  }
+}
+
+const char* syncDriverTag(Device device) {
+  switch (device) {
+    case Device::kCUDA:
+      return "cuda.device_sync";
+    case Device::kMetal:
+      return "metal.command_sync";
+    case Device::kCPU:
+    default:
+      return "cpu.noop_sync";
+  }
+}
+
+const char* profilerDriverTag() {
+  return "runtime.trace.ring";
+}
+
+}  // namespace
+
+BackendInterfaceContract backendInterfaceContract(Device device) {
+  const BackendCapabilities caps = backendCapabilities(device);
+
+  BackendInterfaceContract contract;
+  contract.device = device;
+  contract.capabilities = caps;
+
+  contract.compute.available = caps.compute_surface;
+  contract.compute.op_dispatch_trace_surface = caps.runtime_trace_surface;
+  contract.compute.driver_tag = computeDriverTag(device);
+
+  contract.memory.available = (device == Device::kCPU) ? true : caps.memory_surface;
+  contract.memory.allocator_surface = caps.memory_surface;
+  contract.memory.memcpy_surface = true;
+  contract.memory.memory_model = caps.memory_model;
+  contract.memory.driver_tag = memoryDriverTag(device);
+
+  contract.sync.available = (device == Device::kCPU) ? true : caps.sync_surface;
+  contract.sync.sync_policy_surface = caps.sync_policy_surface;
+  contract.sync.trace_sync_boundary_surface = caps.sync_policy_surface;
+  contract.sync.driver_tag = syncDriverTag(device);
+
+  contract.profiler.available = caps.runtime_trace_surface;
+  contract.profiler.runtime_trace_surface = caps.runtime_trace_surface;
+  contract.profiler.op_dispatch_trace_surface = caps.runtime_trace_surface;
+  contract.profiler.trace_capacity = runtimeTraceEventCapacity();
+  contract.profiler.driver_tag = profilerDriverTag();
+
+  return contract;
+}
+
+BackendInterfaceContract activeBackendInterfaceContract() {
+  return backendInterfaceContract(preferredDeviceFor(WorkloadKind::kInference));
+}
+
 void setRuntimeTraceEnabled(bool enabled) {
   g_runtime_trace_enabled.store(enabled, std::memory_order_relaxed);
 }

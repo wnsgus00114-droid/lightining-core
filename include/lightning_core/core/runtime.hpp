@@ -109,6 +109,49 @@ struct BackendCapabilities {
   MemoryModel memory_model{MemoryModel::kHostManagedCompat};
 };
 
+// compute 인터페이스 계약(디스패치 계층).
+struct ComputeInterfaceContract {
+  bool available{false};
+  bool op_dispatch_trace_surface{false};
+  const char* driver_tag{"none"};
+};
+
+// memory 인터페이스 계약(할당/복사 계층).
+struct MemoryInterfaceContract {
+  bool available{false};
+  bool allocator_surface{false};
+  bool memcpy_surface{false};
+  MemoryModel memory_model{MemoryModel::kHostManagedCompat};
+  const char* driver_tag{"none"};
+};
+
+// sync 인터페이스 계약(동기화/정책 계층).
+struct SyncInterfaceContract {
+  bool available{false};
+  bool sync_policy_surface{false};
+  bool trace_sync_boundary_surface{false};
+  const char* driver_tag{"none"};
+};
+
+// profiler 인터페이스 계약(트레이스/타임라인 계층).
+struct ProfilerInterfaceContract {
+  bool available{false};
+  bool runtime_trace_surface{false};
+  bool op_dispatch_trace_surface{false};
+  std::size_t trace_capacity{0};
+  const char* driver_tag{"none"};
+};
+
+// backend를 compute/memory/sync/profiler 4계층으로 분리한 계약 뷰.
+struct BackendInterfaceContract {
+  Device device{Device::kCPU};
+  BackendCapabilities capabilities{};
+  ComputeInterfaceContract compute{};
+  MemoryInterfaceContract memory{};
+  SyncInterfaceContract sync{};
+  ProfilerInterfaceContract profiler{};
+};
+
 // 디바이스 메모리 할당.
 // CUDA 환경이면 cudaMalloc, 아니면 NotSupported를 반환한다.
 Status mallocDevice(void** ptr, std::size_t size_bytes);
@@ -169,6 +212,12 @@ BackendCapabilities backendCapabilities(Device device);
 
 // 현재 선택된 활성 백엔드의 capability 계약 조회.
 BackendCapabilities activeBackendCapabilities();
+
+// 특정 디바이스 백엔드의 인터페이스 분리 계약 조회.
+BackendInterfaceContract backendInterfaceContract(Device device);
+
+// 현재 활성 백엔드의 인터페이스 분리 계약 조회.
+BackendInterfaceContract activeBackendInterfaceContract();
 
 // 런타임 trace 수집 on/off.
 void setRuntimeTraceEnabled(bool enabled);

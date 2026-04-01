@@ -58,6 +58,44 @@ typedef struct lcBackendCapabilities {
   lcMemoryModel memory_model;
 } lcBackendCapabilities;
 
+typedef struct lcComputeInterfaceContract {
+  int available;
+  int op_dispatch_trace_surface;
+  const char* driver_tag;
+} lcComputeInterfaceContract;
+
+typedef struct lcMemoryInterfaceContract {
+  int available;
+  int allocator_surface;
+  int memcpy_surface;
+  lcMemoryModel memory_model;
+  const char* driver_tag;
+} lcMemoryInterfaceContract;
+
+typedef struct lcSyncInterfaceContract {
+  int available;
+  int sync_policy_surface;
+  int trace_sync_boundary_surface;
+  const char* driver_tag;
+} lcSyncInterfaceContract;
+
+typedef struct lcProfilerInterfaceContract {
+  int available;
+  int runtime_trace_surface;
+  int op_dispatch_trace_surface;
+  size_t trace_capacity;
+  const char* driver_tag;
+} lcProfilerInterfaceContract;
+
+typedef struct lcBackendInterfaceContract {
+  lcDeviceKind device;
+  lcBackendCapabilities capabilities;
+  lcComputeInterfaceContract compute;
+  lcMemoryInterfaceContract memory;
+  lcSyncInterfaceContract sync;
+  lcProfilerInterfaceContract profiler;
+} lcBackendInterfaceContract;
+
 lcError_t lcMalloc(void** ptr, size_t size_bytes);
 lcError_t lcFree(void* ptr);
 lcError_t lcMemcpy(void* dst, const void* src, size_t size_bytes, lcMemcpyKind kind);
@@ -75,6 +113,8 @@ lcError_t lcApplySyncPolicy(lcSyncPolicy policy);
 lcError_t lcApplyDefaultSyncPolicy(void);
 lcError_t lcGetBackendCapabilities(lcDeviceKind device, lcBackendCapabilities* out_caps);
 lcError_t lcGetActiveBackendCapabilities(lcBackendCapabilities* out_caps);
+lcError_t lcGetBackendInterfaceContract(lcDeviceKind device, lcBackendInterfaceContract* out_contract);
+lcError_t lcGetActiveBackendInterfaceContract(lcBackendInterfaceContract* out_contract);
 const char* lcBackendName(void);
 const char* lcGetErrorString(lcError_t error);
 

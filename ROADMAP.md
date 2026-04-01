@@ -267,6 +267,9 @@ Each milestone tracks:
 5. Parity + contract coverage expansion (M-A test/runtime)
    - deliverable: extend Metal/CPU parity to graph path and runtime sync policy scenarios.
    - acceptance: CI contract suite blocks merge on regression in shape/layout/lifetime semantics.
+6. macOS-first generic engine mode + Torch bridge (M-A python/runtime)
+   - deliverable: integrated API engine selector (`lightning`/`torch`/`auto`) with documented fallback behavior.
+   - acceptance: same API surface runs with both engines and benchmark docs separate pure-LC vs interop paths.
 
 Progress update history is auto-generated from:
 
@@ -276,7 +279,7 @@ Progress update history is auto-generated from:
 
 ### Progress History (Auto-generated)
 
-- Total tracked updates: `26`
+- Total tracked updates: `27`
 - Source of truth: `docs/roadmap_updates.json`
 - Quick add command:
   `python scripts/generate_roadmap_history.py --add --date YYYY-MM-DD --milestone M-A --area runtime --title "your update"`
@@ -285,7 +288,7 @@ Progress update history is auto-generated from:
 
 | Date | Updates | Milestones | Highlights |
 | --- | --- | --- | --- |
-| 2026-04-01 | 8 | M-A | Moved integrated API helper into package distribution and install path (wheel/editable). / Bumped to v0.1.9 and updated release baseline/docs. / ... (+6 more) |
+| 2026-04-01 | 9 | M-A | Moved integrated API helper into package distribution and install path (wheel/editable). / Completed backend interface split contracts across C++/C/Python and added integrated engine selector (lightning/torch/auto). / ... (+7 more) |
 | 2026-03-31 | 6 | M-A | Shipped docs site MVP with mkdocs and docs-pages workflow. / Re-tuned tiny one-shot conv CPU crossover default to `CJ_CONV2D_CPU_CROSSOVER_MACS=260000` via threshold sweep. / ... (+4 more) |
 | 2026-03-30 | 9 | M-B, M-A | Added operator registry v1 and minimal Graph IR prototype. / Added graph validation report passes and grouped planner options with sync-boundary/fallback segmentation. / ... (+7 more) |
 | 2026-03-29 | 2 | M-A | Split docs into quickstart/advanced/index and improved package/release guidance. / Added large GEMM auto sweep, tuned policy profiles, and cross-suite summary artifacts. |
@@ -293,9 +296,10 @@ Progress update history is auto-generated from:
 
 **Detailed Timeline**
 
-#### 2026-04-01 (8 updates)
+#### 2026-04-01 (9 updates)
 
 - [completed] [M-A] [python] Moved integrated API helper into package distribution and install path (wheel/editable).
+- [completed] [M-A] [runtime] Completed backend interface split contracts across C++/C/Python and added integrated engine selector (lightning/torch/auto).
 - [completed] [M-A] [release] Bumped to v0.1.9 and updated release baseline/docs.
 - [completed] [M-A] [release] Bumped to v0.1.8 and aligned README roadmap baseline. (`d486d05`)
 - [completed] [M-A] [release] Bumped to v0.1.10 after removing workspace-level duplicate helper file and verifying package-only import path.
@@ -345,7 +349,8 @@ Planned scope:
 - split runtime backend driver into capability-based interfaces,
 - introduce explicit stream/sync policy object in public runtime API,
 - freeze tensor metadata contract (shape/stride/layout/dtype ownership rules),
-- expose first profiler timeline API to Python.
+- expose first profiler timeline API to Python,
+- stabilize integrated engine selector for macOS-first generic usage (lightning/torch/auto).
 
 Quality gates:
 
@@ -366,7 +371,8 @@ Planned scope:
 - operator registry with schema validation and backend support flags,
 - graph IR for dependency-aware scheduling,
 - compile-time and runtime validation passes with human-readable diagnostics,
-- graph/eager execution toggle for A/B verification.
+- graph/eager execution toggle for A/B verification,
+- define hybrid execution policy between LC graph path and Torch engine fallback.
 
 Quality gates:
 
@@ -422,13 +428,13 @@ Success metrics:
 - stable throughput variance envelope defined and published,
 - docs-driven onboarding validation (new user follows quickstart without internal guidance).
 
-## 11.5 2027 H2 (v0.5.x): Interoperability and Ecosystem Bridges
+## 11.5 2027 H2 (v0.5.x): Interoperability, Ecosystem Bridges, and Engine Federation
 
 Planned scope:
 
 - CoreML export for validated op subset,
 - MLX tensor bridge and layout conversion utilities,
-- PyTorch interop runner for hybrid execution experiments,
+- PyTorch interop runner and engine federation hooks for hybrid execution experiments,
 - import/export compatibility tables generated automatically.
 
 Quality gates:

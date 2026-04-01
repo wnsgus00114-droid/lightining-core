@@ -125,6 +125,55 @@ lcBackendCapabilities toLcBackendCapabilities(lightning_core::runtime::BackendCa
   return out;
 }
 
+lcComputeInterfaceContract toLcComputeInterfaceContract(lightning_core::runtime::ComputeInterfaceContract contract) {
+  lcComputeInterfaceContract out;
+  out.available = contract.available ? 1 : 0;
+  out.op_dispatch_trace_surface = contract.op_dispatch_trace_surface ? 1 : 0;
+  out.driver_tag = contract.driver_tag;
+  return out;
+}
+
+lcMemoryInterfaceContract toLcMemoryInterfaceContract(lightning_core::runtime::MemoryInterfaceContract contract) {
+  lcMemoryInterfaceContract out;
+  out.available = contract.available ? 1 : 0;
+  out.allocator_surface = contract.allocator_surface ? 1 : 0;
+  out.memcpy_surface = contract.memcpy_surface ? 1 : 0;
+  out.memory_model = toLcMemoryModel(contract.memory_model);
+  out.driver_tag = contract.driver_tag;
+  return out;
+}
+
+lcSyncInterfaceContract toLcSyncInterfaceContract(lightning_core::runtime::SyncInterfaceContract contract) {
+  lcSyncInterfaceContract out;
+  out.available = contract.available ? 1 : 0;
+  out.sync_policy_surface = contract.sync_policy_surface ? 1 : 0;
+  out.trace_sync_boundary_surface = contract.trace_sync_boundary_surface ? 1 : 0;
+  out.driver_tag = contract.driver_tag;
+  return out;
+}
+
+lcProfilerInterfaceContract toLcProfilerInterfaceContract(
+    lightning_core::runtime::ProfilerInterfaceContract contract) {
+  lcProfilerInterfaceContract out;
+  out.available = contract.available ? 1 : 0;
+  out.runtime_trace_surface = contract.runtime_trace_surface ? 1 : 0;
+  out.op_dispatch_trace_surface = contract.op_dispatch_trace_surface ? 1 : 0;
+  out.trace_capacity = contract.trace_capacity;
+  out.driver_tag = contract.driver_tag;
+  return out;
+}
+
+lcBackendInterfaceContract toLcBackendInterfaceContract(lightning_core::runtime::BackendInterfaceContract contract) {
+  lcBackendInterfaceContract out;
+  out.device = toDeviceKind(contract.device);
+  out.capabilities = toLcBackendCapabilities(contract.capabilities);
+  out.compute = toLcComputeInterfaceContract(contract.compute);
+  out.memory = toLcMemoryInterfaceContract(contract.memory);
+  out.sync = toLcSyncInterfaceContract(contract.sync);
+  out.profiler = toLcProfilerInterfaceContract(contract.profiler);
+  return out;
+}
+
 }  // namespace
 
 extern "C" {
@@ -214,6 +263,23 @@ lcError_t lcGetActiveBackendCapabilities(lcBackendCapabilities* out_caps) {
     return LC_INVALID_VALUE;
   }
   *out_caps = toLcBackendCapabilities(lightning_core::runtime::activeBackendCapabilities());
+  return LC_SUCCESS;
+}
+
+lcError_t lcGetBackendInterfaceContract(lcDeviceKind device, lcBackendInterfaceContract* out_contract) {
+  if (out_contract == nullptr) {
+    return LC_INVALID_VALUE;
+  }
+  *out_contract =
+      toLcBackendInterfaceContract(lightning_core::runtime::backendInterfaceContract(fromLcDeviceKind(device)));
+  return LC_SUCCESS;
+}
+
+lcError_t lcGetActiveBackendInterfaceContract(lcBackendInterfaceContract* out_contract) {
+  if (out_contract == nullptr) {
+    return LC_INVALID_VALUE;
+  }
+  *out_contract = toLcBackendInterfaceContract(lightning_core::runtime::activeBackendInterfaceContract());
   return LC_SUCCESS;
 }
 

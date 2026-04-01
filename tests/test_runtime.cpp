@@ -1,4 +1,5 @@
 #include <iostream>
+#include <string>
 #include <vector>
 
 #include "lightning_core/ops.hpp"
@@ -149,6 +150,36 @@ int main() {
   const BackendCapabilities active_caps = activeBackendCapabilities();
   if (!active_caps.available) {
     std::cerr << "active backend should be available\n";
+    return 1;
+  }
+
+  // 6) backend interface split 계약 스모크 테스트.
+  const BackendInterfaceContract cpu_iface = backendInterfaceContract(Device::kCPU);
+  if (!cpu_iface.compute.available) {
+    std::cerr << "CPU compute interface should be available\n";
+    return 1;
+  }
+  if (!cpu_iface.memory.available || !cpu_iface.memory.memcpy_surface) {
+    std::cerr << "CPU memory interface contract invalid\n";
+    return 1;
+  }
+  if (!cpu_iface.sync.available || !cpu_iface.sync.sync_policy_surface) {
+    std::cerr << "CPU sync interface contract invalid\n";
+    return 1;
+  }
+  if (!cpu_iface.profiler.available || cpu_iface.profiler.trace_capacity == 0) {
+    std::cerr << "CPU profiler interface contract invalid\n";
+    return 1;
+  }
+  if (std::string(cpu_iface.compute.driver_tag).empty() || std::string(cpu_iface.memory.driver_tag).empty() ||
+      std::string(cpu_iface.sync.driver_tag).empty() || std::string(cpu_iface.profiler.driver_tag).empty()) {
+    std::cerr << "backend interface driver tags should not be empty\n";
+    return 1;
+  }
+
+  const BackendInterfaceContract active_iface = activeBackendInterfaceContract();
+  if (!active_iface.capabilities.available || !active_iface.compute.available) {
+    std::cerr << "active backend interface should expose available compute surface\n";
     return 1;
   }
 

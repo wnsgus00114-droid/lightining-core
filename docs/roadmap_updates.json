@@ -9,6 +9,15 @@
     "source": ""
   },
   {
+    "id": "2026-04-01-runtime-completed-backend-interface-split-contracts-across-c-c-python-and-added-integrated-engine-selector-lightning-torch-auto",
+    "date": "2026-04-01",
+    "milestone": "M-A",
+    "area": "runtime",
+    "title": "Completed backend interface split contracts across C++/C/Python and added integrated engine selector (lightning/torch/auto).",
+    "status": "completed",
+    "source": ""
+  },
+  {
     "id": "2026-04-01-release-bumped-to-v0-1-9-and-updated-release-baseline-docs",
     "date": "2026-04-01",
     "milestone": "M-A",

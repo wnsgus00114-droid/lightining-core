@@ -12,6 +12,50 @@ import lightning_core as lc
 _SESSION_CACHE_LIMIT = 32
 _ATTN_SESSION_CACHE: OrderedDict[tuple[int, int, bool, str], Any] = OrderedDict()
 _CACHE_LOCK = Lock()
+_BACKEND_LOCK = Lock()
+_BACKEND_ENGINE = "lightning"
+_VALID_ENGINES = {"lightning", "torch", "auto"}
+
+
+def _import_torch():
+    try:
+        import torch
+        import torch.nn.functional as F
+
+        return torch, F
+    except Exception:
+        return None, None
+
+
+def _torch_device_for(device: str) -> str:
+    torch, _ = _import_torch()
+    if torch is None:
+        return "cpu"
+    if device == "metal":
+        return "mps" if torch.backends.mps.is_available() else "cpu"
+    if device == "cuda":
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    return "cpu"
+
+
+def _resolve_engine(device: str) -> str:
+    with _BACKEND_LOCK:
+        configured = _BACKEND_ENGINE
+    if configured == "lightning":
+        return "lightning"
+    if configured == "torch":
+        return "torch"
+
+    # auto mode: prefer lightning-core when the requested device is natively available.
+    if device == "metal" and hasattr(lc, "metal_available") and lc.metal_available():
+        return "lightning"
+    if device == "cuda" and hasattr(lc, "cuda_available") and lc.cuda_available():
+        return "lightning"
+    if device == "cpu":
+        return "lightning"
+
+    torch, _ = _import_torch()
+    return "torch" if torch is not None else "lightning"
 
 
 def _as_f32_c(x: Any) -> np.ndarray:
@@ -29,8 +73,21 @@ def _as_out_f32_c_no_copy(out: Any) -> np.ndarray:
 
 
 def set_backend(name: str) -> None:
-    # Integrated mode always targets lightning_core directly.
-    _ = name
+    name_l = str(name).strip().lower()
+    if name_l not in _VALID_ENGINES:
+        raise ValueError("backend engine must be one of: lightning, torch, auto")
+    if name_l == "torch":
+        torch, _ = _import_torch()
+        if torch is None:
+            raise RuntimeError("torch backend requested but torch is not installed")
+    global _BACKEND_ENGINE
+    with _BACKEND_LOCK:
+        _BACKEND_ENGINE = name_l
+
+
+def get_backend() -> str:
+    with _BACKEND_LOCK:
+        return _BACKEND_ENGINE
 
 
 def tensor(x: Any) -> np.ndarray:
@@ -63,6 +120,16 @@ def lightning_matmul(a: Any, b: Any, device: str = "metal") -> np.ndarray:
     kb, n = arr_b.shape
     if k != kb:
         raise ValueError("matmul shape mismatch")
+    if _resolve_engine(device) == "torch":
+        torch, _ = _import_torch()
+        if torch is None:
+            raise RuntimeError("torch backend selected but torch is unavailable")
+        torch_device = _torch_device_for(device)
+        ta = torch.as_tensor(arr_a, dtype=torch.float32, device=torch_device)
+        tb = torch.as_tensor(arr_b, dtype=torch.float32, device=torch_device)
+        tc = torch.matmul(ta, tb)
+        return tc.detach().to("cpu").contiguous().numpy()
+
     out = np.empty((m * n,), dtype=np.float32)
     lc.matmul_np_into(arr_a, arr_b, out, m, k, n, device)
     return out.reshape(m, n)
@@ -80,7 +147,17 @@ def lightning_matmul_into(a: Any, b: Any, out: Any, device: str = "metal") -> np
         raise ValueError("matmul shape mismatch")
     if arr_out.size != m * n:
         raise ValueError("out shape mismatch")
-    lc.matmul_np_into(arr_a, arr_b, arr_out.reshape(-1), m, k, n, device)
+    if _resolve_engine(device) == "torch":
+        torch, _ = _import_torch()
+        if torch is None:
+            raise RuntimeError("torch backend selected but torch is unavailable")
+        torch_device = _torch_device_for(device)
+        ta = torch.as_tensor(arr_a, dtype=torch.float32, device=torch_device)
+        tb = torch.as_tensor(arr_b, dtype=torch.float32, device=torch_device)
+        tc = torch.matmul(ta, tb).detach().to("cpu").contiguous().numpy()
+        np.copyto(arr_out.reshape(m, n), tc, casting="no")
+    else:
+        lc.matmul_np_into(arr_a, arr_b, arr_out.reshape(-1), m, k, n, device)
     return arr_out.reshape(m, n)
 
 
@@ -107,6 +184,57 @@ def clear_attention_session_cache() -> None:
 
 
 def lightning_attention(q: Any, k: Any, v: Any, seq: int, head_dim: int, device: str = "metal") -> np.ndarray:
+    if _resolve_engine(device) == "torch":
+        torch, F = _import_torch()
+        if torch is None or F is None:
+            raise RuntimeError("torch backend selected but torch is unavailable")
+        seq_i = int(seq)
+        head_i = int(head_dim)
+        expected = seq_i * head_i
+
+        q_arr = np.asarray(q, dtype=np.float32)
+        k_arr = np.asarray(k, dtype=np.float32)
+        v_arr = np.asarray(v, dtype=np.float32)
+        if q_arr.shape != k_arr.shape or q_arr.shape != v_arr.shape:
+            raise ValueError("q/k/v shape mismatch")
+
+        if q_arr.ndim == 1:
+            if q_arr.size != expected:
+                raise ValueError("attention input shape mismatch")
+            q2 = _as_f32_c(q_arr.reshape(1, seq_i, head_i))
+            k2 = _as_f32_c(k_arr.reshape(1, seq_i, head_i))
+            v2 = _as_f32_c(v_arr.reshape(1, seq_i, head_i))
+            restore = "1d"
+        elif q_arr.ndim == 2:
+            if q_arr.shape != (seq_i, head_i):
+                raise ValueError("attention 2D input must be [seq, head_dim]")
+            q2 = _as_f32_c(q_arr.reshape(1, seq_i, head_i))
+            k2 = _as_f32_c(k_arr.reshape(1, seq_i, head_i))
+            v2 = _as_f32_c(v_arr.reshape(1, seq_i, head_i))
+            restore = "2d"
+        elif q_arr.ndim == 3:
+            if q_arr.shape[1] != seq_i or q_arr.shape[2] != head_i:
+                raise ValueError("attention 3D input must be [batch_heads, seq, head_dim]")
+            q2 = _as_f32_c(q_arr)
+            k2 = _as_f32_c(k_arr)
+            v2 = _as_f32_c(v_arr)
+            restore = "3d"
+        else:
+            raise ValueError("unsupported attention input rank")
+
+        torch_device = _torch_device_for(device)
+        tq = torch.as_tensor(q2, dtype=torch.float32, device=torch_device).unsqueeze(1)
+        tk = torch.as_tensor(k2, dtype=torch.float32, device=torch_device).unsqueeze(1)
+        tv = torch.as_tensor(v2, dtype=torch.float32, device=torch_device).unsqueeze(1)
+        tout = F.scaled_dot_product_attention(tq, tk, tv, is_causal=False).squeeze(1)
+        out = tout.detach().to("cpu").contiguous().numpy()
+
+        if restore == "1d":
+            return out.reshape(-1)
+        if restore == "2d":
+            return out.reshape(seq_i, head_i)
+        return out
+
     if hasattr(lc, "lightning_attention"):
         seq_i = int(seq)
         head_i = int(head_dim)
@@ -178,6 +306,25 @@ def lightning_conv_relu_nchw(
     x_arr = _as_f32_c(x)
     w_arr = _as_f32_c(weight)
     b_arr = None if bias is None else np.asarray(bias, dtype=np.float32)
+
+    if _resolve_engine(device) == "torch":
+        torch, F = _import_torch()
+        if torch is None or F is None:
+            raise RuntimeError("torch backend selected but torch is unavailable")
+        torch_device = _torch_device_for(device)
+        tx = torch.as_tensor(x_arr, dtype=torch.float32, device=torch_device)
+        tw = torch.as_tensor(w_arr, dtype=torch.float32, device=torch_device)
+        tb = None if b_arr is None else torch.as_tensor(b_arr, dtype=torch.float32, device=torch_device)
+        ty = F.conv2d(tx, tw, tb, stride=(stride_h, stride_w), padding=(pad_h, pad_w))
+        ty = F.relu(ty)
+        y_np = ty.detach().to("cpu").contiguous().numpy()
+        if out is not None:
+            out_arr = _as_out_f32_c_no_copy(out)
+            if out_arr.shape != y_np.shape:
+                raise ValueError("out shape mismatch for conv+relu torch path")
+            np.copyto(out_arr, y_np, casting="no")
+            return out_arr
+        return y_np
 
     if out is not None and hasattr(lc, "lightning_conv_relu_nchw_into"):
         out_arr = _as_out_f32_c_no_copy(out)
