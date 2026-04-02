@@ -58,3 +58,4 @@ Implementation:
 - Generated API reference pages are available in docs:
   - [Python API (generated)](reference/python_api_generated.md)
   - [C/C++ API (generated)](reference/cpp_api_generated.md)
+- API reference entries on this page are production-linked (no placeholder entries).

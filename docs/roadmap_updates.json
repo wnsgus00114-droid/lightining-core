@@ -1,5 +1,23 @@
 [
   {
+    "id": "2026-04-02-docs-completed-v0-1-15-generated-api-reference-pipeline-python-c-in-docs-build-and-removed-api-index-planned-placeholders",
+    "date": "2026-04-02",
+    "milestone": "M-B",
+    "area": "docs",
+    "title": "Completed v0.1.15 generated API reference pipeline (Python/C++) in docs build and removed API index placeholder entries.",
+    "status": "completed",
+    "source": ""
+  },
+  {
+    "id": "2026-04-02-release-bumped-release-baseline-to-v0-1-15-for-generated-api-reference-pipeline-completion",
+    "date": "2026-04-02",
+    "milestone": "M-A",
+    "area": "release",
+    "title": "Bumped release baseline to v0.1.15 for generated API reference pipeline completion.",
+    "status": "completed",
+    "source": ""
+  },
+  {
     "id": "2026-04-01-docs-completed-generated-api-reference-pipeline-with-auto-built-python-c-reference-pages-and-docs-link-check-gate-in-ci-docs-workflows",
     "date": "2026-04-01",
     "milestone": "M-B",
