@@ -44,6 +44,13 @@ jobs:
           set -o pipefail
           ctest --test-dir build-ci --output-on-failure --no-tests=error | tee build-ci/ctest.log
 
+      - name: Run Python smoke (integrated API + timeline)
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install numpy
+          python3 -m pip install -e .
+          python3 tests/test_python_integrated_timeline_smoke.py
+
       - name: Publish CTest summary
         if: always()
         run: |
@@ -54,6 +61,7 @@ jobs:
           else
             echo "- ctest log not found" >> "$GITHUB_STEP_SUMMARY"
           fi
+          echo "- python smoke: tests/test_python_integrated_timeline_smoke.py" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload CTest artifacts
         if: always()

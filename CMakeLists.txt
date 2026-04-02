@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.23)
-project(LightningCore VERSION 0.1.15 LANGUAGES CXX)
+project(LightningCore VERSION 0.1.16 LANGUAGES CXX)
 
 if(NOT APPLE)
   message(FATAL_ERROR "Lightning Core currently supports macOS only.")

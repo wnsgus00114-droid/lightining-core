@@ -173,6 +173,142 @@ int main() {
     return 1;
   }
 
+  // shape contract regression guard: invalid feed numel must fail.
+  {
+    std::unordered_map<std::size_t, std::vector<float>> bad_exec_feeds = exec_feeds;
+    if (bad_exec_feeds[exec_a].empty()) {
+      std::cerr << "bad_exec_feeds precondition failed\n";
+      return 1;
+    }
+    bad_exec_feeds[exec_a].pop_back();
+    std::unordered_map<std::size_t, std::vector<float>> bad_exec_values;
+    const Status bad_exec_status =
+        exec_graph.executeF32(exec_options, bad_exec_feeds, &bad_exec_values, nullptr, nullptr);
+    if (bad_exec_status != Status::kInvalidValue) {
+      std::cerr << "executeF32 should reject invalid feed numel for shape contract\n";
+      return 1;
+    }
+  }
+
+  // lifetime contract regression guard: output map must not alias caller-owned feed buffers.
+  {
+    lightning_core::graph::GraphPlannerOptions lifetime_options = exec_options;
+    lifetime_options.preferred_device = Device::kCPU;
+    std::unordered_map<std::size_t, std::vector<float>> lifetime_feeds = exec_feeds;
+    std::unordered_map<std::size_t, std::vector<float>> lifetime_values;
+    if (exec_graph.executeF32(lifetime_options, lifetime_feeds, &lifetime_values, nullptr, nullptr) !=
+        Status::kSuccess) {
+      std::cerr << "executeF32(lifetime guard) failed\n";
+      return 1;
+    }
+    lifetime_feeds[exec_a][0] = 999.0f;
+    const auto lifetime_a_it = lifetime_values.find(exec_a);
+    if (lifetime_a_it == lifetime_values.end()) {
+      std::cerr << "lifetime guard missing copied input tensor value\n";
+      return 1;
+    }
+    if (lifetime_a_it->second.empty() || lifetime_a_it->second[0] == 999.0f) {
+      std::cerr << "executeF32 values should not alias feed lifetime\n";
+      return 1;
+    }
+  }
+
+  // graph-path sync policy coverage (auto/always/never) with runtime trace verification.
+  const auto run_graph_sync_policy_case = [&](
+      lightning_core::runtime::SyncMode mode,
+      bool trace_boundary,
+      bool expect_single_node_groups) -> bool {
+    lightning_core::graph::GraphPlannerOptions case_options = exec_options;
+    case_options.preferred_device = Device::kCPU;
+    case_options.sync_policy.mode = mode;
+    case_options.sync_policy.trace_sync_boundary = trace_boundary;
+    case_options.separate_fallback_segments = true;
+    case_options.insert_sync_on_device_change = true;
+
+    std::vector<lightning_core::graph::GraphExecutionGroup> case_groups;
+    std::vector<lightning_core::graph::GraphPlanStep> case_steps;
+    if (exec_graph.planExecutionGroups(case_options, &case_groups, &case_steps) != Status::kSuccess) {
+      std::cerr << "planExecutionGroups(sync case) failed\n";
+      return false;
+    }
+    if (case_steps.size() != exec_graph.numNodes()) {
+      std::cerr << "sync case step count mismatch\n";
+      return false;
+    }
+    if (expect_single_node_groups && case_groups.size() != exec_graph.numNodes()) {
+      std::cerr << "sync_mode=always should split into single-node groups\n";
+      return false;
+    }
+    if (mode == lightning_core::runtime::SyncMode::kNever) {
+      for (const auto& group : case_groups) {
+        if (group.sync_boundary_before || group.sync_boundary_after) {
+          std::cerr << "sync_mode=never should clear all sync boundaries\n";
+          return false;
+        }
+      }
+    }
+
+    std::size_t expected_apply_sync_calls = 0;
+    for (const auto& group : case_groups) {
+      if (group.sync_boundary_before) {
+        ++expected_apply_sync_calls;
+      }
+      if (group.sync_boundary_after) {
+        ++expected_apply_sync_calls;
+      }
+    }
+
+    std::unordered_map<std::size_t, std::vector<float>> case_values;
+    lightning_core::runtime::clearRuntimeTraceEvents();
+    lightning_core::runtime::setRuntimeTraceEnabled(true);
+    const Status exec_status = exec_graph.executeF32(case_options, exec_feeds, &case_values, nullptr, nullptr);
+    lightning_core::runtime::setRuntimeTraceEnabled(false);
+    if (exec_status != Status::kSuccess) {
+      std::cerr << "executeF32(sync case) failed\n";
+      lightning_core::runtime::clearRuntimeTraceEvents();
+      return false;
+    }
+
+    std::size_t apply_sync_events = 0;
+    for (const auto& ev : lightning_core::runtime::runtimeTraceEvents()) {
+      if (ev.type != lightning_core::runtime::RuntimeTraceEventType::kApplySyncPolicy) {
+        continue;
+      }
+      ++apply_sync_events;
+      if (ev.detail0 != static_cast<int>(mode)) {
+        std::cerr << "apply_sync_policy trace mode mismatch in graph path\n";
+        lightning_core::runtime::clearRuntimeTraceEvents();
+        return false;
+      }
+      if (ev.detail1 != (trace_boundary ? 1 : 0)) {
+        std::cerr << "apply_sync_policy trace boundary flag mismatch in graph path\n";
+        lightning_core::runtime::clearRuntimeTraceEvents();
+        return false;
+      }
+    }
+    lightning_core::runtime::clearRuntimeTraceEvents();
+
+    if (apply_sync_events != expected_apply_sync_calls) {
+      std::cerr << "graph sync policy apply event count mismatch: expected="
+                << expected_apply_sync_calls << " got=" << apply_sync_events << "\n";
+      return false;
+    }
+    return true;
+  };
+
+  if (!run_graph_sync_policy_case(lightning_core::runtime::SyncMode::kAuto, false, false)) {
+    return 1;
+  }
+  if (!run_graph_sync_policy_case(lightning_core::runtime::SyncMode::kAuto, true, false)) {
+    return 1;
+  }
+  if (!run_graph_sync_policy_case(lightning_core::runtime::SyncMode::kAlways, true, true)) {
+    return 1;
+  }
+  if (!run_graph_sync_policy_case(lightning_core::runtime::SyncMode::kNever, true, false)) {
+    return 1;
+  }
+
   // graph parity baseline: explicit CPU planning path must match expected output.
   lightning_core::graph::GraphPlannerOptions cpu_exec_options = exec_options;
   cpu_exec_options.preferred_device = Device::kCPU;
@@ -437,6 +573,166 @@ int main() {
         return 1;
       }
     }
+
+    // fallback/device-change boundary contract:
+    // preferred CPU + metal-only conv should fallback to Metal, while matmul stays on CPU.
+    GraphIR mixed_graph;
+    std::size_t mx = 0;
+    std::size_t mw = 0;
+    std::size_t mb = 0;
+    std::size_t my = 0;
+    std::size_t ma = 0;
+    std::size_t mb2 = 0;
+    std::size_t mm = 0;
+
+    TensorSpec mx_spec;
+    mx_spec.shape = {1, 3, 8, 8};
+    mx_spec.dtype = DType::kFloat32;
+    mx_spec.layout = lightning_core::Layout::kContiguous;
+    TensorSpec mw_spec;
+    mw_spec.shape = {16, 3, 3, 3};
+    mw_spec.dtype = DType::kFloat32;
+    mw_spec.layout = lightning_core::Layout::kContiguous;
+    TensorSpec mb_spec;
+    mb_spec.shape = {16};
+    mb_spec.dtype = DType::kFloat32;
+    mb_spec.layout = lightning_core::Layout::kContiguous;
+    TensorSpec my_spec;
+    my_spec.shape = {1, 16, 8, 8};
+    my_spec.dtype = DType::kFloat32;
+    my_spec.layout = lightning_core::Layout::kContiguous;
+    TensorSpec mm_spec;
+    mm_spec.shape = {2, 2};
+    mm_spec.dtype = DType::kFloat32;
+    mm_spec.layout = lightning_core::Layout::kContiguous;
+
+    if (mixed_graph.addTensorSpec(mx_spec, &mx, "mx", true) != Status::kSuccess ||
+        mixed_graph.addTensorSpec(mw_spec, &mw, "mw", true) != Status::kSuccess ||
+        mixed_graph.addTensorSpec(mb_spec, &mb, "mb", true) != Status::kSuccess ||
+        mixed_graph.addTensorSpec(my_spec, &my, "my", false) != Status::kSuccess ||
+        mixed_graph.addTensorSpec(mm_spec, &ma, "ma", true) != Status::kSuccess ||
+        mixed_graph.addTensorSpec(mm_spec, &mb2, "mb2", true) != Status::kSuccess ||
+        mixed_graph.addTensorSpec(mm_spec, &mm, "mm", false) != Status::kSuccess) {
+      std::cerr << "mixed_graph addTensorSpec failed\n";
+      return 1;
+    }
+    if (mixed_graph.addNode(OpKind::kConv2dNchw3x3s1p1, {mx, mw, mb}, {my}) != Status::kSuccess ||
+        mixed_graph.addNode(OpKind::kMatMul, {ma, mb2}, {mm}) != Status::kSuccess) {
+      std::cerr << "mixed_graph addNode failed\n";
+      return 1;
+    }
+
+    lightning_core::graph::GraphPlannerOptions mixed_options;
+    mixed_options.preferred_device = Device::kCPU;
+    mixed_options.sync_policy.mode = lightning_core::runtime::SyncMode::kAuto;
+    mixed_options.sync_policy.trace_sync_boundary = true;
+    mixed_options.separate_fallback_segments = true;
+    mixed_options.insert_sync_on_device_change = true;
+
+    std::vector<lightning_core::graph::GraphExecutionGroup> mixed_groups;
+    std::vector<lightning_core::graph::GraphPlanStep> mixed_steps;
+    if (mixed_graph.planExecutionGroups(mixed_options, &mixed_groups, &mixed_steps) != Status::kSuccess) {
+      std::cerr << "mixed_graph planExecutionGroups failed\n";
+      return 1;
+    }
+    if (mixed_steps.size() != 2 || mixed_steps[0].node_id != 0 || mixed_steps[1].node_id != 1) {
+      std::cerr << "mixed_graph step metadata mismatch\n";
+      return 1;
+    }
+    if (mixed_steps[0].assigned_device != Device::kMetal || !mixed_steps[0].fallback) {
+      std::cerr << "mixed_graph conv step should fallback to Metal from preferred CPU\n";
+      return 1;
+    }
+    if (mixed_steps[1].assigned_device != Device::kCPU || mixed_steps[1].fallback) {
+      std::cerr << "mixed_graph matmul step should stay on CPU without fallback\n";
+      return 1;
+    }
+    if (mixed_groups.size() < 2) {
+      std::cerr << "mixed_graph should split groups on device-change boundary\n";
+      return 1;
+    }
+    if (!mixed_groups[0].sync_boundary_after || !mixed_groups[1].sync_boundary_before) {
+      std::cerr << "mixed_graph should mark sync boundaries on device-change/fallback boundary\n";
+      return 1;
+    }
+
+    std::unordered_map<std::size_t, std::vector<float>> mixed_feeds;
+    mixed_feeds[mx] = xv;
+    mixed_feeds[mw] = wv;
+    mixed_feeds[mb] = bv;
+    mixed_feeds[ma] = {1.0f, 2.0f, 3.0f, 4.0f};
+    mixed_feeds[mb2] = {5.0f, 6.0f, 7.0f, 8.0f};
+    std::unordered_map<std::size_t, std::vector<float>> mixed_values;
+    lightning_core::runtime::clearRuntimeTraceEvents();
+    lightning_core::runtime::setRuntimeTraceEnabled(true);
+    if (mixed_graph.executeF32(mixed_options, mixed_feeds, &mixed_values, nullptr, nullptr) != Status::kSuccess) {
+      std::cerr << "mixed_graph executeF32 failed\n";
+      lightning_core::runtime::setRuntimeTraceEnabled(false);
+      lightning_core::runtime::clearRuntimeTraceEvents();
+      return 1;
+    }
+    lightning_core::runtime::setRuntimeTraceEnabled(false);
+
+    if (mixed_values.find(my) == mixed_values.end() || mixed_values.find(mm) == mixed_values.end()) {
+      std::cerr << "mixed_graph output tensors missing\n";
+      lightning_core::runtime::clearRuntimeTraceEvents();
+      return 1;
+    }
+
+    bool saw_conv_cpu_to_metal_fallback = false;
+    bool saw_matmul_cpu_direct = false;
+    std::size_t apply_sync_count = 0;
+    std::size_t expected_apply_sync_count = 0;
+    for (const auto& group : mixed_groups) {
+      if (group.sync_boundary_before) {
+        ++expected_apply_sync_count;
+      }
+      if (group.sync_boundary_after) {
+        ++expected_apply_sync_count;
+      }
+    }
+    for (const auto& ev : lightning_core::runtime::runtimeTraceEvents()) {
+      if (ev.type == lightning_core::runtime::RuntimeTraceEventType::kApplySyncPolicy) {
+        ++apply_sync_count;
+      }
+      if (ev.type != lightning_core::runtime::RuntimeTraceEventType::kOpDispatch) {
+        continue;
+      }
+      lightning_core::runtime::Device requested = lightning_core::runtime::Device::kCPU;
+      lightning_core::runtime::Device selected = lightning_core::runtime::Device::kCPU;
+      bool fallback = false;
+      if (!lightning_core::runtime::decodeRuntimeTraceDispatchDetail(
+              ev.detail1, &requested, &selected, &fallback)) {
+        continue;
+      }
+      const auto op_kind = static_cast<lightning_core::runtime::RuntimeTraceOpKind>(ev.detail0);
+      if (op_kind == lightning_core::runtime::RuntimeTraceOpKind::kConv2dNchw &&
+          requested == Device::kCPU &&
+          selected == Device::kMetal &&
+          fallback) {
+        saw_conv_cpu_to_metal_fallback = true;
+      }
+      if (op_kind == lightning_core::runtime::RuntimeTraceOpKind::kMatMul &&
+          requested == Device::kCPU &&
+          selected == Device::kCPU &&
+          !fallback) {
+        saw_matmul_cpu_direct = true;
+      }
+    }
+    lightning_core::runtime::clearRuntimeTraceEvents();
+
+    if (!saw_conv_cpu_to_metal_fallback) {
+      std::cerr << "mixed_graph trace missing conv CPU->Metal fallback dispatch metadata\n";
+      return 1;
+    }
+    if (!saw_matmul_cpu_direct) {
+      std::cerr << "mixed_graph trace missing matmul CPU direct dispatch metadata\n";
+      return 1;
+    }
+    if (apply_sync_count != expected_apply_sync_count) {
+      std::cerr << "mixed_graph sync boundary trace count mismatch\n";
+      return 1;
+    }
   }
 
   GraphIR bad_graph;
@@ -510,6 +806,15 @@ int main() {
 
   GraphIR invalid_tensor_graph;
   std::size_t invalid_id = 0;
+  TensorSpec invalid_layout_spec;
+  invalid_layout_spec.shape = {2, 2};
+  invalid_layout_spec.dtype = DType::kFloat32;
+  invalid_layout_spec.layout = static_cast<lightning_core::Layout>(99);
+  if (invalid_tensor_graph.addTensorSpec(invalid_layout_spec, &invalid_id) != Status::kInvalidValue) {
+    std::cerr << "invalid layout tensor spec should fail\n";
+    return 1;
+  }
+
   TensorSpec invalid_spec;
   invalid_spec.shape = {};
   invalid_spec.dtype = DType::kFloat32;

@@ -9,11 +9,38 @@
     "source": ""
   },
   {
+    "id": "2026-04-02-test-expanded-graph-path-contract-coverage-sync-policy-auto-always-never-fallback-device-change-boundary-checks-and-shape-layout-lifetime-regression-guards",
+    "date": "2026-04-02",
+    "milestone": "M-A",
+    "area": "test",
+    "title": "Expanded graph-path contract coverage: sync policy(auto/always/never), fallback/device-change boundary checks, and shape/layout/lifetime regression guards.",
+    "status": "completed",
+    "source": ""
+  },
+  {
+    "id": "2026-04-02-release-bumped-release-baseline-to-v0-1-16-for-parity-contract-coverage-expansion",
+    "date": "2026-04-02",
+    "milestone": "M-A",
+    "area": "release",
+    "title": "Bumped release baseline to v0.1.16 for parity + contract coverage expansion.",
+    "status": "completed",
+    "source": ""
+  },
+  {
     "id": "2026-04-02-release-bumped-release-baseline-to-v0-1-15-for-generated-api-reference-pipeline-completion",
     "date": "2026-04-02",
     "milestone": "M-A",
     "area": "release",
     "title": "Bumped release baseline to v0.1.15 for generated API reference pipeline completion.",
+    "status": "completed",
+    "source": ""
+  },
+  {
+    "id": "2026-04-02-ci-added-ci-python-smoke-gate-for-integrated-api-runtime-timeline-tests-test-python-integrated-timeline-smoke-py",
+    "date": "2026-04-02",
+    "milestone": "M-A",
+    "area": "ci",
+    "title": "Added CI Python smoke gate for integrated API + runtime timeline (tests/test_python_integrated_timeline_smoke.py).",
     "status": "completed",
     "source": ""
   },

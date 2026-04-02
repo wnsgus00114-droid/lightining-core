@@ -13,7 +13,7 @@
 
 # 3. One-line Summary
 Lightning Core is a macOS-first, Metal-backed runtime that provides low-level control (resident IO, policy routing, fused paths) with easy Python APIs.
-Current public release: **v0.1.15** (2026-04-02).
+Current public release: **v0.1.16** (2026-04-02).
 
 # 4. Abstract
 Lightning Core targets high-iteration experimentation on Apple Silicon by combining:
@@ -4834,7 +4834,7 @@ docs/                           # quickstart/advanced/contributor docs
 ```
 
 # 35. Roadmap
-Roadmap baseline is now aligned to **v0.1.15** and tracked in detail in [ROADMAP.md](ROADMAP.md).
+Roadmap baseline is now aligned to **v0.1.16** and tracked in detail in [ROADMAP.md](ROADMAP.md).
 
 Immediate replan (2026-04-01, roadmap-aligned):
 1. [completed] Complete backend abstraction split (compute/memory/sync/profiler) and lock public docs/examples.
@@ -4851,7 +4851,7 @@ Roadmap progress history is auto-generated from:
 
 ### Progress History (Auto-generated)
 
-- Total tracked updates: `36`
+- Total tracked updates: `39`
 - Source of truth: `docs/roadmap_updates.json`
 - Quick add command:
   `python scripts/generate_roadmap_history.py --add --date YYYY-MM-DD --milestone M-A --area runtime --title "your update"`
@@ -4860,7 +4860,7 @@ Roadmap progress history is auto-generated from:
 
 | Date | Updates | Milestones | Highlights |
 | --- | --- | --- | --- |
-| 2026-04-02 | 2 | M-B, M-A | Completed v0.1.15 generated API reference pipeline (Python/C++) in docs build and removed API index placeholder entries. / Bumped release baseline to v0.1.15 for generated API reference pipeline completion. |
+| 2026-04-02 | 5 | M-B, M-A | Completed v0.1.15 generated API reference pipeline (Python/C++) in docs build and removed API index placeholder entries. / Expanded graph-path contract coverage: sync policy(auto/always/never), fallback/device-change boundary checks, and shape/layout/lifetime regression guards. / ... (+3 more) |
 | 2026-04-01 | 16 | M-B, M-A | Completed generated API reference pipeline with auto-built Python/C++ reference pages and docs link-check gate in CI/docs workflows. / Added graph/eager A/B benchmark script with runtime host-dispatch delta and fallback counters, plus CI artifact publishing. / ... (+14 more) |
 | 2026-03-31 | 6 | M-A | Shipped docs site MVP with mkdocs and docs-pages workflow. / Re-tuned tiny one-shot conv CPU crossover default to `CJ_CONV2D_CPU_CROSSOVER_MACS=260000` via threshold sweep. / ... (+4 more) |
 | 2026-03-30 | 9 | M-B, M-A | Added operator registry v1 and minimal Graph IR prototype. / Added graph validation report passes and grouped planner options with sync-boundary/fallback segmentation. / ... (+7 more) |
@@ -4869,10 +4869,13 @@ Roadmap progress history is auto-generated from:
 
 **Detailed Timeline**
 
-#### 2026-04-02 (2 updates)
+#### 2026-04-02 (5 updates)
 
 - [completed] [M-B] [docs] Completed v0.1.15 generated API reference pipeline (Python/C++) in docs build and removed API index placeholder entries.
+- [completed] [M-A] [test] Expanded graph-path contract coverage: sync policy(auto/always/never), fallback/device-change boundary checks, and shape/layout/lifetime regression guards.
+- [completed] [M-A] [release] Bumped release baseline to v0.1.16 for parity + contract coverage expansion.
 - [completed] [M-A] [release] Bumped release baseline to v0.1.15 for generated API reference pipeline completion.
+- [completed] [M-A] [ci] Added CI Python smoke gate for integrated API + runtime timeline (tests/test_python_integrated_timeline_smoke.py).
 
 #### 2026-04-01 (16 updates)
 
@@ -4925,7 +4928,7 @@ Roadmap progress history is auto-generated from:
 
 <!-- AUTO-ROADMAP-HISTORY:END -->
 
-Phase A (2026 Q2, `v0.1.15`-`v0.2.0`): Runtime Core Hardening
+Phase A (2026 Q2, `v0.1.16`-`v0.2.0`): Runtime Core Hardening
 - Finalize backend contracts (compute/memory/sync/profiler split).
 - Stabilize integrated engine selector (`lightning` / `torch` / `auto`) for macOS-first workflows.
 - Lock tensor lifetime and metadata rules across Metal/CPU parity tests.
@@ -4997,4 +5000,4 @@ Community feedback channels we actively monitor:
 
 Lightning Core is stable enough for experimentation and benchmarking, while APIs and internals continue to evolve quickly.
 Visibility update: repository topics and benchmark discoverability documentation are actively maintained.
-Current release train: **v0.1.15**.
+Current release train: **v0.1.16**.
