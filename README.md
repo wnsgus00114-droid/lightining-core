@@ -439,6 +439,46 @@ print(report["winner"], report["graph_over_eager"], report["max_abs_diff"])
 print(y.shape, z.shape)
 ```
 
+PyTorch interop usage (Torch tensor <-> Lightning Core):
+
+```python
+import numpy as np
+import torch
+import lightning_core as lc
+import lightning_core_integrated_api as lc_api
+
+# Torch tensor 입력을 Lightning Core로 연결할 때는 CPU float32 contiguous NumPy로 변환
+x_t = torch.randn(1, 3, 8, 8, device="mps", dtype=torch.float32)
+w_t = torch.randn(16, 3, 3, 3, device="mps", dtype=torch.float32)
+b_t = torch.randn(16, device="mps", dtype=torch.float32)
+
+x_np = x_t.detach().to("cpu").contiguous().numpy()
+w_np = w_t.detach().to("cpu").contiguous().numpy()
+b_np = b_t.detach().to("cpu").contiguous().numpy()
+
+y_np = lc.api.conv_relu_nchw(
+    x_np, w_np, b_np,
+    stride_h=1, stride_w=1, pad_h=1, pad_w=1,
+    device="metal",
+)
+
+# 필요 시 다시 Torch tensor로 복귀
+y_t = torch.from_numpy(y_np).to(x_t.device)
+print("lc output torch shape:", tuple(y_t.shape))
+
+# 같은 helper API를 Torch engine으로도 실행 가능 (engine A/B)
+a_np = np.random.rand(128, 256).astype(np.float32)
+b_np = np.random.rand(256, 64).astype(np.float32)
+
+lc_api.set_backend("lightning")  # pure-LC
+out_lc = lc_api.lightning_matmul(a_np, b_np, device="metal")
+
+lc_api.set_backend("torch")      # Torch interop backend
+out_torch = lc_api.lightning_matmul(a_np, b_np, device="metal")
+
+print(out_lc.shape, out_torch.shape)
+```
+
 Typical optimization pattern:
 - use `*_into` to reuse preallocated output buffers,
 - keep data contiguous in `float32`,
