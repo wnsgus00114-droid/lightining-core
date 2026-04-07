@@ -58,6 +58,7 @@ jobs:
       QB_DEVICE: cpu
       QB_WARMUP: "10"
       QB_ITERS: "40"
+      QB_TRACE_ITERS: "6"
       QB_SEED: "20260401"
       QB_VAR_REPEATS: "9"
       QB_VAR_WARMUP: "20"
@@ -92,7 +93,7 @@ jobs:
           python benchmarks/python/quick_bench.py --device ${QB_DEVICE} --warmup ${QB_WARMUP} --iters ${QB_ITERS} --seed ${QB_SEED} --out ${REPORT_DIR}/quick_bench.csv
           python benchmarks/python/quick_bench_ci_summary.py --input ${REPORT_DIR}/quick_bench.csv --json ${REPORT_DIR}/quick_bench_summary.json --md ${REPORT_DIR}/quick_bench_summary.md --regress-threshold 1.0
           python benchmarks/python/quick_bench_variance_gate.py --runs-csv ${REPORT_DIR}/quick_bench_variance_runs.csv --json ${REPORT_DIR}/quick_bench_variance_summary.json --md ${REPORT_DIR}/quick_bench_variance_summary.md --repeats ${QB_VAR_REPEATS} --variance-threshold-pct ${QB_VAR_THRESHOLD_PCT} --device ${QB_DEVICE} --warmup ${QB_VAR_WARMUP} --iters ${QB_VAR_ITERS} --seed ${QB_SEED} --trim-runs ${QB_VAR_TRIM_RUNS}
-          python benchmarks/python/engine_split_bench.py --device auto --warmup ${QB_WARMUP} --iters ${QB_ITERS} --seed ${QB_SEED} --out-dir ${REPORT_DIR} --pure-csv engine_split_pure_lc.csv --pure-json engine_split_pure_lc.json --interop-csv engine_split_interop.csv --interop-json engine_split_interop.json
+          python benchmarks/python/engine_split_bench.py --device auto --warmup ${QB_WARMUP} --iters ${QB_ITERS} --trace-iters ${QB_TRACE_ITERS} --seed ${QB_SEED} --out-dir ${REPORT_DIR} --pure-csv engine_split_pure_lc.csv --pure-json engine_split_pure_lc.json --interop-csv engine_split_interop.csv --interop-json engine_split_interop.json
           CMD
 
       - name: Capture release benchmark environment
@@ -195,6 +196,7 @@ jobs:
             --device auto \
             --warmup "$QB_WARMUP" \
             --iters "$QB_ITERS" \
+            --trace-iters "$QB_TRACE_ITERS" \
             --seed "$QB_SEED" \
             --out-dir "$REPORT_DIR" \
             --pure-csv engine_split_pure_lc.csv \

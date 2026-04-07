@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+import os
 from threading import Lock
 import time
 from typing import Any
@@ -59,6 +60,55 @@ def _resolve_engine(device: str) -> str:
 
     torch, _ = _import_torch()
     return "torch" if torch is not None else "lightning"
+
+
+def _env_flag_enabled(name: str) -> bool:
+    raw = os.environ.get(name, "")
+    if not raw:
+        return False
+    c0 = raw.strip().lower()[0]
+    return c0 in {"1", "t", "y"}
+
+
+def _conv2d_cpu_crossover_macs() -> int:
+    raw = os.environ.get("CJ_CONV2D_CPU_CROSSOVER_MACS", "").strip()
+    if raw.isdigit():
+        return int(raw)
+    return 260000
+
+
+def _should_prefer_tiny_cpu_conv_attn_chain(
+    *,
+    device: str,
+    batch: int,
+    in_channels: int,
+    in_h: int,
+    in_w: int,
+    out_channels: int,
+    kernel_h: int,
+    kernel_w: int,
+    stride_h: int,
+    stride_w: int,
+    pad_h: int,
+    pad_w: int,
+    seq_len: int,
+    head_dim: int,
+) -> bool:
+    if _env_flag_enabled("LC_CONV_ATTN_TINY_CHAIN_DISABLE"):
+        return False
+    if device != "metal":
+        return False
+    if kernel_h != 3 or kernel_w != 3 or stride_h != 1 or stride_w != 1 or pad_h != 1 or pad_w != 1:
+        return False
+    if batch > 64 or in_channels > 16 or out_channels > 32:
+        return False
+    out_h = (in_h + 2 * pad_h - kernel_h) // stride_h + 1
+    out_w = (in_w + 2 * pad_w - kernel_w) // stride_w + 1
+    conv_macs = batch * out_h * out_w * out_channels * in_channels * kernel_h * kernel_w
+    if conv_macs > _conv2d_cpu_crossover_macs():
+        return False
+    attn_work = int(seq_len) * int(head_dim)
+    return 0 < attn_work <= 12288
 
 
 def _as_f32_c(x: Any) -> np.ndarray:
@@ -668,10 +718,14 @@ class ConvAttentionResidentPipeline:
         total = self.need * 3
         if flat.size >= total:
             return flat[0 : self.need], flat[self.need : 2 * self.need], flat[2 * self.need : 3 * self.need]
-
-        reps = (total + flat.size - 1) // flat.size
-        tiled = np.tile(flat, reps)
-        np.copyto(self._qkv_tmp, tiled[0:total])
+        if flat.size == 0:
+            raise ValueError("conv output must be non-empty")
+        copied = min(flat.size, total)
+        np.copyto(self._qkv_tmp[0:copied], flat[0:copied], casting="no")
+        while copied < total:
+            chunk = min(copied, total - copied)
+            np.copyto(self._qkv_tmp[copied : copied + chunk], self._qkv_tmp[0:chunk], casting="no")
+            copied += chunk
         return (
             self._qkv_tmp[0 : self.need],
             self._qkv_tmp[self.need : 2 * self.need],
@@ -708,11 +762,31 @@ def lightning_conv_attention_torchstrong_nchw(
     x_arr = _as_f32_c(x)
     w_arr = _as_f32_c(conv_weight)
     b_arr = None if conv_bias is None else np.asarray(conv_bias, dtype=np.float32)
+    effective_device = (
+        "cpu"
+        if _should_prefer_tiny_cpu_conv_attn_chain(
+            device=device,
+            batch=int(x_arr.shape[0]),
+            in_channels=int(x_arr.shape[1]),
+            in_h=int(x_arr.shape[2]),
+            in_w=int(x_arr.shape[3]),
+            out_channels=int(w_arr.shape[0]),
+            kernel_h=int(w_arr.shape[2]),
+            kernel_w=int(w_arr.shape[3]),
+            stride_h=int(stride_h),
+            stride_w=int(stride_w),
+            pad_h=int(pad_h),
+            pad_w=int(pad_w),
+            seq_len=int(seq),
+            head_dim=int(head_dim),
+        )
+        else device
+    )
 
     # Hybrid execution policy:
     # - graph mode is currently lightning-core GraphIR only.
     # - torch backend always executes eager conv->attn path (graph request falls back deterministically).
-    engine = _resolve_engine(device)
+    engine = _resolve_engine(effective_device)
     if engine == "torch":
         return _torch_conv_attention_torchstrong(
             x_arr,
@@ -724,7 +798,7 @@ def lightning_conv_attention_torchstrong_nchw(
             stride_w=int(stride_w),
             pad_h=int(pad_h),
             pad_w=int(pad_w),
-            device=device,
+            device=effective_device,
         )
 
     if hasattr(lc, "lightning_conv_attention_torchstrong_nchw"):
@@ -740,7 +814,7 @@ def lightning_conv_attention_torchstrong_nchw(
                     int(stride_w),
                     int(pad_h),
                     int(pad_w),
-                    device,
+                    effective_device,
                     mode,
                 ),
                 dtype=np.float32,
@@ -759,7 +833,7 @@ def lightning_conv_attention_torchstrong_nchw(
                     int(stride_w),
                     int(pad_h),
                     int(pad_w),
-                    device,
+                    effective_device,
                 ),
                 dtype=np.float32,
             )
@@ -771,7 +845,7 @@ def lightning_conv_attention_torchstrong_nchw(
 
     key = cache_key or (
         f"conv_attn/{x_arr.shape[1]}_{w_arr.shape[0]}_{w_arr.shape[2]}_{w_arr.shape[3]}_"
-        f"{seq}_{head_dim}_{stride_h}_{stride_w}_{pad_h}_{pad_w}_{conv_policy}_{device}_{mode}"
+        f"{seq}_{head_dim}_{stride_h}_{stride_w}_{pad_h}_{pad_w}_{conv_policy}_{effective_device}_{mode}"
     )
 
     if mode == "graph":
@@ -792,13 +866,13 @@ def lightning_conv_attention_torchstrong_nchw(
             tb = conv_g.add_tensor(list(b_arr.shape), dtype="float32", name="b", constant=True)
             conv_g.add_node("conv2d_nchw3x3s1p1", [tx, tw, tb], [tconv])
             try:
-                conv_res = conv_g.execute_f32({tx: x_arr, tw: w_arr, tb: b_arr}, preferred_device=device)
+                conv_res = conv_g.execute_f32({tx: x_arr, tw: w_arr, tb: b_arr}, preferred_device=effective_device)
             except RuntimeError:
                 conv_res = None
         else:
             conv_g.add_node("conv2d_nchw3x3s1p1", [tx, tw], [tconv])
             try:
-                conv_res = conv_g.execute_f32({tx: x_arr, tw: w_arr}, preferred_device=device)
+                conv_res = conv_g.execute_f32({tx: x_arr, tw: w_arr}, preferred_device=effective_device)
             except RuntimeError:
                 conv_res = None
 
@@ -811,8 +885,15 @@ def lightning_conv_attention_torchstrong_nchw(
             if conv_flat.size >= total:
                 packed = conv_flat[:total].copy()
             else:
-                reps = (total + conv_flat.size - 1) // conv_flat.size
-                packed = np.tile(conv_flat, reps)[:total].astype(np.float32, copy=False)
+                if conv_flat.size == 0:
+                    raise ValueError("conv output must be non-empty")
+                packed = np.empty((total,), dtype=np.float32)
+                copied = min(conv_flat.size, total)
+                np.copyto(packed[0:copied], conv_flat[0:copied], casting="no")
+                while copied < total:
+                    chunk = min(copied, total - copied)
+                    np.copyto(packed[copied : copied + chunk], packed[0:chunk], casting="no")
+                    copied += chunk
             q = packed[0:need]
             k = packed[need : 2 * need]
             v = packed[2 * need : 3 * need]
@@ -824,7 +905,7 @@ def lightning_conv_attention_torchstrong_nchw(
             to = attn_g.add_tensor([int(seq), int(head_dim)], dtype="float32", name="out")
             attn_g.add_node("attention_forward", [tq, tk, tv], [to])
             try:
-                out_dict = attn_g.execute_f32({tq: q, tk: k, tv: v}, preferred_device=device)
+                out_dict = attn_g.execute_f32({tq: q, tk: k, tv: v}, preferred_device=effective_device)
             except RuntimeError:
                 out_dict = None
             if out_dict is not None:
@@ -843,7 +924,7 @@ def lightning_conv_attention_torchstrong_nchw(
                 conv_stride_w=stride_w,
                 conv_pad_h=pad_h,
                 conv_pad_w=pad_w,
-                device=device,
+                device=effective_device,
                 conv_policy=conv_policy,
                 cache_key_prefix=key,
             )
@@ -859,7 +940,7 @@ def lightning_conv_attention_torchstrong_nchw(
         conv_stride_w=stride_w,
         conv_pad_h=pad_h,
         conv_pad_w=pad_w,
-        device=device,
+        device=effective_device,
         conv_policy=conv_policy,
         cache_key_prefix=key,
     )

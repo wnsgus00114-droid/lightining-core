@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -108,6 +110,56 @@ IntegratedExecutionMode parseIntegratedExecutionMode(const std::string& mode) {
     return IntegratedExecutionMode::kGraph;
   }
   throw std::invalid_argument("execution_mode must be 'eager' or 'graph'");
+}
+
+bool envFlagEnabled(const char* name) {
+  if (name == nullptr) {
+    return false;
+  }
+  const char* raw = std::getenv(name);
+  if (raw == nullptr || raw[0] == '\0') {
+    return false;
+  }
+  const char c0 = static_cast<char>(std::tolower(static_cast<unsigned char>(raw[0])));
+  return c0 == '1' || c0 == 't' || c0 == 'y';
+}
+
+bool shouldPreferTinyCpuConvAttnChain(
+    lc::Device requested_device,
+    std::size_t batch,
+    std::size_t in_channels,
+    std::size_t out_channels,
+    std::size_t kernel_h,
+    std::size_t kernel_w,
+    std::size_t stride_h,
+    std::size_t stride_w,
+    std::size_t pad_h,
+    std::size_t pad_w,
+    std::size_t out_h,
+    std::size_t out_w,
+    std::size_t seq_len,
+    std::size_t head_dim) {
+  if (envFlagEnabled("LC_CONV_ATTN_TINY_CHAIN_DISABLE")) {
+    return false;
+  }
+  if (requested_device != lc::Device::kMetal) {
+    return false;
+  }
+  if (kernel_h != 3 || kernel_w != 3 || stride_h != 1 || stride_w != 1 || pad_h != 1 || pad_w != 1) {
+    return false;
+  }
+  if (batch > 64 || in_channels > 16 || out_channels > 32) {
+    return false;
+  }
+  const std::size_t conv_macs = batch * out_h * out_w * out_channels * in_channels * kernel_h * kernel_w;
+  if (conv_macs > lc::ops::conv2dOneShotCpuCrossoverMacs()) {
+    return false;
+  }
+  const std::size_t attn_work = seq_len * head_dim;
+  if (attn_work == 0 || attn_work > 12288) {
+    return false;
+  }
+  return true;
 }
 
 lc::graph::GraphPlannerOptions defaultGraphPlannerOptions(lc::Device preferred_device) {
@@ -578,6 +630,23 @@ void convAttentionTorchstrongNchwIntoDirect(
   const std::size_t out_h = (in_h + (2 * pad_h) - kernel_h) / stride_h + 1;
   const std::size_t out_w = (in_w + (2 * pad_w) - kernel_w) / stride_w + 1;
   const std::size_t conv_size = batch * out_channels * out_h * out_w;
+  const lc::Device requested_device = parseDevice(device_name);
+  const bool tiny_cpu_chain = shouldPreferTinyCpuConvAttnChain(
+      requested_device,
+      batch,
+      in_channels,
+      out_channels,
+      kernel_h,
+      kernel_w,
+      stride_h,
+      stride_w,
+      pad_h,
+      pad_w,
+      out_h,
+      out_w,
+      seq_len,
+      head_dim);
+  const lc::Device attn_device = tiny_cpu_chain ? lc::Device::kCPU : requested_device;
 
   const float* bias_ptr = nullptr;
   py::array_t<float, py::array::c_style | py::array::forcecast> bias_arr;
@@ -593,7 +662,6 @@ void convAttentionTorchstrongNchwIntoDirect(
   if (conv_tmp.size() < conv_size) {
     conv_tmp.resize(conv_size);
   }
-  const lc::Device device = parseDevice(device_name);
   throwIfNotSuccess(lc::ops::conv2dNchw<float>(
       x.data(),
       w.data(),
@@ -610,12 +678,12 @@ void convAttentionTorchstrongNchwIntoDirect(
       stride_w,
       pad_h,
       pad_w,
-      device,
+      requested_device,
       true));
 
   const std::size_t total = need * 3;
   const float* conv_ptr = conv_tmp.data();
-  auto session = getOrCreateAttentionSession(seq_len, head_dim, false, device);
+  auto session = getOrCreateAttentionSession(seq_len, head_dim, false, attn_device);
 
   if (conv_size >= total) {
     throwIfNotSuccess(session->forward(conv_ptr, conv_ptr + need, conv_ptr + (2 * need), out.mutable_data()));

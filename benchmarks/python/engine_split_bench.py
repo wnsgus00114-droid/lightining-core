@@ -4,6 +4,9 @@
 Outputs are intentionally separated:
 - pure-LC report: runtime direct vs lc.api(lightning)
 - interop report: lc.api(lightning) vs lc.api(torch)
+
+This benchmark also records runtime trace timeline hotspots (`group_by=op_path`)
+for bottleneck-oriented optimization and release evidence.
 """
 
 from __future__ import annotations
@@ -58,6 +61,66 @@ def _fmt_ratio(value: float) -> str:
 
 def _torch_available() -> bool:
     return torch is not None
+
+
+def _runtime_trace_available() -> bool:
+    required = (
+        "runtime_trace_clear",
+        "runtime_trace_enable",
+        "runtime_trace_events",
+        "runtime_trace_timeline",
+    )
+    return all(hasattr(lc, name) for name in required)
+
+
+def _trace_payload_na(note: str) -> dict:
+    return {
+        "events_per_iter": float("nan"),
+        "dispatch_per_iter": float("nan"),
+        "fallback_per_iter": float("nan"),
+        "top_op_path": "n/a",
+        "timeline_window_ns": 0,
+        "timeline_group_count": 0,
+        "note": note,
+    }
+
+
+def _collect_trace_metrics(run_once: Callable[[], None], trace_iters: int) -> dict:
+    if trace_iters <= 0:
+        return _trace_payload_na("trace disabled")
+    if not _runtime_trace_available():
+        return _trace_payload_na("runtime trace API unavailable")
+
+    lc.runtime_trace_clear()
+    lc.runtime_trace_enable(True)
+    try:
+        for _ in range(trace_iters):
+            run_once()
+    finally:
+        lc.runtime_trace_enable(False)
+
+    events = lc.runtime_trace_events()
+    timeline = lc.runtime_trace_timeline(
+        event_sort_by="timestamp_ns",
+        event_descending=False,
+        group_by="op_path",
+        group_sort_by="total_delta_next_ns",
+        group_descending=True,
+        hotspot_top_k=8,
+    )
+    dispatch_events = [ev for ev in events if ev.get("type") == "op_dispatch"]
+    fallback_events = [ev for ev in dispatch_events if bool(ev.get("fallback", False))]
+    groups = list(timeline.get("groups", []))
+    top_op_path = groups[0]["key"] if groups else "n/a"
+    return {
+        "events_per_iter": float(len(events)) / float(trace_iters),
+        "dispatch_per_iter": float(len(dispatch_events)) / float(trace_iters),
+        "fallback_per_iter": float(len(fallback_events)) / float(trace_iters),
+        "top_op_path": top_op_path,
+        "timeline_window_ns": int(timeline.get("window_ns", 0)),
+        "timeline_group_count": len(groups),
+        "note": "",
+    }
 
 
 def _resolve_device(arg_device: str) -> str:
@@ -116,10 +179,14 @@ def _benchmark_case(
     device: str,
     warmup: int,
     iters: int,
+    trace_iters: int,
 ) -> tuple[dict, dict]:
     runtime_ms = _time_ms(runtime_fn, warmup, iters)
+    runtime_trace = _collect_trace_metrics(runtime_fn, trace_iters)
+
     _set_engine("lightning")
     api_lightning_ms = _time_ms(api_fn, warmup, iters)
+    api_lightning_trace = _collect_trace_metrics(api_fn, trace_iters)
 
     pure_row = {
         "suite": "engine_split_pure_lc",
@@ -131,7 +198,13 @@ def _benchmark_case(
         "lc_api_lightning_ms": api_lightning_ms,
         "api_over_runtime": _ratio(api_lightning_ms, runtime_ms),
         "runtime_over_api": _ratio(runtime_ms, api_lightning_ms),
-        "note": "",
+        "runtime_top_op_path": runtime_trace["top_op_path"],
+        "api_lightning_top_op_path": api_lightning_trace["top_op_path"],
+        "runtime_dispatch_per_iter": runtime_trace["dispatch_per_iter"],
+        "api_lightning_dispatch_per_iter": api_lightning_trace["dispatch_per_iter"],
+        "runtime_fallback_per_iter": runtime_trace["fallback_per_iter"],
+        "api_lightning_fallback_per_iter": api_lightning_trace["fallback_per_iter"],
+        "note": runtime_trace["note"] or api_lightning_trace["note"],
     }
 
     if interop_fn is None:
@@ -145,12 +218,19 @@ def _benchmark_case(
             "lc_api_torch_ms": float("nan"),
             "interop_over_pure": float("nan"),
             "pure_over_interop": float("nan"),
+            "api_lightning_top_op_path": api_lightning_trace["top_op_path"],
+            "api_torch_top_op_path": "n/a",
+            "api_lightning_dispatch_per_iter": api_lightning_trace["dispatch_per_iter"],
+            "api_torch_dispatch_per_iter": float("nan"),
+            "api_lightning_fallback_per_iter": api_lightning_trace["fallback_per_iter"],
+            "api_torch_fallback_per_iter": float("nan"),
             "note": "torch backend unavailable",
         }
         return pure_row, interop_row
 
     _set_engine("torch")
     api_torch_ms = _time_ms(interop_fn, warmup, iters)
+    api_torch_trace = _collect_trace_metrics(interop_fn, trace_iters)
     _set_engine("lightning")
 
     interop_row = {
@@ -163,7 +243,13 @@ def _benchmark_case(
         "lc_api_torch_ms": api_torch_ms,
         "interop_over_pure": _ratio(api_torch_ms, api_lightning_ms),
         "pure_over_interop": _ratio(api_lightning_ms, api_torch_ms),
-        "note": "",
+        "api_lightning_top_op_path": api_lightning_trace["top_op_path"],
+        "api_torch_top_op_path": api_torch_trace["top_op_path"],
+        "api_lightning_dispatch_per_iter": api_lightning_trace["dispatch_per_iter"],
+        "api_torch_dispatch_per_iter": api_torch_trace["dispatch_per_iter"],
+        "api_lightning_fallback_per_iter": api_lightning_trace["fallback_per_iter"],
+        "api_torch_fallback_per_iter": api_torch_trace["fallback_per_iter"],
+        "note": api_torch_trace["note"],
     }
     return pure_row, interop_row
 
@@ -185,6 +271,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Pure-LC vs interop engine split benchmark")
     parser.add_argument("--warmup", type=int, default=20)
     parser.add_argument("--iters", type=int, default=120)
+    parser.add_argument("--trace-iters", type=int, default=8)
     parser.add_argument("--seed", type=int, default=20260407)
     parser.add_argument(
         "--device",
@@ -226,6 +313,7 @@ def main() -> None:
         device=device,
         warmup=args.warmup,
         iters=args.iters,
+        trace_iters=args.trace_iters,
     )
     pure_rows.append(pure)
     interop_rows.append(interop)
@@ -243,47 +331,70 @@ def main() -> None:
         device=device,
         warmup=args.warmup,
         iters=args.iters,
+        trace_iters=args.trace_iters,
     )
     pure_rows.append(pure)
     interop_rows.append(interop)
 
-    # conv+relu
-    x = np.random.rand(1, 3, 32, 32).astype(np.float32)
-    w_conv = np.random.rand(16, 3, 3, 3).astype(np.float32)
-    b_conv = np.random.rand(16).astype(np.float32)
-    pure, interop = _benchmark_case(
-        bench="conv_relu_nchw",
-        shape="batch=1,in_ch=3,h=32,w=32,out_ch=16,k=3",
-        runtime_fn=lambda: _runtime_conv_relu(x, w_conv, b_conv, device),
-        api_fn=lambda: lc.api.conv_relu_nchw(x, w_conv, b_conv, 1, 1, 1, 1, device),
-        interop_fn=(lambda: lc.api.conv_relu_nchw(x, w_conv, b_conv, 1, 1, 1, 1, device)) if _torch_available() else None,
-        device=device,
-        warmup=args.warmup,
-        iters=args.iters,
-    )
-    pure_rows.append(pure)
-    interop_rows.append(interop)
+    # conv+relu targeted tiny/baseline cases
+    conv_cases = [
+        (1, 3, 16, 16, 16, 3),
+        (1, 3, 24, 24, 16, 3),
+        (1, 3, 32, 32, 16, 3),
+    ]
+    for n, c, h, w_h, oc, ksz in conv_cases:
+        x = np.random.rand(n, c, h, w_h).astype(np.float32)
+        w_conv = np.random.rand(oc, c, ksz, ksz).astype(np.float32)
+        b_conv = np.random.rand(oc).astype(np.float32)
+        pure, interop = _benchmark_case(
+            bench="conv_relu_nchw",
+            shape=f"batch={n},in_ch={c},h={h},w={w_h},out_ch={oc},k={ksz}",
+            runtime_fn=lambda x=x, w_conv=w_conv, b_conv=b_conv: _runtime_conv_relu(x, w_conv, b_conv, device),
+            api_fn=lambda x=x, w_conv=w_conv, b_conv=b_conv: lc.api.conv_relu_nchw(
+                x, w_conv, b_conv, 1, 1, 1, 1, device
+            ),
+            interop_fn=(
+                lambda x=x, w_conv=w_conv, b_conv=b_conv: lc.api.conv_relu_nchw(
+                    x, w_conv, b_conv, 1, 1, 1, 1, device
+                )
+            )
+            if _torch_available()
+            else None,
+            device=device,
+            warmup=args.warmup,
+            iters=args.iters,
+            trace_iters=args.trace_iters,
+        )
+        pure_rows.append(pure)
+        interop_rows.append(interop)
 
-    # conv->attn pipeline
+    # conv->attn hotspot shape set
     x_pipe = np.random.rand(1, 3, 8, 8).astype(np.float32)
     w_pipe = np.random.rand(16, 3, 3, 3).astype(np.float32)
     b_pipe = np.random.rand(16).astype(np.float32)
-    pure, interop = _benchmark_case(
-        bench="conv_attention_torchstrong_nchw",
-        shape="conv(n=1,c=3->16,h=8,w=8,k=3)+attn(seq=96,d=48)",
-        runtime_fn=lambda: _runtime_conv_attention(x_pipe, w_pipe, b_pipe, 96, 48, device),
-        api_fn=lambda: lc.api.conv_attention_torchstrong_nchw(x_pipe, w_pipe, b_pipe, 96, 48, 1, 1, 1, 1, device, "eager"),
-        interop_fn=(
-            lambda: lc.api.conv_attention_torchstrong_nchw(x_pipe, w_pipe, b_pipe, 96, 48, 1, 1, 1, 1, device, "eager")
+    conv_attn_cases = [(48, 48), (96, 48), (192, 48), (192, 8)]
+    for seq, dim in conv_attn_cases:
+        pure, interop = _benchmark_case(
+            bench="conv_attention_torchstrong_nchw",
+            shape=f"conv(n=1,c=3->16,h=8,w=8,k=3)+attn(seq={seq},d={dim})",
+            runtime_fn=lambda seq=seq, dim=dim: _runtime_conv_attention(x_pipe, w_pipe, b_pipe, seq, dim, device),
+            api_fn=lambda seq=seq, dim=dim: lc.api.conv_attention_torchstrong_nchw(
+                x_pipe, w_pipe, b_pipe, seq, dim, 1, 1, 1, 1, device, "eager"
+            ),
+            interop_fn=(
+                lambda seq=seq, dim=dim: lc.api.conv_attention_torchstrong_nchw(
+                    x_pipe, w_pipe, b_pipe, seq, dim, 1, 1, 1, 1, device, "eager"
+                )
+            )
+            if _torch_available()
+            else None,
+            device=device,
+            warmup=max(8, args.warmup // 2),
+            iters=max(60, args.iters // 2),
+            trace_iters=max(4, args.trace_iters // 2),
         )
-        if _torch_available()
-        else None,
-        device=device,
-        warmup=max(8, args.warmup // 2),
-        iters=max(60, args.iters // 2),
-    )
-    pure_rows.append(pure)
-    interop_rows.append(interop)
+        pure_rows.append(pure)
+        interop_rows.append(interop)
 
     pure_fields = [
         "suite",
@@ -295,6 +406,12 @@ def main() -> None:
         "lc_api_lightning_ms",
         "api_over_runtime",
         "runtime_over_api",
+        "runtime_top_op_path",
+        "api_lightning_top_op_path",
+        "runtime_dispatch_per_iter",
+        "api_lightning_dispatch_per_iter",
+        "runtime_fallback_per_iter",
+        "api_lightning_fallback_per_iter",
         "note",
     ]
     interop_fields = [
@@ -307,6 +424,12 @@ def main() -> None:
         "lc_api_torch_ms",
         "interop_over_pure",
         "pure_over_interop",
+        "api_lightning_top_op_path",
+        "api_torch_top_op_path",
+        "api_lightning_dispatch_per_iter",
+        "api_torch_dispatch_per_iter",
+        "api_lightning_fallback_per_iter",
+        "api_torch_fallback_per_iter",
         "note",
     ]
 
@@ -326,6 +449,8 @@ def main() -> None:
             "has_lc_api_set_engine": bool(hasattr(lc, "api") and hasattr(lc.api, "set_engine")),
             "resolved_engine_after_run": _get_engine(),
         },
+        "trace_available": _runtime_trace_available(),
+        "trace_iters": args.trace_iters,
         "torch_available": _torch_available(),
         "seed": args.seed,
         "warmup": args.warmup,
@@ -337,7 +462,7 @@ def main() -> None:
 
     print(
         f"backend={meta['lc_backend']} device={device} torch_available={meta['torch_available']} "
-        f"engine_api_setter={meta['engine_api']['has_lc_api_set_engine']}"
+        f"engine_api_setter={meta['engine_api']['has_lc_api_set_engine']} trace_available={meta['trace_available']}"
     )
     print(f"saved: {pure_csv_path}")
     print(f"saved: {pure_json_path}")
@@ -348,7 +473,8 @@ def main() -> None:
     for row in pure_rows:
         print(
             f"[{row['bench']}] {row['shape']} | runtime={_fmt_ms(row['lc_runtime_ms'])}ms "
-            f"api(lightning)={_fmt_ms(row['lc_api_lightning_ms'])}ms api/runtime={_fmt_ratio(row['api_over_runtime'])}"
+            f"api(lightning)={_fmt_ms(row['lc_api_lightning_ms'])}ms api/runtime={_fmt_ratio(row['api_over_runtime'])} "
+            f"hotspot={row['api_lightning_top_op_path']}"
         )
 
     print("\n=== Interop Split (lc.api(torch) vs lc.api(lightning)) ===")
@@ -356,7 +482,7 @@ def main() -> None:
         print(
             f"[{row['bench']}] {row['shape']} | api(lightning)={_fmt_ms(row['lc_api_lightning_ms'])}ms "
             f"api(torch)={_fmt_ms(row['lc_api_torch_ms'])}ms interop/pure={_fmt_ratio(row['interop_over_pure'])} "
-            f"status={row['status']}"
+            f"hotspot(lightning)={row['api_lightning_top_op_path']} status={row['status']}"
         )
 
 

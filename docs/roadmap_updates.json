@@ -1,10 +1,37 @@
 [
   {
+    "id": "2026-04-07-runtime-optimized-tiny-conv-attn-integrated-path-using-op-path-timeline-bottleneck-guidance-and-tiny-chain-cpu-preference-heuristic",
+    "date": "2026-04-07",
+    "milestone": "M-A",
+    "area": "runtime",
+    "title": "Optimized tiny conv->attn integrated path using op_path timeline bottleneck guidance and tiny-chain CPU preference heuristic.",
+    "status": "completed",
+    "source": "local"
+  },
+  {
     "id": "2026-04-07-python-finalized-lc-api-engine-bridge-lightning-torch-auto-with-same-surface-engine-switching",
     "date": "2026-04-07",
     "milestone": "M-A",
     "area": "python",
     "title": "Finalized lc.api engine bridge (lightning/torch/auto) with same-surface engine switching",
+    "status": "completed",
+    "source": "local"
+  },
+  {
+    "id": "2026-04-07-ci-extended-release-ci-engine-split-benchmark-evidence-with-trace-iters-and-hotspot-shape-set-reporting-for-tiny-conv-and-conv-attn-cases",
+    "date": "2026-04-07",
+    "milestone": "M-A",
+    "area": "ci",
+    "title": "Extended release/CI engine-split benchmark evidence with trace-iters and hotspot shape-set reporting for tiny conv and conv->attn cases.",
+    "status": "completed",
+    "source": "local"
+  },
+  {
+    "id": "2026-04-07-release-bumped-public-baseline-to-v0-1-18-and-aligned-readme-roadmap-pyproject-version-metadata",
+    "date": "2026-04-07",
+    "milestone": "M-A",
+    "area": "release",
+    "title": "Bumped public baseline to v0.1.18 and aligned README/ROADMAP/pyproject version metadata.",
     "status": "completed",
     "source": "local"
   },

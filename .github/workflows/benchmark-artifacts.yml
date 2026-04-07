@@ -66,6 +66,7 @@ jobs:
             --device auto \
             --warmup 10 \
             --iters 40 \
+            --trace-iters 6 \
             --out-dir benchmarks/reports/ci \
             --pure-csv engine_split_pure_lc.csv \
             --pure-json engine_split_pure_lc.json \
