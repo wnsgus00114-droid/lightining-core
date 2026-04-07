@@ -45,6 +45,83 @@ def main() -> None:
     _require(conv_out.shape == (1, 16, 8, 8), "conv_relu_nchw output shape mismatch")
     _require(conv_out.dtype == np.float32, "conv_relu_nchw output dtype mismatch")
 
+    out_lc_eager = lc_api.lightning_conv_attention_torchstrong_nchw(
+        x,
+        w,
+        bias,
+        seq=48,
+        head_dim=48,
+        stride_h=1,
+        stride_w=1,
+        pad_h=1,
+        pad_w=1,
+        device="metal",
+        execution_mode="eager",
+    )
+    out_lc_graph_req = lc_api.lightning_conv_attention_torchstrong_nchw(
+        x,
+        w,
+        bias,
+        seq=48,
+        head_dim=48,
+        stride_h=1,
+        stride_w=1,
+        pad_h=1,
+        pad_w=1,
+        device="metal",
+        execution_mode="graph",
+    )
+    _require(np.asarray(out_lc_eager).dtype == np.float32, "lightning conv->attn eager dtype mismatch")
+    _require(np.asarray(out_lc_graph_req).dtype == np.float32, "lightning conv->attn graph-request dtype mismatch")
+
+    # Hybrid engine policy smoke:
+    # torch backend should execute conv->attn path without using lightning graph mode internals.
+    try:
+        import torch  # noqa: F401
+
+        has_torch = True
+    except Exception:
+        has_torch = False
+
+    if has_torch:
+        lc_api.set_backend("torch")
+        _require(lc_api.get_backend() == "torch", "integrated backend should be 'torch'")
+
+        out_eager = lc_api.lightning_conv_attention_torchstrong_nchw(
+            x,
+            w,
+            bias,
+            seq=48,
+            head_dim=48,
+            stride_h=1,
+            stride_w=1,
+            pad_h=1,
+            pad_w=1,
+            device="metal",
+            execution_mode="eager",
+        )
+        out_graph_req = lc_api.lightning_conv_attention_torchstrong_nchw(
+            x,
+            w,
+            bias,
+            seq=48,
+            head_dim=48,
+            stride_h=1,
+            stride_w=1,
+            pad_h=1,
+            pad_w=1,
+            device="metal",
+            execution_mode="graph",
+        )
+        _require(np.asarray(out_eager).dtype == np.float32, "torch conv->attn eager dtype mismatch")
+        _require(np.asarray(out_graph_req).dtype == np.float32, "torch conv->attn graph-request dtype mismatch")
+        _require(
+            np.allclose(np.asarray(out_eager).reshape(-1), np.asarray(out_graph_req).reshape(-1), atol=1e-4, rtol=1e-4),
+            "torch backend graph-request should deterministically match eager path output",
+        )
+
+    lc_api.set_backend("lightning")
+
     lc.runtime_trace_enable(False)
     timeline = lc.runtime_trace_timeline(
         event_sort_by="timestamp_ns",

@@ -183,6 +183,53 @@ def clear_attention_session_cache() -> None:
         _ATTN_SESSION_CACHE.clear()
 
 
+def _torch_conv_attention_torchstrong(
+    x_arr: np.ndarray,
+    w_arr: np.ndarray,
+    b_arr: np.ndarray | None,
+    *,
+    seq: int,
+    head_dim: int,
+    stride_h: int,
+    stride_w: int,
+    pad_h: int,
+    pad_w: int,
+    device: str,
+) -> np.ndarray:
+    torch, F = _import_torch()
+    if torch is None or F is None:
+        raise RuntimeError("torch backend selected but torch is unavailable")
+
+    torch_device = _torch_device_for(device)
+    tx = torch.as_tensor(x_arr, dtype=torch.float32, device=torch_device)
+    tw = torch.as_tensor(w_arr, dtype=torch.float32, device=torch_device)
+    tb = None if b_arr is None else torch.as_tensor(b_arr, dtype=torch.float32, device=torch_device)
+
+    conv = F.conv2d(tx, tw, tb, stride=(stride_h, stride_w), padding=(pad_h, pad_w))
+    conv = F.relu(conv)
+
+    need = int(seq) * int(head_dim)
+    total = need * 3
+    flat = conv.reshape(-1)
+    if int(flat.numel()) < total:
+        reps = (total + int(flat.numel()) - 1) // int(flat.numel())
+        flat = flat.repeat(reps)
+
+    q = flat[0:need].reshape(1, 1, int(seq), int(head_dim))
+    k = flat[need : 2 * need].reshape(1, 1, int(seq), int(head_dim))
+    v = flat[2 * need : 3 * need].reshape(1, 1, int(seq), int(head_dim))
+
+    if hasattr(F, "scaled_dot_product_attention"):
+        out = F.scaled_dot_product_attention(q, k, v, is_causal=False)
+    else:
+        scale = float(head_dim) ** -0.5
+        scores = torch.matmul(q, k.transpose(-2, -1)) * scale
+        probs = torch.softmax(scores, dim=-1)
+        out = torch.matmul(probs, v)
+
+    return out.reshape(-1).detach().to("cpu").contiguous().numpy()
+
+
 def lightning_attention(q: Any, k: Any, v: Any, seq: int, head_dim: int, device: str = "metal") -> np.ndarray:
     if _resolve_engine(device) == "torch":
         torch, F = _import_torch()
@@ -618,13 +665,35 @@ def lightning_conv_attention_torchstrong_nchw(
     if mode not in {"eager", "graph"}:
         raise ValueError("execution_mode must be 'eager' or 'graph'")
 
+    x_arr = _as_f32_c(x)
+    w_arr = _as_f32_c(conv_weight)
+    b_arr = None if conv_bias is None else np.asarray(conv_bias, dtype=np.float32)
+
+    # Hybrid execution policy:
+    # - graph mode is currently lightning-core GraphIR only.
+    # - torch backend always executes eager conv->attn path (graph request falls back deterministically).
+    engine = _resolve_engine(device)
+    if engine == "torch":
+        return _torch_conv_attention_torchstrong(
+            x_arr,
+            w_arr,
+            b_arr,
+            seq=int(seq),
+            head_dim=int(head_dim),
+            stride_h=int(stride_h),
+            stride_w=int(stride_w),
+            pad_h=int(pad_h),
+            pad_w=int(pad_w),
+            device=device,
+        )
+
     if hasattr(lc, "lightning_conv_attention_torchstrong_nchw"):
         try:
             return np.asarray(
                 lc.lightning_conv_attention_torchstrong_nchw(
-                    x,
-                    conv_weight,
-                    conv_bias,
+                    x_arr,
+                    w_arr,
+                    b_arr,
                     int(seq),
                     int(head_dim),
                     int(stride_h),
@@ -641,9 +710,9 @@ def lightning_conv_attention_torchstrong_nchw(
                 raise RuntimeError("graph execution_mode requires a newer lightning_core build") from None
             return np.asarray(
                 lc.lightning_conv_attention_torchstrong_nchw(
-                    x,
-                    conv_weight,
-                    conv_bias,
+                    x_arr,
+                    w_arr,
+                    b_arr,
                     int(seq),
                     int(head_dim),
                     int(stride_h),
@@ -654,10 +723,12 @@ def lightning_conv_attention_torchstrong_nchw(
                 ),
                 dtype=np.float32,
             )
+        except RuntimeError:
+            # Some builds expose the fused entrypoint but reject graph mode on specific
+            # device/shape combinations at runtime. Fall through to Python graph/eager
+            # implementation so execution policy remains deterministic.
+            pass
 
-    x_arr = _as_f32_c(x)
-    w_arr = _as_f32_c(conv_weight)
-    b_arr = None if conv_bias is None else np.asarray(conv_bias, dtype=np.float32)
     key = cache_key or (
         f"conv_attn/{x_arr.shape[1]}_{w_arr.shape[0]}_{w_arr.shape[2]}_{w_arr.shape[3]}_"
         f"{seq}_{head_dim}_{stride_h}_{stride_w}_{pad_h}_{pad_w}_{conv_policy}_{device}_{mode}"
@@ -680,31 +751,45 @@ def lightning_conv_attention_torchstrong_nchw(
         if b_arr is not None:
             tb = conv_g.add_tensor(list(b_arr.shape), dtype="float32", name="b", constant=True)
             conv_g.add_node("conv2d_nchw3x3s1p1", [tx, tw, tb], [tconv])
-            conv_res = conv_g.execute_f32({tx: x_arr, tw: w_arr, tb: b_arr}, preferred_device=device)
+            try:
+                conv_res = conv_g.execute_f32({tx: x_arr, tw: w_arr, tb: b_arr}, preferred_device=device)
+            except RuntimeError:
+                conv_res = None
         else:
             conv_g.add_node("conv2d_nchw3x3s1p1", [tx, tw], [tconv])
-            conv_res = conv_g.execute_f32({tx: x_arr, tw: w_arr}, preferred_device=device)
+            try:
+                conv_res = conv_g.execute_f32({tx: x_arr, tw: w_arr}, preferred_device=device)
+            except RuntimeError:
+                conv_res = None
 
-        conv_flat = np.asarray(conv_res["values"][tconv], dtype=np.float32).reshape(-1)
-        need = int(seq) * int(head_dim)
-        total = need * 3
-        if conv_flat.size >= total:
-            packed = conv_flat[:total].copy()
+        if conv_res is None:
+            mode = "eager"
         else:
-            reps = (total + conv_flat.size - 1) // conv_flat.size
-            packed = np.tile(conv_flat, reps)[:total].astype(np.float32, copy=False)
-        q = packed[0:need]
-        k = packed[need : 2 * need]
-        v = packed[2 * need : 3 * need]
+            conv_flat = np.asarray(conv_res["values"][tconv], dtype=np.float32).reshape(-1)
+            need = int(seq) * int(head_dim)
+            total = need * 3
+            if conv_flat.size >= total:
+                packed = conv_flat[:total].copy()
+            else:
+                reps = (total + conv_flat.size - 1) // conv_flat.size
+                packed = np.tile(conv_flat, reps)[:total].astype(np.float32, copy=False)
+            q = packed[0:need]
+            k = packed[need : 2 * need]
+            v = packed[2 * need : 3 * need]
 
-        attn_g = lc.GraphIR()
-        tq = attn_g.add_tensor([int(seq), int(head_dim)], dtype="float32", name="q", constant=True)
-        tk = attn_g.add_tensor([int(seq), int(head_dim)], dtype="float32", name="k", constant=True)
-        tv = attn_g.add_tensor([int(seq), int(head_dim)], dtype="float32", name="v", constant=True)
-        to = attn_g.add_tensor([int(seq), int(head_dim)], dtype="float32", name="out")
-        attn_g.add_node("attention_forward", [tq, tk, tv], [to])
-        out_dict = attn_g.execute_f32({tq: q, tk: k, tv: v}, preferred_device=device)
-        return np.asarray(out_dict["values"][to], dtype=np.float32)
+            attn_g = lc.GraphIR()
+            tq = attn_g.add_tensor([int(seq), int(head_dim)], dtype="float32", name="q", constant=True)
+            tk = attn_g.add_tensor([int(seq), int(head_dim)], dtype="float32", name="k", constant=True)
+            tv = attn_g.add_tensor([int(seq), int(head_dim)], dtype="float32", name="v", constant=True)
+            to = attn_g.add_tensor([int(seq), int(head_dim)], dtype="float32", name="out")
+            attn_g.add_node("attention_forward", [tq, tk, tv], [to])
+            try:
+                out_dict = attn_g.execute_f32({tq: q, tk: k, tv: v}, preferred_device=device)
+            except RuntimeError:
+                out_dict = None
+            if out_dict is not None:
+                return np.asarray(out_dict["values"][to], dtype=np.float32)
+            mode = "eager"
 
     if pipeline_cache is not None:
         pipe = pipeline_cache.get(key)
