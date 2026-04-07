@@ -92,6 +92,7 @@ jobs:
           python benchmarks/python/quick_bench.py --device ${QB_DEVICE} --warmup ${QB_WARMUP} --iters ${QB_ITERS} --seed ${QB_SEED} --out ${REPORT_DIR}/quick_bench.csv
           python benchmarks/python/quick_bench_ci_summary.py --input ${REPORT_DIR}/quick_bench.csv --json ${REPORT_DIR}/quick_bench_summary.json --md ${REPORT_DIR}/quick_bench_summary.md --regress-threshold 1.0
           python benchmarks/python/quick_bench_variance_gate.py --runs-csv ${REPORT_DIR}/quick_bench_variance_runs.csv --json ${REPORT_DIR}/quick_bench_variance_summary.json --md ${REPORT_DIR}/quick_bench_variance_summary.md --repeats ${QB_VAR_REPEATS} --variance-threshold-pct ${QB_VAR_THRESHOLD_PCT} --device ${QB_DEVICE} --warmup ${QB_VAR_WARMUP} --iters ${QB_VAR_ITERS} --seed ${QB_SEED} --trim-runs ${QB_VAR_TRIM_RUNS}
+          python benchmarks/python/engine_split_bench.py --device auto --warmup ${QB_WARMUP} --iters ${QB_ITERS} --seed ${QB_SEED} --out-dir ${REPORT_DIR} --pure-csv engine_split_pure_lc.csv --pure-json engine_split_pure_lc.json --interop-csv engine_split_interop.csv --interop-json engine_split_interop.json
           CMD
 
       - name: Capture release benchmark environment
@@ -188,6 +189,21 @@ jobs:
             --seed "$QB_SEED" \
             --trim-runs "$QB_VAR_TRIM_RUNS"
 
+      - name: Run release engine split benchmark
+        run: |
+          python benchmarks/python/engine_split_bench.py \
+            --device auto \
+            --warmup "$QB_WARMUP" \
+            --iters "$QB_ITERS" \
+            --seed "$QB_SEED" \
+            --out-dir "$REPORT_DIR" \
+            --pure-csv engine_split_pure_lc.csv \
+            --pure-json engine_split_pure_lc.json \
+            --interop-csv engine_split_interop.csv \
+            --interop-json engine_split_interop.json \
+            > "$REPORT_DIR/engine_split_bench.log"
+          cat "$REPORT_DIR/engine_split_bench.log"
+
       - name: Build release benchmark manifest
         run: |
           python - <<'PY'
@@ -205,6 +221,11 @@ jobs:
               "quick_bench_variance_runs.csv",
               "quick_bench_variance_summary.json",
               "quick_bench_variance_summary.md",
+              "engine_split_pure_lc.csv",
+              "engine_split_pure_lc.json",
+              "engine_split_interop.csv",
+              "engine_split_interop.json",
+              "engine_split_bench.log",
               "release_bench_environment.json",
               "release_bench_commands.txt",
           ]
@@ -253,6 +274,7 @@ jobs:
           echo "- manifest: \`$REPORT_DIR/release_bench_manifest.json\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- variance gate threshold: \`CV <= ${QB_VAR_THRESHOLD_PCT}%\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- variance gate trim-runs: \`${QB_VAR_TRIM_RUNS}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- engine split evidence: \`$REPORT_DIR/engine_split_pure_lc.csv\`, \`$REPORT_DIR/engine_split_interop.csv\`" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           cat "$REPORT_DIR/quick_bench_summary.md" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
@@ -274,6 +296,11 @@ jobs:
             ${{ env.REPORT_DIR }}/quick_bench_variance_summary.md
             ${{ env.REPORT_DIR }}/quick_bench_run_*.csv
             ${{ env.REPORT_DIR }}/quick_bench_run_*.log
+            ${{ env.REPORT_DIR }}/engine_split_pure_lc.csv
+            ${{ env.REPORT_DIR }}/engine_split_pure_lc.json
+            ${{ env.REPORT_DIR }}/engine_split_interop.csv
+            ${{ env.REPORT_DIR }}/engine_split_interop.json
+            ${{ env.REPORT_DIR }}/engine_split_bench.log
             ${{ env.REPORT_DIR }}/release_bench_environment.json
             ${{ env.REPORT_DIR }}/release_bench_commands.txt
             ${{ env.REPORT_DIR }}/release_bench_manifest.json

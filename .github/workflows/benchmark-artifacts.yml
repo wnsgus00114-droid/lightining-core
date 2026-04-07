@@ -60,6 +60,20 @@ jobs:
             > benchmarks/reports/ci/graph_eager_ab.log
           cat benchmarks/reports/ci/graph_eager_ab.log
 
+      - name: Run engine split benchmark (pure-LC vs interop)
+        run: |
+          python benchmarks/python/engine_split_bench.py \
+            --device auto \
+            --warmup 10 \
+            --iters 40 \
+            --out-dir benchmarks/reports/ci \
+            --pure-csv engine_split_pure_lc.csv \
+            --pure-json engine_split_pure_lc.json \
+            --interop-csv engine_split_interop.csv \
+            --interop-json engine_split_interop.json \
+            > benchmarks/reports/ci/engine_split_bench.log
+          cat benchmarks/reports/ci/engine_split_bench.log
+
       - name: Publish summary to workflow
         if: always()
         run: |
@@ -73,6 +87,14 @@ jobs:
             cat benchmarks/reports/ci/graph_eager_ab.md >> "$GITHUB_STEP_SUMMARY"
           else
             echo "graph_eager_ab summary not found." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f benchmarks/reports/ci/engine_split_pure_lc.csv ] && [ -f benchmarks/reports/ci/engine_split_interop.csv ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "## Engine Split Snapshot" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "- files: \`engine_split_pure_lc.csv\`, \`engine_split_interop.csv\`" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "engine split benchmark outputs not found." >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Upload benchmark artifacts
@@ -91,3 +113,8 @@ jobs:
             benchmarks/reports/ci/graph_eager_ab.json
             benchmarks/reports/ci/graph_eager_ab.md
             benchmarks/reports/ci/graph_eager_ab.log
+            benchmarks/reports/ci/engine_split_pure_lc.csv
+            benchmarks/reports/ci/engine_split_pure_lc.json
+            benchmarks/reports/ci/engine_split_interop.csv
+            benchmarks/reports/ci/engine_split_interop.json
+            benchmarks/reports/ci/engine_split_bench.log

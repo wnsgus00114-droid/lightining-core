@@ -15,6 +15,9 @@ _CACHE_LOCK = Lock()
 _BACKEND_LOCK = Lock()
 _BACKEND_ENGINE = "lightning"
 _VALID_ENGINES = {"lightning", "torch", "auto"}
+_LC_API_BRIDGE_LOCK = Lock()
+_LC_API_BRIDGE_INSTALLED = False
+_LC_API_DIRECT_EXPORTS: dict[str, Any] = {}
 
 
 def _import_torch():
@@ -88,6 +91,14 @@ def set_backend(name: str) -> None:
 def get_backend() -> str:
     with _BACKEND_LOCK:
         return _BACKEND_ENGINE
+
+
+def set_engine(name: str) -> None:
+    set_backend(name)
+
+
+def get_engine() -> str:
+    return get_backend()
 
 
 def tensor(x: Any) -> np.ndarray:
@@ -230,7 +241,15 @@ def _torch_conv_attention_torchstrong(
     return out.reshape(-1).detach().to("cpu").contiguous().numpy()
 
 
-def lightning_attention(q: Any, k: Any, v: Any, seq: int, head_dim: int, device: str = "metal") -> np.ndarray:
+def lightning_attention(
+    q: Any,
+    k: Any,
+    v: Any,
+    seq: int,
+    head_dim: int,
+    device: str = "metal",
+    causal: bool = False,
+) -> np.ndarray:
     if _resolve_engine(device) == "torch":
         torch, F = _import_torch()
         if torch is None or F is None:
@@ -273,7 +292,7 @@ def lightning_attention(q: Any, k: Any, v: Any, seq: int, head_dim: int, device:
         tq = torch.as_tensor(q2, dtype=torch.float32, device=torch_device).unsqueeze(1)
         tk = torch.as_tensor(k2, dtype=torch.float32, device=torch_device).unsqueeze(1)
         tv = torch.as_tensor(v2, dtype=torch.float32, device=torch_device).unsqueeze(1)
-        tout = F.scaled_dot_product_attention(tq, tk, tv, is_causal=False).squeeze(1)
+        tout = F.scaled_dot_product_attention(tq, tk, tv, is_causal=bool(causal)).squeeze(1)
         out = tout.detach().to("cpu").contiguous().numpy()
 
         if restore == "1d":
@@ -286,12 +305,33 @@ def lightning_attention(q: Any, k: Any, v: Any, seq: int, head_dim: int, device:
         seq_i = int(seq)
         head_i = int(head_dim)
         expected = seq_i * head_i
-        q_arr = np.asarray(q, dtype=np.float32).reshape(-1)
-        k_arr = np.asarray(k, dtype=np.float32).reshape(-1)
-        v_arr = np.asarray(v, dtype=np.float32).reshape(-1)
-        if q_arr.size != expected or k_arr.size != expected or v_arr.size != expected:
+        q_arr = np.asarray(q, dtype=np.float32)
+        k_arr = np.asarray(k, dtype=np.float32)
+        v_arr = np.asarray(v, dtype=np.float32)
+        if q_arr.shape != k_arr.shape or q_arr.shape != v_arr.shape:
             raise ValueError("q/k/v shape mismatch")
-        return lc.lightning_attention(q_arr, k_arr, v_arr, seq_i, head_i, False, device)
+        if q_arr.ndim == 1:
+            if q_arr.size != expected:
+                raise ValueError("attention input shape mismatch")
+            restore = "1d"
+        elif q_arr.ndim == 2:
+            if q_arr.shape != (seq_i, head_i):
+                raise ValueError("attention 2D input must be [seq, head_dim]")
+            restore = "2d"
+        else:
+            raise ValueError("attention rank >2 requires session path; upgrade core or use non-fused fallback")
+        q_flat = q_arr.reshape(-1)
+        k_flat = k_arr.reshape(-1)
+        v_flat = v_arr.reshape(-1)
+        if q_flat.size != expected or k_flat.size != expected or v_flat.size != expected:
+            raise ValueError("q/k/v shape mismatch")
+        out_flat = np.asarray(
+            lc.lightning_attention(q_flat, k_flat, v_flat, seq_i, head_i, bool(causal), device),
+            dtype=np.float32,
+        ).reshape(-1)
+        if restore == "2d":
+            return out_flat.reshape(seq_i, head_i)
+        return out_flat
 
     seq_i = int(seq)
     head_i = int(head_dim)
@@ -328,7 +368,7 @@ def lightning_attention(q: Any, k: Any, v: Any, seq: int, head_dim: int, device:
     else:
         raise ValueError("unsupported attention input rank")
 
-    sess = _get_or_create_attention_session(seq_i, head_i, False, device)
+    sess = _get_or_create_attention_session(seq_i, head_i, bool(causal), device)
     for i in range(q2.shape[0]):
         sess.forward_into(q2[i], k2[i], v2[i], out2[i])
 
@@ -854,7 +894,8 @@ def lightning_conv_attention_torchstrong_nchw_ab_report(
     if atol_f < 0.0 or rtol_f < 0.0:
         raise ValueError("atol/rtol must be >= 0")
 
-    if hasattr(lc, "lightning_conv_attention_torchstrong_nchw_ab_report"):
+    engine = _resolve_engine(device)
+    if engine == "lightning" and hasattr(lc, "lightning_conv_attention_torchstrong_nchw_ab_report"):
         out = lc.lightning_conv_attention_torchstrong_nchw_ab_report(
             x,
             conv_weight,
@@ -948,3 +989,251 @@ def lightning_conv_attention_torchstrong_nchw_ab_report(
         "eager_over_graph": float(eager_ms / graph_ms) if graph_ms > 0.0 else 0.0,
         "winner": winner,
     }
+
+
+def _install_lc_api_engine_bridge() -> bool:
+    """Install engine-aware wrappers on lc.api while preserving direct LC callsites."""
+    global _LC_API_BRIDGE_INSTALLED
+    api = getattr(lc, "api", None)
+    if api is None:
+        return False
+
+    with _LC_API_BRIDGE_LOCK:
+        if _LC_API_BRIDGE_INSTALLED:
+            return True
+
+        direct_names = (
+            "clear_attention_session_cache",
+            "conv_relu_nchw",
+            "conv_relu_nchw_into",
+            "attention",
+            "attention_into",
+            "conv_attention_torchstrong_nchw",
+            "conv_attention_torchstrong_nchw_into",
+            "conv_attention_torchstrong_nchw_ab_report",
+        )
+        for name in direct_names:
+            fn = getattr(api, name, None)
+            if callable(fn):
+                _LC_API_DIRECT_EXPORTS[name] = fn
+                direct_alias = f"{name}_lightning_direct"
+                if not hasattr(api, direct_alias):
+                    setattr(api, direct_alias, fn)
+
+        def _api_set_engine(name: str) -> None:
+            set_backend(name)
+
+        def _api_get_engine() -> str:
+            return get_backend()
+
+        api.set_engine = _api_set_engine
+        api.get_engine = _api_get_engine
+        api.set_backend = _api_set_engine
+        api.get_backend = _api_get_engine
+
+        def _api_clear_attention_session_cache() -> None:
+            clear_attention_session_cache()
+            direct_clear = _LC_API_DIRECT_EXPORTS.get("clear_attention_session_cache")
+            if callable(direct_clear):
+                direct_clear()
+
+        api.clear_attention_session_cache = _api_clear_attention_session_cache
+
+        def _api_conv_relu_nchw(
+            x: Any,
+            w: Any,
+            bias: Any | None = None,
+            stride_h: int = 1,
+            stride_w: int = 1,
+            pad_h: int = 0,
+            pad_w: int = 0,
+            device: str = "metal",
+        ) -> np.ndarray:
+            return lightning_conv_relu_nchw(
+                x,
+                w,
+                bias,
+                stride_h=stride_h,
+                stride_w=stride_w,
+                pad_h=pad_h,
+                pad_w=pad_w,
+                device=device,
+            )
+
+        def _api_conv_relu_nchw_into(
+            x: Any,
+            w: Any,
+            bias: Any | None,
+            out: Any,
+            stride_h: int = 1,
+            stride_w: int = 1,
+            pad_h: int = 0,
+            pad_w: int = 0,
+            device: str = "metal",
+        ) -> None:
+            lightning_conv_relu_nchw(
+                x,
+                w,
+                bias,
+                stride_h=stride_h,
+                stride_w=stride_w,
+                pad_h=pad_h,
+                pad_w=pad_w,
+                device=device,
+                out=out,
+            )
+
+        def _api_attention(
+            q: Any,
+            k: Any,
+            v: Any,
+            seq_len: int,
+            head_dim: int,
+            causal: bool = False,
+            device: str = "metal",
+        ) -> np.ndarray:
+            return lightning_attention(
+                q,
+                k,
+                v,
+                seq=int(seq_len),
+                head_dim=int(head_dim),
+                device=device,
+                causal=bool(causal),
+            )
+
+        def _api_attention_into(
+            q: Any,
+            k: Any,
+            v: Any,
+            out: Any,
+            seq_len: int,
+            head_dim: int,
+            causal: bool = False,
+            device: str = "metal",
+        ) -> None:
+            out_arr = _as_out_f32_c_no_copy(out).reshape(-1)
+            result = np.asarray(
+                lightning_attention(
+                    q,
+                    k,
+                    v,
+                    seq=int(seq_len),
+                    head_dim=int(head_dim),
+                    device=device,
+                    causal=bool(causal),
+                ),
+                dtype=np.float32,
+            ).reshape(-1)
+            if out_arr.size != result.size:
+                raise ValueError("out shape mismatch for attention_into")
+            np.copyto(out_arr, result, casting="no")
+
+        def _api_conv_attention_torchstrong_nchw(
+            x: Any,
+            w: Any,
+            bias: Any | None,
+            seq_len: int,
+            head_dim: int,
+            stride_h: int = 1,
+            stride_w: int = 1,
+            pad_h: int = 0,
+            pad_w: int = 0,
+            device: str = "metal",
+            execution_mode: str = "eager",
+        ) -> np.ndarray:
+            return lightning_conv_attention_torchstrong_nchw(
+                x,
+                w,
+                bias,
+                seq=int(seq_len),
+                head_dim=int(head_dim),
+                stride_h=int(stride_h),
+                stride_w=int(stride_w),
+                pad_h=int(pad_h),
+                pad_w=int(pad_w),
+                device=device,
+                execution_mode=execution_mode,
+            )
+
+        def _api_conv_attention_torchstrong_nchw_into(
+            x: Any,
+            w: Any,
+            bias: Any | None,
+            out: Any,
+            seq_len: int,
+            head_dim: int,
+            stride_h: int = 1,
+            stride_w: int = 1,
+            pad_h: int = 0,
+            pad_w: int = 0,
+            device: str = "metal",
+            execution_mode: str = "eager",
+        ) -> None:
+            out_arr = _as_out_f32_c_no_copy(out).reshape(-1)
+            result = np.asarray(
+                lightning_conv_attention_torchstrong_nchw(
+                    x,
+                    w,
+                    bias,
+                    seq=int(seq_len),
+                    head_dim=int(head_dim),
+                    stride_h=int(stride_h),
+                    stride_w=int(stride_w),
+                    pad_h=int(pad_h),
+                    pad_w=int(pad_w),
+                    device=device,
+                    execution_mode=execution_mode,
+                ),
+                dtype=np.float32,
+            ).reshape(-1)
+            if out_arr.size != result.size:
+                raise ValueError("out shape mismatch for conv_attention_torchstrong_nchw_into")
+            np.copyto(out_arr, result, casting="no")
+
+        def _api_conv_attention_torchstrong_nchw_ab_report(
+            x: Any,
+            w: Any,
+            bias: Any | None,
+            seq_len: int,
+            head_dim: int,
+            stride_h: int = 1,
+            stride_w: int = 1,
+            pad_h: int = 0,
+            pad_w: int = 0,
+            device: str = "metal",
+            warmup: int = 1,
+            repeat: int = 5,
+            atol: float = 1e-4,
+            rtol: float = 1e-4,
+        ) -> dict[str, Any]:
+            return lightning_conv_attention_torchstrong_nchw_ab_report(
+                x,
+                w,
+                bias,
+                seq=int(seq_len),
+                head_dim=int(head_dim),
+                stride_h=int(stride_h),
+                stride_w=int(stride_w),
+                pad_h=int(pad_h),
+                pad_w=int(pad_w),
+                device=device,
+                warmup=int(warmup),
+                repeat=int(repeat),
+                atol=float(atol),
+                rtol=float(rtol),
+            )
+
+        api.conv_relu_nchw = _api_conv_relu_nchw
+        api.conv_relu_nchw_into = _api_conv_relu_nchw_into
+        api.attention = _api_attention
+        api.attention_into = _api_attention_into
+        api.conv_attention_torchstrong_nchw = _api_conv_attention_torchstrong_nchw
+        api.conv_attention_torchstrong_nchw_into = _api_conv_attention_torchstrong_nchw_into
+        api.conv_attention_torchstrong_nchw_ab_report = _api_conv_attention_torchstrong_nchw_ab_report
+
+        _LC_API_BRIDGE_INSTALLED = True
+    return True
+
+
+_install_lc_api_engine_bridge()

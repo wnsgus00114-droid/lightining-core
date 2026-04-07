@@ -22,6 +22,12 @@ def main() -> None:
 
     lc_api.set_backend("lightning")
     _require(lc_api.get_backend() == "lightning", "integrated backend should be 'lightning'")
+    _require(hasattr(lc, "api") and hasattr(lc.api, "set_engine"), "lc.api.set_engine must be available")
+    _require(hasattr(lc.api, "get_engine"), "lc.api.get_engine must be available")
+
+    lc.api.set_engine("lightning")
+    _require(lc.api.get_engine() == "lightning", "lc.api engine should be 'lightning'")
+    _require(lc_api.get_backend() == "lightning", "helper backend should match lc.api engine")
 
     a = np.random.rand(64, 64).astype(np.float32)
     b = np.random.rand(64, 64).astype(np.float32)
@@ -44,6 +50,13 @@ def main() -> None:
     )
     _require(conv_out.shape == (1, 16, 8, 8), "conv_relu_nchw output shape mismatch")
     _require(conv_out.dtype == np.float32, "conv_relu_nchw output dtype mismatch")
+
+    q = np.random.rand(48, 48).astype(np.float32)
+    k = np.random.rand(48, 48).astype(np.float32)
+    v = np.random.rand(48, 48).astype(np.float32)
+    attn_out = lc.api.attention(q, k, v, 48, 48, False, "metal")
+    _require(np.asarray(attn_out).shape == (48, 48), "lc.api.attention output shape mismatch")
+    _require(np.asarray(attn_out).dtype == np.float32, "lc.api.attention output dtype mismatch")
 
     out_lc_eager = lc_api.lightning_conv_attention_torchstrong_nchw(
         x,
@@ -84,7 +97,8 @@ def main() -> None:
         has_torch = False
 
     if has_torch:
-        lc_api.set_backend("torch")
+        lc.api.set_engine("torch")
+        _require(lc.api.get_engine() == "torch", "lc.api engine should be 'torch'")
         _require(lc_api.get_backend() == "torch", "integrated backend should be 'torch'")
 
         out_eager = lc_api.lightning_conv_attention_torchstrong_nchw(
@@ -120,7 +134,23 @@ def main() -> None:
             "torch backend graph-request should deterministically match eager path output",
         )
 
-    lc_api.set_backend("lightning")
+        out_api_eager = lc.api.conv_attention_torchstrong_nchw(
+            x, w, bias, 48, 48, 1, 1, 1, 1, "metal", "eager"
+        )
+        out_api_graph_req = lc.api.conv_attention_torchstrong_nchw(
+            x, w, bias, 48, 48, 1, 1, 1, 1, "metal", "graph"
+        )
+        _require(
+            np.allclose(
+                np.asarray(out_api_eager).reshape(-1),
+                np.asarray(out_api_graph_req).reshape(-1),
+                atol=1e-4,
+                rtol=1e-4,
+            ),
+            "lc.api torch engine graph-request should deterministically match eager path output",
+        )
+
+    lc.api.set_engine("lightning")
 
     lc.runtime_trace_enable(False)
     timeline = lc.runtime_trace_timeline(

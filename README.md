@@ -13,7 +13,7 @@
 
 # 3. One-line Summary
 Lightning Core is a macOS-first, Metal-backed runtime that provides low-level control (resident IO, policy routing, fused paths) with easy Python APIs.
-Current public release: **v0.1.16** (2026-04-02).
+Current public release: **v0.1.17** (2026-04-07).
 
 # 4. Abstract
 Lightning Core targets high-iteration experimentation on Apple Silicon by combining:
@@ -323,7 +323,8 @@ Core categories:
 - Ops: matmul/conv/vector/matrix (+ resident sessions)
 - Attention: forward/train + policy + session
 - Integrated: high-level conv/attention pipeline APIs
-- Python helper module (shipped in wheel): `lightning_core_integrated_api` (`set_backend("lightning"|"torch"|"auto")`)
+- Engine selector on `lc.api`: `lc.api.set_engine("lightning"|"torch"|"auto")` / `lc.api.get_engine()`
+- Python helper module (shipped in wheel): `lightning_core_integrated_api` (`set_engine(...)` + `set_backend(...)` alias)
 
 # 19. Input Rules
 - Use `float32` NumPy arrays for fast paths.
@@ -398,9 +399,9 @@ import numpy as np
 import lightning_core as lc
 import lightning_core_integrated_api as lc_api
 
-# Engine selector for integrated helper: lightning / torch / auto
-lc_api.set_backend("auto")
-print("integrated engine:", lc_api.get_backend())
+# Engine selector is unified on lc.api: lightning / torch / auto
+lc.api.set_engine("auto")
+print("engine:", lc.api.get_engine(), "| helper:", lc_api.get_engine())
 
 x = np.random.rand(1, 3, 8, 8).astype(np.float32)
 w = np.random.rand(16, 3, 3, 3).astype(np.float32)
@@ -466,14 +467,14 @@ y_np = lc.api.conv_relu_nchw(
 y_t = torch.from_numpy(y_np).to(x_t.device)
 print("lc output torch shape:", tuple(y_t.shape))
 
-# 같은 helper API를 Torch engine으로도 실행 가능 (engine A/B)
+# 같은 API 표면에서 engine 전환 가능 (engine A/B)
 a_np = np.random.rand(128, 256).astype(np.float32)
 b_np = np.random.rand(256, 64).astype(np.float32)
 
-lc_api.set_backend("lightning")  # pure-LC
+lc.api.set_engine("lightning")  # pure-LC
 out_lc = lc_api.lightning_matmul(a_np, b_np, device="metal")
 
-lc_api.set_backend("torch")      # Torch interop backend
+lc.api.set_engine("torch")       # Torch interop backend
 out_torch = lc_api.lightning_matmul(a_np, b_np, device="metal")
 
 print(out_lc.shape, out_torch.shape)
@@ -534,18 +535,19 @@ Lightning Core benchmark docs are now **Python-first** for reproducibility and c
 Primary public benchmark path:
 - `benchmarks/python/quick_bench.py` (quick public comparison)
 - `benchmarks/python/graph_eager_ab_bench.py` (graph/eager A/B + host-dispatch/fallback metrics)
+- `benchmarks/python/engine_split_bench.py` (pure-LC vs interop split report on same API surface)
 - `benchmarks/large_gemm_auto_sweep.py` (large GEMM policy sweep)
 - `benchmarks/generate_cross_suite_summary.py` (cross-suite summary report)
 
-Core Python benchmark scripts are included below as **full code blocks** so users can copy-paste directly from README without opening separate files.
-For graph/eager A/B pipeline metrics, run `benchmarks/python/graph_eager_ab_bench.py` directly from the repository.
+Core Python benchmark scripts are all published in `benchmarks/python/`.
+Selected scripts are embedded below as copy-paste blocks, and the engine-split path is directly runnable via `benchmarks/python/engine_split_bench.py`.
 
 Optional:
 - native C++ binaries in `benchmarks/` are still available for low-level kernel validation.
 
 Engine split rule for fair reporting:
-- pure-LC path: `lightning_core` runtime path or `lightning_core_integrated_api.set_backend("lightning")`
-- interop path: `lightning_core_integrated_api.set_backend("torch")`
+- pure-LC path: `lightning_core` runtime path or `lc.api.set_engine("lightning")`
+- interop path: `lc.api.set_engine("torch")`
 - benchmark tables/reports should keep these paths separated and never mix them into one aggregate speedup.
 
 # 28. Benchmark Directory Structure
@@ -554,6 +556,7 @@ benchmarks/
   python/
     quick_bench.py
     graph_eager_ab_bench.py
+    engine_split_bench.py
   large_gemm_auto_sweep.py
   generate_cross_suite_summary.py
   # optional native benchmarks (low-level):
@@ -579,6 +582,7 @@ Python benchmarks (recommended):
 ```bash
 python benchmarks/python/quick_bench.py --warmup 40 --iters 200 --out benchmark_results/quick_bench.csv
 python benchmarks/python/graph_eager_ab_bench.py --device auto --warmup 6 --iters 24 --trace-iters 8
+python benchmarks/python/engine_split_bench.py --device auto --warmup 20 --iters 120 --out-dir benchmark_results
 python benchmarks/large_gemm_auto_sweep.py
 python benchmarks/generate_cross_suite_summary.py
 ```
@@ -593,10 +597,10 @@ import lightning_core_integrated_api as lc_api
 x = np.random.rand(128, 256).astype(np.float32)
 w = np.random.rand(256, 64).astype(np.float32)
 
-lc_api.set_backend("lightning")  # pure-LC path
+lc_api.set_engine("lightning")  # pure-LC path
 y_lc = lc_api.lightning_matmul(x, w, device="metal")
 
-lc_api.set_backend("torch")      # interop path (Torch backend)
+lc_api.set_engine("torch")      # interop path (Torch backend)
 y_torch = lc_api.lightning_matmul(x, w, device="metal")
 
 print("shapes:", y_lc.shape, y_torch.shape)
@@ -4769,6 +4773,8 @@ Typical outputs:
 - `benchmark_results/pipeline_bench.csv`
 - `benchmark_results/ml_all_bench.csv`
 - `benchmark_results/large_gemm_auto_sweep.csv`
+- `benchmark_results/engine_split_pure_lc.csv`
+- `benchmark_results/engine_split_interop.csv`
 - `benchmarks/reports/ci/graph_eager_ab.csv`
 - `benchmarks/reports/ci/graph_eager_ab.json`
 - `benchmarks/reports/ci/graph_eager_ab.md`
@@ -4781,6 +4787,9 @@ Common columns:
 - `lightning_core_ms`: LC runtime latency
 - `torch_mps_ms`: Torch MPS latency
 - `integrated_api_ms`: higher-level integrated API latency
+- `lc_api_lightning_ms`: same API surface on pure-LC engine (`lc.api.set_engine("lightning")`)
+- `lc_api_torch_ms`: same API surface on Torch interop engine (`lc.api.set_engine("torch")`)
+- `interop_over_pure`: interop overhead ratio (`lc_api_torch_ms / lc_api_lightning_ms`)
 - `ours_best_vs_mps`: best(LC, integrated) against Torch MPS
 - `graph_over_eager`: graph path latency over eager path (`< 1.0` means graph faster)
 - `dispatch_delta_pct`: host-dispatch event delta of graph vs eager from runtime trace (`group_by="op_path"`)
@@ -4796,6 +4805,7 @@ Numbers in this README were refreshed on **2026-03-30** with:
 python ai_model_all_bench.py
 python ml_all_bench.py
 python dl_all_bench.py
+python lightning-core/benchmarks/python/engine_split_bench.py --device auto --warmup 20 --iters 120 --out-dir benchmark_results
 ```
 
 Alternative (from `lightning-core/` directory):
@@ -4811,6 +4821,8 @@ Then checked by scanning `ours_best_vs_mps` from:
 - `benchmark_results/pipeline_bench.csv`
 - `benchmark_results/ml_all_bench.csv`
 - `benchmark_results/large_gemm_auto_sweep.csv`
+- `benchmark_results/engine_split_pure_lc.csv`
+- `benchmark_results/engine_split_interop.csv`
 
 # 33. Benchmark Methodology Notes
 - Warmup iterations are used before timed iterations.
@@ -4834,7 +4846,7 @@ docs/                           # quickstart/advanced/contributor docs
 ```
 
 # 35. Roadmap
-Roadmap baseline is now aligned to **v0.1.16** and tracked in detail in [ROADMAP.md](ROADMAP.md).
+Roadmap baseline is now aligned to **v0.1.17** and tracked in detail in [ROADMAP.md](ROADMAP.md).
 
 Immediate replan (2026-04-01, roadmap-aligned):
 1. [completed] Complete backend abstraction split (compute/memory/sync/profiler) and lock public docs/examples.
@@ -4851,7 +4863,7 @@ Roadmap progress history is auto-generated from:
 
 ### Progress History (Auto-generated)
 
-- Total tracked updates: `39`
+- Total tracked updates: `42`
 - Source of truth: `docs/roadmap_updates.json`
 - Quick add command:
   `python scripts/generate_roadmap_history.py --add --date YYYY-MM-DD --milestone M-A --area runtime --title "your update"`
@@ -4860,6 +4872,7 @@ Roadmap progress history is auto-generated from:
 
 | Date | Updates | Milestones | Highlights |
 | --- | --- | --- | --- |
+| 2026-04-07 | 3 | M-A | Finalized lc.api engine bridge (lightning/torch/auto) with same-surface engine switching / Bumped public baseline to v0.1.17 and aligned README/ROADMAP/version metadata / ... (+1 more) |
 | 2026-04-02 | 5 | M-B, M-A | Completed v0.1.15 generated API reference pipeline (Python/C++) in docs build and removed API index placeholder entries. / Expanded graph-path contract coverage: sync policy(auto/always/never), fallback/device-change boundary checks, and shape/layout/lifetime regression guards. / ... (+3 more) |
 | 2026-04-01 | 16 | M-B, M-A | Completed generated API reference pipeline with auto-built Python/C++ reference pages and docs link-check gate in CI/docs workflows. / Added graph/eager A/B benchmark script with runtime host-dispatch delta and fallback counters, plus CI artifact publishing. / ... (+14 more) |
 | 2026-03-31 | 6 | M-A | Shipped docs site MVP with mkdocs and docs-pages workflow. / Re-tuned tiny one-shot conv CPU crossover default to `CJ_CONV2D_CPU_CROSSOVER_MACS=260000` via threshold sweep. / ... (+4 more) |
@@ -4868,6 +4881,12 @@ Roadmap progress history is auto-generated from:
 | 2026-03-28 | 1 | M-A | Initial macOS package and release workflow launch. |
 
 **Detailed Timeline**
+
+#### 2026-04-07 (3 updates)
+
+- [completed] [M-A] [python] Finalized lc.api engine bridge (lightning/torch/auto) with same-surface engine switching (`local`)
+- [completed] [M-A] [release] Bumped public baseline to v0.1.17 and aligned README/ROADMAP/version metadata (`local`)
+- [completed] [M-A] [benchmark] Added engine_split_bench and release/CI evidence split for pure-LC vs interop (`local`)
 
 #### 2026-04-02 (5 updates)
 
@@ -4928,7 +4947,7 @@ Roadmap progress history is auto-generated from:
 
 <!-- AUTO-ROADMAP-HISTORY:END -->
 
-Phase A (2026 Q2, `v0.1.16`-`v0.2.0`): Runtime Core Hardening
+Phase A (2026 Q2, `v0.1.17`-`v0.2.0`): Runtime Core Hardening
 - Finalize backend contracts (compute/memory/sync/profiler split).
 - Stabilize integrated engine selector (`lightning` / `torch` / `auto`) for macOS-first workflows.
 - Lock tensor lifetime and metadata rules across Metal/CPU parity tests.
@@ -5000,4 +5019,4 @@ Community feedback channels we actively monitor:
 
 Lightning Core is stable enough for experimentation and benchmarking, while APIs and internals continue to evolve quickly.
 Visibility update: repository topics and benchmark discoverability documentation are actively maintained.
-Current release train: **v0.1.16**.
+Current release train: **v0.1.17**.

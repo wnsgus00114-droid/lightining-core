@@ -99,16 +99,27 @@ python benchmarks/python/graph_eager_ab_bench.py \
 Engine split benchmark policy (pure-LC vs interop):
 
 ```python
+import lightning_core as lc
 import lightning_core_integrated_api as lc_api
 
-lc_api.set_backend("lightning")  # pure-LC
+lc.api.set_engine("lightning")   # pure-LC
 # ... run integrated API benchmark rows for LC path
 
-lc_api.set_backend("torch")      # interop
+lc.api.set_engine("torch")       # interop
 # ... run the same API rows for Torch bridge path
 ```
 
 When publishing results, keep the two paths in separate sections/tables.
+
+Dedicated split benchmark script:
+
+```bash
+python benchmarks/python/engine_split_bench.py \
+  --device auto \
+  --warmup 20 \
+  --iters 120 \
+  --out-dir benchmark_results
+```
 
 ### Attention benchmark parameters
 

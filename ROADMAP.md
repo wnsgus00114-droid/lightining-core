@@ -1,6 +1,6 @@
 # Lightning Core Roadmap
 
-Version context: v0.1.16 (2026-04-02)
+Version context: v0.1.17 (2026-04-07)
 
 ## 1) North Star
 
@@ -20,13 +20,14 @@ Lightning Core started as a macOS Apple-Silicon performance runtime. The long-te
 - Keep API ergonomics improvements performance-safe by default.
 - Keep deprecation policy explicit; no silent API behavior changes.
 
-## 3) Current Baseline (v0.1.16)
+## 3) Current Baseline (v0.1.17)
 
 - Public package on PyPI/TestPyPI.
 - C++ core + Python bindings for runtime/tensor/ops/attention/integrated APIs.
 - Resident execution and policy-based IO control.
 - Public benchmark source and quick benchmark script.
 - Legacy `cudajun` forwarding headers removed; canonical namespace is `lightning_core`.
+- `lc.api` engine bridge (`set_engine/get_engine`) is stabilized for `lightning/torch/auto` on the same API surface.
 
 ## 4) Evolution Plan (Mac Runtime -> General Framework)
 
@@ -270,6 +271,9 @@ Each milestone tracks:
 6. [completed] macOS-first generic engine mode + Torch bridge (M-A python/runtime)
    - deliverable: integrated API engine selector (`lightning`/`torch`/`auto`) with documented fallback behavior.
    - acceptance: same API surface runs with both engines and benchmark docs separate pure-LC vs interop paths.
+7. [completed] Engine split benchmark report hardening (M-A benchmark/docs)
+   - deliverable: dedicated pure-LC and interop benchmark artifacts from the same API entrypoints.
+   - acceptance: README and release evidence clearly separate pure runtime speed from interop bridge overhead.
 
 Progress update history is auto-generated from:
 
@@ -279,7 +283,7 @@ Progress update history is auto-generated from:
 
 ### Progress History (Auto-generated)
 
-- Total tracked updates: `39`
+- Total tracked updates: `42`
 - Source of truth: `docs/roadmap_updates.json`
 - Quick add command:
   `python scripts/generate_roadmap_history.py --add --date YYYY-MM-DD --milestone M-A --area runtime --title "your update"`
@@ -288,6 +292,7 @@ Progress update history is auto-generated from:
 
 | Date | Updates | Milestones | Highlights |
 | --- | --- | --- | --- |
+| 2026-04-07 | 3 | M-A | Finalized lc.api engine bridge (lightning/torch/auto) with same-surface engine switching / Bumped public baseline to v0.1.17 and aligned README/ROADMAP/version metadata / ... (+1 more) |
 | 2026-04-02 | 5 | M-B, M-A | Completed v0.1.15 generated API reference pipeline (Python/C++) in docs build and removed API index placeholder entries. / Expanded graph-path contract coverage: sync policy(auto/always/never), fallback/device-change boundary checks, and shape/layout/lifetime regression guards. / ... (+3 more) |
 | 2026-04-01 | 16 | M-B, M-A | Completed generated API reference pipeline with auto-built Python/C++ reference pages and docs link-check gate in CI/docs workflows. / Added graph/eager A/B benchmark script with runtime host-dispatch delta and fallback counters, plus CI artifact publishing. / ... (+14 more) |
 | 2026-03-31 | 6 | M-A | Shipped docs site MVP with mkdocs and docs-pages workflow. / Re-tuned tiny one-shot conv CPU crossover default to `CJ_CONV2D_CPU_CROSSOVER_MACS=260000` via threshold sweep. / ... (+4 more) |
@@ -296,6 +301,12 @@ Progress update history is auto-generated from:
 | 2026-03-28 | 1 | M-A | Initial macOS package and release workflow launch. |
 
 **Detailed Timeline**
+
+#### 2026-04-07 (3 updates)
+
+- [completed] [M-A] [python] Finalized lc.api engine bridge (lightning/torch/auto) with same-surface engine switching (`local`)
+- [completed] [M-A] [release] Bumped public baseline to v0.1.17 and aligned README/ROADMAP/version metadata (`local`)
+- [completed] [M-A] [benchmark] Added engine_split_bench and release/CI evidence split for pure-LC vs interop (`local`)
 
 #### 2026-04-02 (5 updates)
 
@@ -356,9 +367,9 @@ Progress update history is auto-generated from:
 
 <!-- AUTO-ROADMAP-HISTORY:END -->
 
-## 11) Release-Train Detail (v0.1.16 -> v1.0)
+## 11) Release-Train Detail (v0.1.17 -> v1.0)
 
-## 11.1 2026 Q2 (v0.1.16 ~ v0.2.0): Runtime Contracts
+## 11.1 2026 Q2 (v0.1.17 ~ v0.2.0): Runtime Contracts
 
 Planned scope:
 
