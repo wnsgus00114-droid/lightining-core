@@ -145,12 +145,14 @@ lc::graph::GraphPlannerOptions parseGraphPlannerOptions(
     const std::string& preferred_device,
     const std::string& sync_mode,
     bool trace_sync_boundary,
+    bool group_by_backend_capability,
     bool separate_fallback_segments,
     bool insert_sync_on_device_change) {
   lc::graph::GraphPlannerOptions options;
   options.preferred_device = parseDevice(preferred_device);
   options.sync_policy.mode = parseSyncMode(sync_mode);
   options.sync_policy.trace_sync_boundary = trace_sync_boundary;
+  options.group_by_backend_capability = group_by_backend_capability;
   options.separate_fallback_segments = separate_fallback_segments;
   options.insert_sync_on_device_change = insert_sync_on_device_change;
   return options;
@@ -299,12 +301,14 @@ void bindGraph(py::module_& m) {
               const std::string& preferred_device,
               const std::string& sync_mode,
               bool trace_sync_boundary,
+              bool group_by_backend_capability,
               bool separate_fallback_segments,
               bool insert_sync_on_device_change) {
              const lc::graph::GraphPlannerOptions options = parseGraphPlannerOptions(
                  preferred_device,
                  sync_mode,
                  trace_sync_boundary,
+                 group_by_backend_capability,
                  separate_fallback_segments,
                  insert_sync_on_device_change);
 
@@ -320,6 +324,7 @@ void bindGraph(py::module_& m) {
            py::arg("preferred_device") = "metal",
            py::arg("sync_mode") = "auto",
            py::arg("trace_sync_boundary") = false,
+           py::arg("group_by_backend_capability") = true,
            py::arg("separate_fallback_segments") = true,
            py::arg("insert_sync_on_device_change") = true)
       .def("execute_f32",
@@ -328,12 +333,14 @@ void bindGraph(py::module_& m) {
               const std::string& preferred_device,
               const std::string& sync_mode,
               bool trace_sync_boundary,
+              bool group_by_backend_capability,
               bool separate_fallback_segments,
               bool insert_sync_on_device_change) {
              const lc::graph::GraphPlannerOptions options = parseGraphPlannerOptions(
                  preferred_device,
                  sync_mode,
                  trace_sync_boundary,
+                 group_by_backend_capability,
                  separate_fallback_segments,
                  insert_sync_on_device_change);
              std::unordered_map<std::size_t, std::vector<float>> values;
@@ -352,6 +359,7 @@ void bindGraph(py::module_& m) {
            py::arg("preferred_device") = "metal",
            py::arg("sync_mode") = "auto",
            py::arg("trace_sync_boundary") = false,
+           py::arg("group_by_backend_capability") = true,
            py::arg("separate_fallback_segments") = true,
            py::arg("insert_sync_on_device_change") = true)
       .def("execute_f64",
@@ -360,12 +368,14 @@ void bindGraph(py::module_& m) {
               const std::string& preferred_device,
               const std::string& sync_mode,
               bool trace_sync_boundary,
+              bool group_by_backend_capability,
               bool separate_fallback_segments,
               bool insert_sync_on_device_change) {
              const lc::graph::GraphPlannerOptions options = parseGraphPlannerOptions(
                  preferred_device,
                  sync_mode,
                  trace_sync_boundary,
+                 group_by_backend_capability,
                  separate_fallback_segments,
                  insert_sync_on_device_change);
              std::unordered_map<std::size_t, std::vector<double>> values;
@@ -384,6 +394,7 @@ void bindGraph(py::module_& m) {
            py::arg("preferred_device") = "metal",
            py::arg("sync_mode") = "auto",
            py::arg("trace_sync_boundary") = false,
+           py::arg("group_by_backend_capability") = true,
            py::arg("separate_fallback_segments") = true,
            py::arg("insert_sync_on_device_change") = true);
 }

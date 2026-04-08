@@ -225,6 +225,9 @@ struct ValidationReport {
 struct GraphPlannerOptions {
   runtime::Device preferred_device{runtime::Device::kMetal};
   runtime::SyncPolicy sync_policy{};
+  // When true, planner may pick a non-preferred but supported backend to keep
+  // neighboring nodes in the same backend group and reduce host/sync churn.
+  bool group_by_backend_capability{true};
   bool separate_fallback_segments{true};
   bool insert_sync_on_device_change{true};
 };
@@ -459,7 +462,8 @@ class GraphIR {
       out_steps->reserve(nodes_.size());
     }
 
-    for (const GraphNode& node : nodes_) {
+    for (std::size_t node_index = 0; node_index < nodes_.size(); ++node_index) {
+      const GraphNode& node = nodes_[node_index];
       const OperatorSchema* schema = globalOperatorRegistry().find(node.op);
       if (schema == nullptr) {
         return runtime::Status::kNotSupported;
@@ -470,6 +474,51 @@ class GraphIR {
       st = chooseDeviceForSchema(*schema, options.preferred_device, &assigned, &fallback);
       if (st != runtime::Status::kSuccess) {
         return st;
+      }
+
+      if (options.group_by_backend_capability) {
+        // Capability-aware grouping heuristic:
+        // 1) keep backend continuity with previous group when safe,
+        // 2) align current flexible op with next forced backend when possible.
+        const bool has_prev_group = !out_groups->empty();
+        const runtime::Device prev_device = has_prev_group ? out_groups->back().assigned_device : assigned;
+
+        runtime::Device next_forced_device = assigned;
+        bool has_next_forced_device = false;
+        if (node_index + 1 < nodes_.size()) {
+          const GraphNode& next_node = nodes_[node_index + 1];
+          const OperatorSchema* next_schema = globalOperatorRegistry().find(next_node.op);
+          if (next_schema == nullptr) {
+            return runtime::Status::kNotSupported;
+          }
+          const std::vector<runtime::Device> next_candidates = availableDevicesForSchema(*next_schema);
+          if (next_candidates.size() == 1) {
+            next_forced_device = next_candidates.front();
+            has_next_forced_device = true;
+          }
+        }
+
+        const bool supports_prev = has_prev_group && schemaSupportsAvailableDevice(*schema, prev_device);
+        const bool supports_next_forced =
+            has_next_forced_device && schemaSupportsAvailableDevice(*schema, next_forced_device);
+
+        if (has_prev_group && assigned != prev_device && supports_prev) {
+          // Prefer continuity if this node is already fallback, or if previous
+          // group is on preferred backend, or if lookahead says next op is
+          // forced to previous backend.
+          if (fallback || prev_device == options.preferred_device ||
+              (has_next_forced_device && next_forced_device == prev_device)) {
+            assigned = prev_device;
+          }
+        }
+
+        if (has_next_forced_device && supports_next_forced && assigned != next_forced_device) {
+          // If the next op is forced to one backend, align this flexible op to
+          // the same backend to avoid an extra backend boundary.
+          assigned = next_forced_device;
+        }
+
+        fallback = (assigned != options.preferred_device);
       }
 
       if (out_steps != nullptr) {
@@ -498,11 +547,13 @@ class GraphIR {
         group.group_id = out_groups->size();
         group.assigned_device = assigned;
         group.fallback = fallback;
+        const bool device_changed =
+            (!out_groups->empty()) && (out_groups->back().assigned_device != assigned);
         group.sync_boundary_before =
             (!out_groups->empty()) &&
             (options.sync_policy.mode == runtime::SyncMode::kAlways ||
              options.sync_policy.trace_sync_boundary ||
-             options.insert_sync_on_device_change);
+             (options.insert_sync_on_device_change && device_changed));
         group.sync_boundary_after = false;
         group.node_ids.push_back(node.id);
 
@@ -575,11 +626,7 @@ class GraphIR {
       return runtime::Status::kInvalidValue;
     }
     auto choose_if_supported = [&](runtime::Device device) -> bool {
-      if (!schema.supportsDevice(device)) {
-        return false;
-      }
-      const runtime::BackendCapabilities caps = runtime::backendCapabilities(device);
-      return caps.compute_surface && caps.available;
+      return schemaSupportsAvailableDevice(schema, device);
     };
 
     runtime::Device assigned = preferred_device;
@@ -598,6 +645,29 @@ class GraphIR {
     *out_assigned_device = assigned;
     *out_fallback = (assigned != preferred_device);
     return runtime::Status::kSuccess;
+  }
+
+  static bool schemaSupportsAvailableDevice(const OperatorSchema& schema, runtime::Device device) {
+    if (!schema.supportsDevice(device)) {
+      return false;
+    }
+    const runtime::BackendCapabilities caps = runtime::backendCapabilities(device);
+    return caps.compute_surface && caps.available;
+  }
+
+  static std::vector<runtime::Device> availableDevicesForSchema(const OperatorSchema& schema) {
+    std::vector<runtime::Device> out;
+    out.reserve(3);
+    if (schemaSupportsAvailableDevice(schema, runtime::Device::kMetal)) {
+      out.push_back(runtime::Device::kMetal);
+    }
+    if (schemaSupportsAvailableDevice(schema, runtime::Device::kCUDA)) {
+      out.push_back(runtime::Device::kCUDA);
+    }
+    if (schemaSupportsAvailableDevice(schema, runtime::Device::kCPU)) {
+      out.push_back(runtime::Device::kCPU);
+    }
+    return out;
   }
 
   template <typename T>

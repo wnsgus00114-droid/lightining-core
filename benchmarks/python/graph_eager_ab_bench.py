@@ -119,6 +119,18 @@ def _fmt_pct(value: float) -> str:
     return f"{value:.2f}%"
 
 
+def _safe_dispatch_reduction(eager_dispatch: float, graph_dispatch: float) -> tuple[float, float]:
+    if not (math.isfinite(eager_dispatch) and math.isfinite(graph_dispatch)):
+        return float("nan"), float("nan")
+    reduction = eager_dispatch - graph_dispatch
+    reduction_pct = (
+        (reduction / eager_dispatch) * 100.0
+        if eager_dispatch > 0.0
+        else float("nan")
+    )
+    return reduction, reduction_pct
+
+
 def _run_matmul_matrix_sub_case(
     *,
     m: int,
@@ -169,6 +181,10 @@ def _run_matmul_matrix_sub_case(
         if math.isfinite(eager_trace["dispatch_per_iter"]) and eager_trace["dispatch_per_iter"] > 0
         else float("nan")
     )
+    dispatch_reduction_per_iter, dispatch_reduction_pct = _safe_dispatch_reduction(
+        eager_trace["dispatch_per_iter"],
+        graph_trace["dispatch_per_iter"],
+    )
     fallback_delta = graph_trace["fallback_per_iter"] - eager_trace["fallback_per_iter"]
 
     row = {
@@ -189,6 +205,11 @@ def _run_matmul_matrix_sub_case(
         "graph_dispatch_per_iter": graph_trace["dispatch_per_iter"],
         "dispatch_delta_per_iter": dispatch_delta,
         "dispatch_delta_pct": dispatch_delta_pct,
+        "dispatch_reduction_per_iter": dispatch_reduction_per_iter,
+        "dispatch_reduction_pct": dispatch_reduction_pct,
+        "host_dispatch_reduced": bool(
+            math.isfinite(dispatch_reduction_per_iter) and dispatch_reduction_per_iter > 0.0
+        ),
         "eager_fallback_per_iter": eager_trace["fallback_per_iter"],
         "graph_fallback_per_iter": graph_trace["fallback_per_iter"],
         "fallback_delta_per_iter": fallback_delta,
@@ -287,6 +308,10 @@ def _run_conv_attention_case(
         if math.isfinite(eager_trace["dispatch_per_iter"]) and eager_trace["dispatch_per_iter"] > 0
         else float("nan")
     )
+    dispatch_reduction_per_iter, dispatch_reduction_pct = _safe_dispatch_reduction(
+        eager_trace["dispatch_per_iter"],
+        graph_trace["dispatch_per_iter"],
+    )
     fallback_delta = graph_trace["fallback_per_iter"] - eager_trace["fallback_per_iter"]
 
     row = {
@@ -307,6 +332,11 @@ def _run_conv_attention_case(
         "graph_dispatch_per_iter": graph_trace["dispatch_per_iter"],
         "dispatch_delta_per_iter": dispatch_delta,
         "dispatch_delta_pct": dispatch_delta_pct,
+        "dispatch_reduction_per_iter": dispatch_reduction_per_iter,
+        "dispatch_reduction_pct": dispatch_reduction_pct,
+        "host_dispatch_reduced": bool(
+            math.isfinite(dispatch_reduction_per_iter) and dispatch_reduction_per_iter > 0.0
+        ),
         "eager_fallback_per_iter": eager_trace["fallback_per_iter"],
         "graph_fallback_per_iter": graph_trace["fallback_per_iter"],
         "fallback_delta_per_iter": fallback_delta,
@@ -345,6 +375,9 @@ def _unsupported_row(bench: str, shape: str, device: str, reason: str) -> tuple[
         "graph_dispatch_per_iter": float("nan"),
         "dispatch_delta_per_iter": float("nan"),
         "dispatch_delta_pct": float("nan"),
+        "dispatch_reduction_per_iter": float("nan"),
+        "dispatch_reduction_pct": float("nan"),
+        "host_dispatch_reduced": False,
         "eager_fallback_per_iter": float("nan"),
         "graph_fallback_per_iter": float("nan"),
         "fallback_delta_per_iter": float("nan"),
@@ -367,10 +400,20 @@ def _summary(rows: list[dict]) -> dict:
 
     ratios = _finite([float(r["graph_over_eager"]) for r in ok_rows])
     dispatch_deltas = _finite([float(r["dispatch_delta_pct"]) for r in ok_rows])
+    dispatch_reductions_pct = _finite([float(r["dispatch_reduction_pct"]) for r in ok_rows])
+    dispatch_reductions_abs = _finite([float(r["dispatch_reduction_per_iter"]) for r in ok_rows])
     fallback_deltas = _finite([float(r["fallback_delta_per_iter"]) for r in ok_rows])
     graph_wins = sum(1 for r in ok_rows if math.isfinite(float(r["graph_ms"])) and math.isfinite(float(r["eager_ms"])) and float(r["graph_ms"]) < float(r["eager_ms"]))
     eager_wins = sum(1 for r in ok_rows if math.isfinite(float(r["graph_ms"])) and math.isfinite(float(r["eager_ms"])) and float(r["eager_ms"]) < float(r["graph_ms"]))
     ties = max(0, len(ok_rows) - graph_wins - eager_wins)
+    host_dispatch_reduction_cases = sum(
+        1 for r in ok_rows if bool(r.get("host_dispatch_reduced", False))
+    )
+    host_dispatch_reduction_rate_pct = (
+        (float(host_dispatch_reduction_cases) / float(len(ok_rows))) * 100.0
+        if ok_rows
+        else 0.0
+    )
 
     return {
         "total_cases": len(rows),
@@ -382,6 +425,14 @@ def _summary(rows: list[dict]) -> dict:
         "allclose_ok_cases": sum(1 for r in ok_rows if bool(r["allclose"])),
         "median_graph_over_eager": float(median(ratios)) if ratios else float("nan"),
         "median_dispatch_delta_pct": float(median(dispatch_deltas)) if dispatch_deltas else float("nan"),
+        "median_dispatch_reduction_pct": float(median(dispatch_reductions_pct)) if dispatch_reductions_pct else 0.0,
+        "mean_dispatch_reduction_per_iter": (
+            float(sum(dispatch_reductions_abs) / len(dispatch_reductions_abs))
+            if dispatch_reductions_abs
+            else 0.0
+        ),
+        "host_dispatch_reduction_cases": host_dispatch_reduction_cases,
+        "host_dispatch_reduction_rate_pct": host_dispatch_reduction_rate_pct,
         "median_fallback_delta_per_iter": float(median(fallback_deltas)) if fallback_deltas else float("nan"),
     }
 
@@ -406,6 +457,9 @@ def _write_csv(path: Path, rows: list[dict]) -> None:
         "graph_dispatch_per_iter",
         "dispatch_delta_per_iter",
         "dispatch_delta_pct",
+        "dispatch_reduction_per_iter",
+        "dispatch_reduction_pct",
+        "host_dispatch_reduced",
         "eager_fallback_per_iter",
         "graph_fallback_per_iter",
         "fallback_delta_per_iter",
@@ -436,14 +490,22 @@ def _to_markdown(rows: list[dict], summary: dict, device: str, warmup: int, iter
         f"median dispatch delta: {_fmt_pct(summary['median_dispatch_delta_pct'])}, "
         f"median fallback delta/iter: {_fmt_ms(summary['median_fallback_delta_per_iter'])}"
     )
+    lines.append(
+        f"- host dispatch reduction (fixed metric): "
+        f"cases={summary['host_dispatch_reduction_cases']}/{summary['ok_cases']}, "
+        f"rate={_fmt_pct(summary['host_dispatch_reduction_rate_pct'])}, "
+        f"median reduction={_fmt_pct(summary['median_dispatch_reduction_pct'])}, "
+        f"mean reduction/iter={_fmt_ms(summary['mean_dispatch_reduction_per_iter'])}"
+    )
     lines.append("")
-    lines.append("| bench | shape | status | eager (ms) | graph (ms) | graph/eager | dispatch delta (%) | fallback delta/iter |")
-    lines.append("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |")
+    lines.append("| bench | shape | status | eager (ms) | graph (ms) | graph/eager | dispatch delta (%) | dispatch reduction (%) | fallback delta/iter |")
+    lines.append("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |")
     for r in rows:
         lines.append(
             f"| {r['bench']} | {r['shape']} | {r['status']} | {_fmt_ms(float(r['eager_ms']))} | "
             f"{_fmt_ms(float(r['graph_ms']))} | {_fmt_ratio(float(r['graph_over_eager']))} | "
-            f"{_fmt_pct(float(r['dispatch_delta_pct']))} | {_fmt_ms(float(r['fallback_delta_per_iter']))} |"
+            f"{_fmt_pct(float(r['dispatch_delta_pct']))} | {_fmt_pct(float(r['dispatch_reduction_pct']))} | "
+            f"{_fmt_ms(float(r['fallback_delta_per_iter']))} |"
         )
     lines.append("")
     unsupported = [r for r in rows if r["status"] != "ok"]
@@ -564,7 +626,8 @@ def main() -> None:
     print(
         f"ok_cases={summary['ok_cases']} unsupported_cases={summary['unsupported_cases']} "
         f"graph_wins={summary['graph_wins']} eager_wins={summary['eager_wins']} "
-        f"median_graph_over_eager={summary['median_graph_over_eager']}"
+        f"median_graph_over_eager={summary['median_graph_over_eager']} "
+        f"host_dispatch_reduction_rate_pct={summary['host_dispatch_reduction_rate_pct']}"
     )
 
     if args.fail_on_empty and summary["ok_cases"] == 0:
@@ -573,4 +636,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

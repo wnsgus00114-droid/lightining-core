@@ -106,6 +106,106 @@ int main() {
     }
   }
 
+  // Capability-aware planner grouping: align flexible ops to a forced backend
+  // of neighboring ops when requested.
+  const lightning_core::runtime::BackendCapabilities metal_caps_for_planner =
+      lightning_core::runtime::backendCapabilities(Device::kMetal);
+  const bool metal_exec_available_for_planner =
+      metal_caps_for_planner.compute_surface && metal_caps_for_planner.available;
+  if (metal_exec_available_for_planner) {
+    GraphIR grouping_graph;
+    std::size_t ga = 0;
+    std::size_t gb = 0;
+    std::size_t gmm = 0;
+    std::size_t gcx = 0;
+    std::size_t gcw = 0;
+    std::size_t gcb = 0;
+    std::size_t gcy = 0;
+
+    TensorSpec mat_spec;
+    mat_spec.shape = {2, 2};
+    mat_spec.dtype = DType::kFloat32;
+    mat_spec.layout = lightning_core::Layout::kContiguous;
+    TensorSpec cx_spec;
+    cx_spec.shape = {1, 3, 8, 8};
+    cx_spec.dtype = DType::kFloat32;
+    cx_spec.layout = lightning_core::Layout::kContiguous;
+    TensorSpec cw_spec;
+    cw_spec.shape = {16, 3, 3, 3};
+    cw_spec.dtype = DType::kFloat32;
+    cw_spec.layout = lightning_core::Layout::kContiguous;
+    TensorSpec cb_spec;
+    cb_spec.shape = {16};
+    cb_spec.dtype = DType::kFloat32;
+    cb_spec.layout = lightning_core::Layout::kContiguous;
+    TensorSpec cy_spec;
+    cy_spec.shape = {1, 16, 8, 8};
+    cy_spec.dtype = DType::kFloat32;
+    cy_spec.layout = lightning_core::Layout::kContiguous;
+
+    if (grouping_graph.addTensorSpec(mat_spec, &ga, "ga", true) != Status::kSuccess ||
+        grouping_graph.addTensorSpec(mat_spec, &gb, "gb", true) != Status::kSuccess ||
+        grouping_graph.addTensorSpec(mat_spec, &gmm, "gmm", false) != Status::kSuccess ||
+        grouping_graph.addTensorSpec(cx_spec, &gcx, "gcx", true) != Status::kSuccess ||
+        grouping_graph.addTensorSpec(cw_spec, &gcw, "gcw", true) != Status::kSuccess ||
+        grouping_graph.addTensorSpec(cb_spec, &gcb, "gcb", true) != Status::kSuccess ||
+        grouping_graph.addTensorSpec(cy_spec, &gcy, "gcy", false) != Status::kSuccess) {
+      std::cerr << "grouping_graph addTensorSpec failed\n";
+      return 1;
+    }
+    if (grouping_graph.addNode(OpKind::kMatMul, {ga, gb}, {gmm}) != Status::kSuccess ||
+        grouping_graph.addNode(OpKind::kConv2dNchw3x3s1p1, {gcx, gcw, gcb}, {gcy}) != Status::kSuccess) {
+      std::cerr << "grouping_graph addNode failed\n";
+      return 1;
+    }
+
+    lightning_core::graph::GraphPlannerOptions no_cap_group;
+    no_cap_group.preferred_device = Device::kCPU;
+    no_cap_group.sync_policy.mode = lightning_core::runtime::SyncMode::kAuto;
+    no_cap_group.sync_policy.trace_sync_boundary = false;
+    no_cap_group.group_by_backend_capability = false;
+    no_cap_group.separate_fallback_segments = true;
+    no_cap_group.insert_sync_on_device_change = true;
+
+    std::vector<lightning_core::graph::GraphExecutionGroup> groups_no_cap;
+    std::vector<lightning_core::graph::GraphPlanStep> steps_no_cap;
+    if (grouping_graph.planExecutionGroups(no_cap_group, &groups_no_cap, &steps_no_cap) != Status::kSuccess) {
+      std::cerr << "grouping_graph planExecutionGroups(no_cap_group) failed\n";
+      return 1;
+    }
+    if (steps_no_cap.size() != 2 ||
+        steps_no_cap[0].assigned_device != Device::kCPU ||
+        steps_no_cap[1].assigned_device != Device::kMetal) {
+      std::cerr << "no_cap_group expected cpu->metal assignment\n";
+      return 1;
+    }
+    if (groups_no_cap.size() != 2 ||
+        !groups_no_cap[0].sync_boundary_after ||
+        !groups_no_cap[1].sync_boundary_before) {
+      std::cerr << "no_cap_group expected explicit sync boundary on device transition\n";
+      return 1;
+    }
+
+    lightning_core::graph::GraphPlannerOptions cap_group = no_cap_group;
+    cap_group.group_by_backend_capability = true;
+    std::vector<lightning_core::graph::GraphExecutionGroup> groups_cap;
+    std::vector<lightning_core::graph::GraphPlanStep> steps_cap;
+    if (grouping_graph.planExecutionGroups(cap_group, &groups_cap, &steps_cap) != Status::kSuccess) {
+      std::cerr << "grouping_graph planExecutionGroups(cap_group) failed\n";
+      return 1;
+    }
+    if (steps_cap.size() != 2 ||
+        steps_cap[0].assigned_device != Device::kMetal ||
+        steps_cap[1].assigned_device != Device::kMetal) {
+      std::cerr << "cap_group expected metal->metal capability-aligned assignment\n";
+      return 1;
+    }
+    if (groups_cap.size() != 1) {
+      std::cerr << "cap_group should collapse to single backend group\n";
+      return 1;
+    }
+  }
+
   // graph execution smoke: matmul -> vector_add
   GraphIR exec_graph;
   std::size_t exec_a = 0;

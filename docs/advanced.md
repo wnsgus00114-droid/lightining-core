@@ -96,6 +96,10 @@ python benchmarks/python/graph_eager_ab_bench.py \
   --md benchmarks/reports/ci/graph_eager_ab.md
 ```
 
+`graph_eager_ab.json` summary always includes fixed host-dispatch reduction fields:
+`host_dispatch_reduction_cases`, `host_dispatch_reduction_rate_pct`,
+`median_dispatch_reduction_pct`, `mean_dispatch_reduction_per_iter`.
+
 Engine split benchmark policy (pure-LC vs interop):
 
 ```python
