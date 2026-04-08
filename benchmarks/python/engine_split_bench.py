@@ -285,6 +285,18 @@ def main() -> None:
     parser.add_argument("--pure-json", type=str, default="engine_split_pure_lc.json")
     parser.add_argument("--interop-csv", type=str, default="engine_split_interop.csv")
     parser.add_argument("--interop-json", type=str, default="engine_split_interop.json")
+    parser.add_argument(
+        "--require-shared-bench-coverage",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Fail when pure/interop reports do not share identical bench keys.",
+    )
+    parser.add_argument(
+        "--require-torch-interop-rows",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Fail when torch is available but no interop row is status=ok.",
+    )
     args = parser.parse_args()
 
     random.seed(args.seed)
@@ -484,6 +496,17 @@ def main() -> None:
             f"api(torch)={_fmt_ms(row['lc_api_torch_ms'])}ms interop/pure={_fmt_ratio(row['interop_over_pure'])} "
             f"hotspot(lightning)={row['api_lightning_top_op_path']} status={row['status']}"
         )
+
+    if args.require_shared_bench_coverage:
+        pure_keys = {f"{r['bench']}|{r['shape']}" for r in pure_rows}
+        interop_keys = {f"{r['bench']}|{r['shape']}" for r in interop_rows}
+        if pure_keys != interop_keys:
+            raise SystemExit(5)
+
+    if args.require_torch_interop_rows and _torch_available():
+        interop_ok = [r for r in interop_rows if r.get("status") == "ok"]
+        if not interop_ok:
+            raise SystemExit(6)
 
 
 if __name__ == "__main__":

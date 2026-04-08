@@ -1,3 +1,4 @@
+#include <cmath>
 #include <cstring>
 #include <iostream>
 #include <unordered_map>
@@ -984,6 +985,186 @@ int main() {
     }
     if (!saw_multi_consumer_reason) {
       std::cerr << "no_fuse_graph should report intermediate_multi_consumer reason\n";
+      return 1;
+    }
+  }
+
+  // fusion pilot v2: matmul+bias+relu should fuse on eligible graph and
+  // preserve outputs, with explicit cost-model gating reason.
+  {
+    GraphIR mm_fusion_graph;
+    std::size_t mma = 0;
+    std::size_t mmb = 0;
+    std::size_t mmbias = 0;
+    std::size_t mm_mid = 0;
+    std::size_t mm_add = 0;
+    std::size_t mm_out = 0;
+
+    TensorSpec a_spec;
+    a_spec.shape = {4, 8};
+    a_spec.dtype = DType::kFloat32;
+    a_spec.layout = lightning_core::Layout::kContiguous;
+    TensorSpec b_spec;
+    b_spec.shape = {8, 6};
+    b_spec.dtype = DType::kFloat32;
+    b_spec.layout = lightning_core::Layout::kContiguous;
+    TensorSpec out_spec;
+    out_spec.shape = {4, 6};
+    out_spec.dtype = DType::kFloat32;
+    out_spec.layout = lightning_core::Layout::kContiguous;
+
+    if (mm_fusion_graph.addTensorSpec(a_spec, &mma, "mma", true) != Status::kSuccess ||
+        mm_fusion_graph.addTensorSpec(b_spec, &mmb, "mmb", true) != Status::kSuccess ||
+        mm_fusion_graph.addTensorSpec(out_spec, &mmbias, "mmbias", true) != Status::kSuccess ||
+        mm_fusion_graph.addTensorSpec(out_spec, &mm_mid, "mm_mid", false) != Status::kSuccess ||
+        mm_fusion_graph.addTensorSpec(out_spec, &mm_add, "mm_add", false) != Status::kSuccess ||
+        mm_fusion_graph.addTensorSpec(out_spec, &mm_out, "mm_out", false) != Status::kSuccess) {
+      std::cerr << "mm_fusion_graph addTensorSpec failed\n";
+      return 1;
+    }
+    if (mm_fusion_graph.addNode(OpKind::kMatMul, {mma, mmb}, {mm_mid}) != Status::kSuccess ||
+        mm_fusion_graph.addNode(OpKind::kVectorAdd, {mm_mid, mmbias}, {mm_add}) != Status::kSuccess ||
+        mm_fusion_graph.addNode(OpKind::kRelu, {mm_add}, {mm_out}) != Status::kSuccess) {
+      std::cerr << "mm_fusion_graph addNode failed\n";
+      return 1;
+    }
+
+    std::unordered_map<std::size_t, std::vector<float>> mm_feeds;
+    mm_feeds[mma].resize(4 * 8);
+    mm_feeds[mmb].resize(8 * 6);
+    mm_feeds[mmbias].resize(4 * 6);
+    for (std::size_t i = 0; i < mm_feeds[mma].size(); ++i) {
+      mm_feeds[mma][i] = static_cast<float>((i % 9) - 4) * 0.2f;
+    }
+    for (std::size_t i = 0; i < mm_feeds[mmb].size(); ++i) {
+      mm_feeds[mmb][i] = static_cast<float>((i % 7) - 3) * 0.15f;
+    }
+    for (std::size_t i = 0; i < mm_feeds[mmbias].size(); ++i) {
+      mm_feeds[mmbias][i] = static_cast<float>((i % 5) - 2) * 0.1f;
+    }
+
+    lightning_core::graph::GraphPlannerOptions mm_opts_on;
+    mm_opts_on.preferred_device = Device::kCPU;
+    mm_opts_on.sync_policy.mode = lightning_core::runtime::SyncMode::kAuto;
+    mm_opts_on.enable_fusion_v1 = true;
+    mm_opts_on.enable_fusion_cost_model_v1 = true;
+    mm_opts_on.fusion_cost_min_speedup = 1.0;
+
+    lightning_core::graph::GraphPlannerOptions mm_opts_off = mm_opts_on;
+    mm_opts_off.enable_fusion_v1 = false;
+
+    std::unordered_map<std::size_t, std::vector<float>> mm_values_on;
+    std::unordered_map<std::size_t, std::vector<float>> mm_values_off;
+    if (mm_fusion_graph.executeF32(mm_opts_on, mm_feeds, &mm_values_on, nullptr, nullptr) != Status::kSuccess) {
+      std::cerr << "mm_fusion_graph executeF32(enable=true) failed\n";
+      return 1;
+    }
+    if (mm_fusion_graph.executeF32(mm_opts_off, mm_feeds, &mm_values_off, nullptr, nullptr) != Status::kSuccess) {
+      std::cerr << "mm_fusion_graph executeF32(enable=false) failed\n";
+      return 1;
+    }
+    const auto mm_out_on_it = mm_values_on.find(mm_out);
+    const auto mm_out_off_it = mm_values_off.find(mm_out);
+    if (mm_out_on_it == mm_values_on.end() || mm_out_off_it == mm_values_off.end()) {
+      std::cerr << "mm_fusion_graph output missing\n";
+      return 1;
+    }
+    if (mm_out_on_it->second.size() != mm_out_off_it->second.size()) {
+      std::cerr << "mm_fusion_graph output size mismatch\n";
+      return 1;
+    }
+    for (std::size_t i = 0; i < mm_out_on_it->second.size(); ++i) {
+      const float diff = mm_out_on_it->second[i] - mm_out_off_it->second[i];
+      if (diff > 1e-4f || diff < -1e-4f) {
+        std::cerr << "mm_fusion_graph fused/unfused mismatch at index " << i << "\n";
+        return 1;
+      }
+    }
+
+    std::vector<lightning_core::graph::GraphFusionDecision> mm_decisions_on;
+    if (mm_fusion_graph.fusionReport(mm_opts_on, &mm_decisions_on) != Status::kSuccess) {
+      std::cerr << "mm_fusion_graph fusionReport(enable=true) failed\n";
+      return 1;
+    }
+    bool saw_mm_fused = false;
+    for (const auto& d : mm_decisions_on) {
+      if (d.pattern == lightning_core::graph::FusionPattern::kMatMulBiasReluV1 && d.fused) {
+        saw_mm_fused = true;
+        if (!std::isfinite(d.estimated_speedup) || d.estimated_speedup <= 0.0) {
+          std::cerr << "mm_fusion_graph should expose finite cost-model speedup\n";
+          return 1;
+        }
+        break;
+      }
+    }
+    if (!saw_mm_fused) {
+      std::cerr << "mm_fusion_graph should report fused matmul+bias+relu decision\n";
+      return 1;
+    }
+
+    lightning_core::graph::GraphPlannerOptions mm_opts_reject = mm_opts_on;
+    mm_opts_reject.fusion_cost_min_speedup = 1000.0;
+    std::vector<lightning_core::graph::GraphFusionDecision> mm_decisions_reject;
+    if (mm_fusion_graph.fusionReport(mm_opts_reject, &mm_decisions_reject) != Status::kSuccess) {
+      std::cerr << "mm_fusion_graph fusionReport(cost reject) failed\n";
+      return 1;
+    }
+    bool saw_cost_reject = false;
+    for (const auto& d : mm_decisions_reject) {
+      if (d.pattern == lightning_core::graph::FusionPattern::kMatMulBiasReluV1 &&
+          !d.fused &&
+          d.reason.rfind("cost_model_reject(", 0) == 0) {
+        saw_cost_reject = true;
+        break;
+      }
+    }
+    if (!saw_cost_reject) {
+      std::cerr << "mm_fusion_graph should report cost_model_reject reason under high threshold\n";
+      return 1;
+    }
+
+    GraphIR mm_no_fuse_graph;
+    std::size_t nfa = 0;
+    std::size_t nfb = 0;
+    std::size_t nfbias = 0;
+    std::size_t nfmid = 0;
+    std::size_t nfadd = 0;
+    std::size_t nfout = 0;
+    std::size_t nfextra = 0;
+    if (mm_no_fuse_graph.addTensorSpec(a_spec, &nfa, "nfa", true) != Status::kSuccess ||
+        mm_no_fuse_graph.addTensorSpec(b_spec, &nfb, "nfb", true) != Status::kSuccess ||
+        mm_no_fuse_graph.addTensorSpec(out_spec, &nfbias, "nfbias", true) != Status::kSuccess ||
+        mm_no_fuse_graph.addTensorSpec(out_spec, &nfmid, "nfmid", false) != Status::kSuccess ||
+        mm_no_fuse_graph.addTensorSpec(out_spec, &nfadd, "nfadd", false) != Status::kSuccess ||
+        mm_no_fuse_graph.addTensorSpec(out_spec, &nfout, "nfout", false) != Status::kSuccess ||
+        mm_no_fuse_graph.addTensorSpec(out_spec, &nfextra, "nfextra", false) != Status::kSuccess) {
+      std::cerr << "mm_no_fuse_graph addTensorSpec failed\n";
+      return 1;
+    }
+    if (mm_no_fuse_graph.addNode(OpKind::kMatMul, {nfa, nfb}, {nfmid}) != Status::kSuccess ||
+        mm_no_fuse_graph.addNode(OpKind::kVectorAdd, {nfmid, nfbias}, {nfadd}) != Status::kSuccess ||
+        mm_no_fuse_graph.addNode(OpKind::kRelu, {nfadd}, {nfout}) != Status::kSuccess ||
+        mm_no_fuse_graph.addNode(OpKind::kMatrixSub, {nfmid, nfbias}, {nfextra}) != Status::kSuccess) {
+      std::cerr << "mm_no_fuse_graph addNode failed\n";
+      return 1;
+    }
+
+    std::vector<lightning_core::graph::GraphFusionDecision> mm_no_fuse_decisions;
+    if (mm_no_fuse_graph.fusionReport(mm_opts_on, &mm_no_fuse_decisions) != Status::kSuccess) {
+      std::cerr << "mm_no_fuse_graph fusionReport failed\n";
+      return 1;
+    }
+    bool saw_mm_multi_consumer_reason = false;
+    for (const auto& d : mm_no_fuse_decisions) {
+      if (d.pattern == lightning_core::graph::FusionPattern::kMatMulBiasReluV1 &&
+          !d.fused &&
+          d.reason == "matmul_output_multi_consumer") {
+        saw_mm_multi_consumer_reason = true;
+        break;
+      }
+    }
+    if (!saw_mm_multi_consumer_reason) {
+      std::cerr << "mm_no_fuse_graph should report matmul_output_multi_consumer reason\n";
       return 1;
     }
   }

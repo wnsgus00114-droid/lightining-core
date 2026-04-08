@@ -8,7 +8,7 @@ Regenerate:
 | Metric | Count |
 | --- | --- |
 | Headers scanned | 7 |
-| Types (enum/struct/class) | 48 |
+| Types (enum/struct/class) | 49 |
 | C++ functions | 38 |
 | C API functions | 21 |
 
@@ -56,22 +56,23 @@ Regenerate:
 | `AttentionImplementation` | enum class | [include/lightning_core/core/attention.hpp:34](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/attention.hpp#L34) |
 | `AttentionIoPolicy` | struct | [include/lightning_core/core/attention.hpp:16](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/attention.hpp#L16) |
 | `AttentionSession` | class | [include/lightning_core/core/attention.hpp:86](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/attention.hpp#L86) |
-| `DType` | enum class | [include/lightning_core/core/graph.hpp:19](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/graph.hpp#L19) |
-| `FusionPattern` | enum class | [include/lightning_core/core/graph.hpp:250](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/graph.hpp#L250) |
-| `GraphExecutionGroup` | struct | [include/lightning_core/core/graph.hpp:241](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/graph.hpp#L241) |
-| `GraphFusionDecision` | struct | [include/lightning_core/core/graph.hpp:263](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/graph.hpp#L263) |
-| `GraphIR` | class | [include/lightning_core/core/graph.hpp:282](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/graph.hpp#L282) |
-| `GraphNode` | struct | [include/lightning_core/core/graph.hpp:169](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/graph.hpp#L169) |
-| `GraphPlanStep` | struct | [include/lightning_core/core/graph.hpp:178](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/graph.hpp#L178) |
-| `GraphPlannerOptions` | struct | [include/lightning_core/core/graph.hpp:230](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/graph.hpp#L230) |
-| `GraphTensorValue` | struct | [include/lightning_core/core/graph.hpp:163](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/graph.hpp#L163) |
-| `OpKind` | enum class | [include/lightning_core/core/graph.hpp:34](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/graph.hpp#L34) |
-| `OperatorRegistry` | class | [include/lightning_core/core/graph.hpp:95](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/graph.hpp#L95) |
-| `OperatorSchema` | struct | [include/lightning_core/core/graph.hpp:71](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/graph.hpp#L71) |
-| `TensorSpec` | struct | [include/lightning_core/core/graph.hpp:65](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/graph.hpp#L65) |
-| `ValidationIssue` | struct | [include/lightning_core/core/graph.hpp:210](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/graph.hpp#L210) |
-| `ValidationPass` | enum class | [include/lightning_core/core/graph.hpp:185](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/graph.hpp#L185) |
-| `ValidationReport` | struct | [include/lightning_core/core/graph.hpp:218](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/graph.hpp#L218) |
+| `DType` | enum class | [include/lightning_core/core/graph.hpp:23](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/graph.hpp#L23) |
+| `FusionCostEstimate` | struct | [include/lightning_core/core/graph.hpp:892](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/graph.hpp#L892) |
+| `FusionPattern` | enum class | [include/lightning_core/core/graph.hpp:264](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/graph.hpp#L264) |
+| `GraphExecutionGroup` | struct | [include/lightning_core/core/graph.hpp:255](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/graph.hpp#L255) |
+| `GraphFusionDecision` | struct | [include/lightning_core/core/graph.hpp:280](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/graph.hpp#L280) |
+| `GraphIR` | class | [include/lightning_core/core/graph.hpp:303](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/graph.hpp#L303) |
+| `GraphNode` | struct | [include/lightning_core/core/graph.hpp:173](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/graph.hpp#L173) |
+| `GraphPlanStep` | struct | [include/lightning_core/core/graph.hpp:182](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/graph.hpp#L182) |
+| `GraphPlannerOptions` | struct | [include/lightning_core/core/graph.hpp:234](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/graph.hpp#L234) |
+| `GraphTensorValue` | struct | [include/lightning_core/core/graph.hpp:167](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/graph.hpp#L167) |
+| `OpKind` | enum class | [include/lightning_core/core/graph.hpp:38](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/graph.hpp#L38) |
+| `OperatorRegistry` | class | [include/lightning_core/core/graph.hpp:99](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/graph.hpp#L99) |
+| `OperatorSchema` | struct | [include/lightning_core/core/graph.hpp:75](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/graph.hpp#L75) |
+| `TensorSpec` | struct | [include/lightning_core/core/graph.hpp:69](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/graph.hpp#L69) |
+| `ValidationIssue` | struct | [include/lightning_core/core/graph.hpp:214](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/graph.hpp#L214) |
+| `ValidationPass` | enum class | [include/lightning_core/core/graph.hpp:189](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/graph.hpp#L189) |
+| `ValidationReport` | struct | [include/lightning_core/core/graph.hpp:222](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/graph.hpp#L222) |
 | `MatMulMetalResidentSession` | class | [include/lightning_core/core/ops.hpp:1340](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/ops.hpp#L1340) |
 | `MatrixElemwiseMetalResidentSession` | class | [include/lightning_core/core/ops.hpp:1382](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/ops.hpp#L1382) |
 | `PackedWeightCacheEntry` | struct | [include/lightning_core/core/ops.hpp:1044](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/core/ops.hpp#L1044) |

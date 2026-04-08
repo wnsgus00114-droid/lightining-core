@@ -356,6 +356,128 @@ def _run_conv_attention_case(
     return row, detail
 
 
+def _run_matmul_bias_relu_case(
+    *,
+    m: int,
+    k: int,
+    n: int,
+    device: str,
+    warmup: int,
+    iters: int,
+    trace_iters: int,
+    rng: np.random.Generator,
+    fusion_cost_min_speedup: float,
+) -> tuple[dict, dict]:
+    a = (rng.random((m, k), dtype=np.float32) * 2.0) - 1.0
+    b = (rng.random((k, n), dtype=np.float32) * 2.0) - 1.0
+    bias = (rng.random((m, n), dtype=np.float32) * 0.2) - 0.1
+
+    g = lc.GraphIR()
+    ta = g.add_tensor([m, k], dtype="float32", name="a", constant=True)
+    tb = g.add_tensor([k, n], dtype="float32", name="b", constant=True)
+    tbias = g.add_tensor([m, n], dtype="float32", name="bias", constant=True)
+    tmm = g.add_tensor([m, n], dtype="float32", name="mm")
+    tadd = g.add_tensor([m, n], dtype="float32", name="add")
+    tout = g.add_tensor([m, n], dtype="float32", name="out")
+    g.add_node("matmul", [ta, tb], [tmm])
+    g.add_node("vector_add", [tmm, tbias], [tadd])
+    g.add_node("relu", [tadd], [tout])
+    feeds = {ta: a, tb: b, tbias: bias}
+
+    def eager_once():
+        mm = np.asarray(lc.matmul2d(a, b, device), dtype=np.float32).reshape(-1)
+        add = np.asarray(lc.vector_add(mm, bias.reshape(-1), device), dtype=np.float32)
+        _ = np.maximum(add, 0.0)
+
+    def graph_once():
+        _ = g.execute_f32(
+            feeds,
+            preferred_device=device,
+            enable_fusion_v1=True,
+            enable_fusion_cost_model_v1=True,
+            fusion_cost_min_speedup=fusion_cost_min_speedup,
+        )
+
+    eager_ms = _median_ms(eager_once, warmup, iters)
+    graph_ms = _median_ms(graph_once, warmup, iters)
+
+    eager_out = np.asarray(
+        np.maximum(
+            np.asarray(lc.vector_add(np.asarray(lc.matmul2d(a, b, device), dtype=np.float32).reshape(-1), bias.reshape(-1), device), dtype=np.float32),
+            0.0,
+        ),
+        dtype=np.float32,
+    ).reshape(-1)
+    graph_out = np.asarray(
+        g.execute_f32(
+            feeds,
+            preferred_device=device,
+            enable_fusion_v1=True,
+            enable_fusion_cost_model_v1=True,
+            fusion_cost_min_speedup=fusion_cost_min_speedup,
+        )["values"][tout],
+        dtype=np.float32,
+    ).reshape(-1)
+    abs_diff = np.abs(eager_out - graph_out)
+    rel_diff = abs_diff / (np.abs(eager_out) + 1.0e-12)
+
+    eager_trace = _collect_trace_metrics(eager_once, trace_iters)
+    graph_trace = _collect_trace_metrics(graph_once, trace_iters)
+
+    dispatch_delta = graph_trace["dispatch_per_iter"] - eager_trace["dispatch_per_iter"]
+    dispatch_delta_pct = (
+        (dispatch_delta / eager_trace["dispatch_per_iter"]) * 100.0
+        if math.isfinite(eager_trace["dispatch_per_iter"]) and eager_trace["dispatch_per_iter"] > 0
+        else float("nan")
+    )
+    dispatch_reduction_per_iter, dispatch_reduction_pct = _safe_dispatch_reduction(
+        eager_trace["dispatch_per_iter"],
+        graph_trace["dispatch_per_iter"],
+    )
+    fallback_delta = graph_trace["fallback_per_iter"] - eager_trace["fallback_per_iter"]
+
+    row = {
+        "suite": "graph_eager_ab",
+        "bench": "matmul_bias_relu_fusion_path",
+        "shape": f"m={m},k={k},n={n}",
+        "status": "ok",
+        "device": device,
+        "eager_ms": eager_ms,
+        "graph_ms": graph_ms,
+        "graph_over_eager": (graph_ms / eager_ms) if eager_ms > 0 else float("nan"),
+        "eager_over_graph": (eager_ms / graph_ms) if graph_ms > 0 else float("nan"),
+        "allclose": bool(np.all(abs_diff <= (1.0e-4 + 1.0e-4 * np.abs(eager_out)))),
+        "max_abs_diff": float(np.max(abs_diff)) if abs_diff.size else 0.0,
+        "mean_abs_diff": float(np.mean(abs_diff)) if abs_diff.size else 0.0,
+        "max_rel_diff": float(np.max(rel_diff)) if rel_diff.size else 0.0,
+        "eager_dispatch_per_iter": eager_trace["dispatch_per_iter"],
+        "graph_dispatch_per_iter": graph_trace["dispatch_per_iter"],
+        "dispatch_delta_per_iter": dispatch_delta,
+        "dispatch_delta_pct": dispatch_delta_pct,
+        "dispatch_reduction_per_iter": dispatch_reduction_per_iter,
+        "dispatch_reduction_pct": dispatch_reduction_pct,
+        "host_dispatch_reduced": bool(
+            math.isfinite(dispatch_reduction_per_iter) and dispatch_reduction_per_iter > 0.0
+        ),
+        "eager_fallback_per_iter": eager_trace["fallback_per_iter"],
+        "graph_fallback_per_iter": graph_trace["fallback_per_iter"],
+        "fallback_delta_per_iter": fallback_delta,
+        "eager_events_per_iter": eager_trace["events_per_iter"],
+        "graph_events_per_iter": graph_trace["events_per_iter"],
+        "eager_top_op_path": eager_trace["top_op_path"],
+        "graph_top_op_path": graph_trace["top_op_path"],
+        "note": "",
+    }
+    detail = {
+        "row": row,
+        "trace": {
+            "eager": eager_trace,
+            "graph": graph_trace,
+        },
+    }
+    return row, detail
+
+
 def _unsupported_row(bench: str, shape: str, device: str, reason: str) -> tuple[dict, dict]:
     row = {
         "suite": "graph_eager_ab",
@@ -524,6 +646,7 @@ def main() -> None:
     p.add_argument("--iters", type=int, default=24)
     p.add_argument("--trace-iters", type=int, default=8)
     p.add_argument("--seed", type=int, default=20260401)
+    p.add_argument("--fusion-cost-min-speedup", type=float, default=1.01)
     p.add_argument("--csv", type=Path, default=Path("benchmarks/reports/ci/graph_eager_ab.csv"))
     p.add_argument("--json", type=Path, default=Path("benchmarks/reports/ci/graph_eager_ab.json"))
     p.add_argument("--md", type=Path, default=Path("benchmarks/reports/ci/graph_eager_ab.md"))
@@ -532,6 +655,18 @@ def main() -> None:
         action=argparse.BooleanOptionalAction,
         default=False,
         help="Exit non-zero when no case succeeds.",
+    )
+    p.add_argument(
+        "--require-host-dispatch-reduction",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Exit non-zero when host dispatch reduction rate is below threshold.",
+    )
+    p.add_argument(
+        "--min-host-dispatch-reduction-rate-pct",
+        type=float,
+        default=10.0,
+        help="Minimum required host dispatch reduction rate when --require-host-dispatch-reduction is enabled.",
     )
     args = p.parse_args()
 
@@ -596,6 +731,26 @@ def main() -> None:
         rows.append(row)
         details.append(detail)
 
+    fusion_cases = [(128, 128, 128)]
+    for m, k, n in fusion_cases:
+        shape = f"m={m},k={k},n={n}"
+        try:
+            row, detail = _run_matmul_bias_relu_case(
+                m=m,
+                k=k,
+                n=n,
+                device=device,
+                warmup=args.warmup,
+                iters=args.iters,
+                trace_iters=args.trace_iters,
+                rng=rng,
+                fusion_cost_min_speedup=float(args.fusion_cost_min_speedup),
+            )
+        except Exception as exc:
+            row, detail = _unsupported_row("matmul_bias_relu_fusion_path", shape, device, str(exc))
+        rows.append(row)
+        details.append(detail)
+
     summary = _summary(rows)
     payload = {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -632,6 +787,10 @@ def main() -> None:
 
     if args.fail_on_empty and summary["ok_cases"] == 0:
         raise SystemExit(2)
+    if args.require_host_dispatch_reduction:
+        rate = float(summary.get("host_dispatch_reduction_rate_pct", 0.0))
+        if not math.isfinite(rate) or rate < float(args.min_host_dispatch_reduction_rate_pct):
+            raise SystemExit(5)
 
 
 if __name__ == "__main__":

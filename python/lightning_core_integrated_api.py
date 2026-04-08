@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from datetime import datetime, timezone
+import json
 import os
 from threading import Lock
 import time
@@ -19,6 +21,8 @@ _VALID_ENGINES = {"lightning", "torch", "auto"}
 _LC_API_BRIDGE_LOCK = Lock()
 _LC_API_BRIDGE_INSTALLED = False
 _LC_API_DIRECT_EXPORTS: dict[str, Any] = {}
+_CHECKPOINT_META_KEY = "__lc_checkpoint_meta__"
+_CHECKPOINT_FORMAT = "lc_checkpoint_v1"
 
 
 def _import_torch():
@@ -155,6 +159,117 @@ def tensor(x: Any) -> np.ndarray:
     return _as_f32_c(x)
 
 
+def _checkpoint_meta_array(payload: dict[str, Any]) -> np.ndarray:
+    raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return np.frombuffer(raw, dtype=np.uint8)
+
+
+def _checkpoint_meta_from_array(arr: np.ndarray) -> dict[str, Any]:
+    raw = bytes(np.asarray(arr, dtype=np.uint8).tolist())
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw.decode("utf-8"))
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _checkpoint_state_to_array(value: Any) -> np.ndarray:
+    if value is None:
+        return np.empty((0,), dtype=np.float32)
+    arr = np.asarray(value)
+    if arr.dtype == object:
+        raise ValueError("checkpoint state value must not be object dtype")
+    return np.ascontiguousarray(arr)
+
+
+def _flatten_checkpoint_state(state: dict[str, Any], *, prefix: str = "") -> dict[str, np.ndarray]:
+    out: dict[str, np.ndarray] = {}
+    for k, v in state.items():
+        key = str(k)
+        if not key:
+            raise ValueError("checkpoint key must be non-empty")
+        full_key = f"{prefix}.{key}" if prefix else key
+        if full_key == _CHECKPOINT_META_KEY:
+            raise ValueError(f"checkpoint key '{_CHECKPOINT_META_KEY}' is reserved")
+        if isinstance(v, dict):
+            nested = _flatten_checkpoint_state(v, prefix=full_key)
+            for nk, nv in nested.items():
+                if nk in out:
+                    raise ValueError(f"duplicate checkpoint key: {nk}")
+                out[nk] = nv
+        else:
+            if full_key in out:
+                raise ValueError(f"duplicate checkpoint key: {full_key}")
+            out[full_key] = _checkpoint_state_to_array(v)
+    return out
+
+
+def save_checkpoint(
+    path: str | os.PathLike[str],
+    state_or_obj: Any,
+    *,
+    metadata: dict[str, Any] | None = None,
+    compressed: bool = True,
+) -> str:
+    """Save checkpoint state to .npz (format: lc_checkpoint_v1)."""
+    if hasattr(state_or_obj, "state_dict") and callable(getattr(state_or_obj, "state_dict")):
+        state_obj = state_or_obj.state_dict()  # type: ignore[call-arg]
+    else:
+        state_obj = state_or_obj
+    if not isinstance(state_obj, dict):
+        raise TypeError("state_or_obj must be dict or object implementing state_dict()")
+
+    flat_state = _flatten_checkpoint_state(state_obj)
+    meta_payload = {
+        "format": _CHECKPOINT_FORMAT,
+        "saved_at_utc": datetime.now(timezone.utc).isoformat(),
+        "engine": get_backend(),
+        "num_tensors": len(flat_state),
+        "keys": sorted(flat_state.keys()),
+        "user_metadata": metadata or {},
+    }
+
+    save_dict: dict[str, np.ndarray] = dict(flat_state)
+    save_dict[_CHECKPOINT_META_KEY] = _checkpoint_meta_array(meta_payload)
+
+    save_path = os.fspath(path)
+    if compressed:
+        np.savez_compressed(save_path, **save_dict)
+    else:
+        np.savez(save_path, **save_dict)
+    return save_path
+
+
+def load_checkpoint(
+    path: str | os.PathLike[str],
+    *,
+    into: Any | None = None,
+    strict: bool = True,
+) -> dict[str, Any]:
+    """Load checkpoint from .npz and optionally apply to target via load_state_dict()."""
+    load_path = os.fspath(path)
+    state: dict[str, np.ndarray] = {}
+    meta: dict[str, Any] = {}
+    with np.load(load_path, allow_pickle=False) as data:
+        files = list(data.files)
+        if _CHECKPOINT_META_KEY in files:
+            meta = _checkpoint_meta_from_array(np.asarray(data[_CHECKPOINT_META_KEY]))
+        for name in files:
+            if name == _CHECKPOINT_META_KEY:
+                continue
+            state[name] = np.asarray(data[name])
+
+    if into is not None:
+        load_fn = getattr(into, "load_state_dict", None)
+        if not callable(load_fn):
+            raise TypeError("into must implement load_state_dict(state, strict=...)")
+        load_fn(state, strict=bool(strict))
+
+    return {"path": load_path, "meta": meta, "state": state}
+
+
 class Linear:
     def __init__(self, in_features: int, out_features: int, bias: bool = True):
         self.in_features = int(in_features)
@@ -170,6 +285,50 @@ class Linear:
         if self.bias is not None:
             out = out + self.bias
         return out
+
+    def state_dict(self, prefix: str = "") -> dict[str, np.ndarray]:
+        key = (str(prefix).rstrip(".") + ".") if prefix else ""
+        out: dict[str, np.ndarray] = {
+            f"{key}weight": np.ascontiguousarray(self.weight),
+            f"{key}in_features": np.asarray([self.in_features], dtype=np.int32),
+            f"{key}out_features": np.asarray([self.out_features], dtype=np.int32),
+            f"{key}has_bias": np.asarray([1 if self.bias is not None else 0], dtype=np.int32),
+        }
+        if self.bias is not None:
+            out[f"{key}bias"] = np.ascontiguousarray(self.bias)
+        return out
+
+    def load_state_dict(self, state: dict[str, Any], strict: bool = True, prefix: str = "") -> None:
+        key = (str(prefix).rstrip(".") + ".") if prefix else ""
+        w_key = f"{key}weight"
+        b_key = f"{key}bias"
+        hb_key = f"{key}has_bias"
+
+        if w_key not in state:
+            raise KeyError(f"missing key: {w_key}")
+        w = np.asarray(state[w_key], dtype=np.float32)
+        if w.shape != (self.in_features, self.out_features):
+            raise ValueError(f"weight shape mismatch: expected {(self.in_features, self.out_features)} got {tuple(w.shape)}")
+        self.weight = np.ascontiguousarray(w)
+
+        has_bias = self.bias is not None
+        if hb_key in state:
+            hb = np.asarray(state[hb_key]).reshape(-1)
+            if hb.size > 0:
+                has_bias = bool(int(hb[0]))
+
+        if has_bias:
+            if b_key not in state:
+                if strict:
+                    raise KeyError(f"missing key: {b_key}")
+                self.bias = np.zeros((self.out_features,), dtype=np.float32)
+            else:
+                b = np.asarray(state[b_key], dtype=np.float32).reshape(-1)
+                if b.shape != (self.out_features,):
+                    raise ValueError(f"bias shape mismatch: expected {(self.out_features,)} got {tuple(b.shape)}")
+                self.bias = np.ascontiguousarray(b)
+        else:
+            self.bias = None
 
 
 def lightning_matmul(a: Any, b: Any, device: str = "metal") -> np.ndarray:
@@ -625,6 +784,66 @@ class ConvReLUResidentBlock:
             force_into=True,
         )
 
+    def state_dict(self, prefix: str = "") -> dict[str, np.ndarray]:
+        key = (str(prefix).rstrip(".") + ".") if prefix else ""
+        out: dict[str, np.ndarray] = {
+            f"{key}weight": np.ascontiguousarray(self.w),
+            f"{key}stride_h": np.asarray([self.stride_h], dtype=np.int32),
+            f"{key}stride_w": np.asarray([self.stride_w], dtype=np.int32),
+            f"{key}pad_h": np.asarray([self.pad_h], dtype=np.int32),
+            f"{key}pad_w": np.asarray([self.pad_w], dtype=np.int32),
+            f"{key}has_bias": np.asarray([1 if self.b is not None else 0], dtype=np.int32),
+        }
+        if self.b is not None:
+            out[f"{key}bias"] = np.ascontiguousarray(self.b)
+        return out
+
+    def load_state_dict(self, state: dict[str, Any], strict: bool = True, prefix: str = "") -> None:
+        key = (str(prefix).rstrip(".") + ".") if prefix else ""
+        w_key = f"{key}weight"
+        b_key = f"{key}bias"
+        hb_key = f"{key}has_bias"
+        if w_key not in state:
+            raise KeyError(f"missing key: {w_key}")
+        w = np.asarray(state[w_key], dtype=np.float32)
+        if w.ndim != 4:
+            raise ValueError("conv weight must be 4D")
+        self.w = np.ascontiguousarray(w)
+
+        has_bias = self.b is not None
+        if hb_key in state:
+            hb = np.asarray(state[hb_key]).reshape(-1)
+            if hb.size > 0:
+                has_bias = bool(int(hb[0]))
+
+        if has_bias:
+            if b_key not in state:
+                if strict:
+                    raise KeyError(f"missing key: {b_key}")
+                self.b = np.zeros((self.w.shape[0],), dtype=np.float32)
+            else:
+                b = np.asarray(state[b_key], dtype=np.float32).reshape(-1)
+                if b.shape != (self.w.shape[0],):
+                    raise ValueError(f"conv bias shape mismatch: expected {(self.w.shape[0],)} got {tuple(b.shape)}")
+                self.b = np.ascontiguousarray(b)
+        else:
+            self.b = None
+
+        for field in ("stride_h", "stride_w", "pad_h", "pad_w"):
+            fk = f"{key}{field}"
+            if fk in state:
+                val = np.asarray(state[fk]).reshape(-1)
+                if val.size > 0:
+                    setattr(self, field, int(val[0]))
+            elif strict:
+                raise KeyError(f"missing key: {fk}")
+
+        # Reset resident session cache after weight/config changes.
+        self._resident_session = None
+        self._resident_started = False
+        self._resident_shape_key = None
+        self.workspace_cache.clear()
+
 
 class AttentionResidentBlock:
     def __init__(self, seq: int, head_dim: int, *, causal: bool = False, device: str = "metal"):
@@ -678,6 +897,30 @@ class AttentionResidentBlock:
             sess.forward_into(q2[i], k2[i], v2[i], out2[i])
 
         return self._reshape_back(out2, q_shape)
+
+    def state_dict(self, prefix: str = "") -> dict[str, np.ndarray]:
+        key = (str(prefix).rstrip(".") + ".") if prefix else ""
+        return {
+            f"{key}seq": np.asarray([self.seq], dtype=np.int32),
+            f"{key}head_dim": np.asarray([self.head_dim], dtype=np.int32),
+            f"{key}causal": np.asarray([1 if self.causal else 0], dtype=np.int32),
+        }
+
+    def load_state_dict(self, state: dict[str, Any], strict: bool = True, prefix: str = "") -> None:
+        key = (str(prefix).rstrip(".") + ".") if prefix else ""
+        required = ("seq", "head_dim", "causal")
+        missing = [name for name in required if f"{key}{name}" not in state]
+        if missing and strict:
+            raise KeyError(f"missing keys: {missing}")
+
+        if f"{key}seq" in state:
+            self.seq = int(np.asarray(state[f"{key}seq"]).reshape(-1)[0])
+        if f"{key}head_dim" in state:
+            self.head_dim = int(np.asarray(state[f"{key}head_dim"]).reshape(-1)[0])
+        if f"{key}causal" in state:
+            self.causal = bool(int(np.asarray(state[f"{key}causal"]).reshape(-1)[0]))
+        self.expected = self.seq * self.head_dim
+        self._out_cache.clear()
 
 
 class ConvAttentionResidentPipeline:
@@ -736,6 +979,23 @@ class ConvAttentionResidentPipeline:
         conv_out = self._conv.run(x)
         q, k, v = self._qkv_views(conv_out)
         return self._attn.run(q, k, v)
+
+    def state_dict(self, prefix: str = "") -> dict[str, np.ndarray]:
+        key = (str(prefix).rstrip(".") + ".") if prefix else ""
+        out = {}
+        out.update(self._conv.state_dict(prefix=f"{key}conv"))
+        out.update(self._attn.state_dict(prefix=f"{key}attn"))
+        out[f"{key}need"] = np.asarray([self.need], dtype=np.int32)
+        return out
+
+    def load_state_dict(self, state: dict[str, Any], strict: bool = True, prefix: str = "") -> None:
+        key = (str(prefix).rstrip(".") + ".") if prefix else ""
+        self._conv.load_state_dict(state, strict=strict, prefix=f"{key}conv")
+        self._attn.load_state_dict(state, strict=strict, prefix=f"{key}attn")
+        self.seq = self._attn.seq
+        self.head_dim = self._attn.head_dim
+        self.need = self.seq * self.head_dim
+        self._qkv_tmp = np.empty((self.need * 3,), dtype=np.float32)
 
 
 def lightning_conv_attention_torchstrong_nchw(
@@ -1119,6 +1379,8 @@ def _install_lc_api_engine_bridge() -> bool:
                 direct_clear()
 
         api.clear_attention_session_cache = _api_clear_attention_session_cache
+        api.save_checkpoint = save_checkpoint
+        api.load_checkpoint = load_checkpoint
 
         def _api_conv_relu_nchw(
             x: Any,

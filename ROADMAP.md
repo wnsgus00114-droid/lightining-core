@@ -1,6 +1,6 @@
 # Lightning Core Roadmap
 
-Version context: v0.1.22 (2026-04-08)
+Version context: v0.1.27 (2026-04-08)
 
 ## 1) North Star
 
@@ -20,7 +20,7 @@ Lightning Core started as a macOS Apple-Silicon performance runtime. The long-te
 - Keep API ergonomics improvements performance-safe by default.
 - Keep deprecation policy explicit; no silent API behavior changes.
 
-## 3) Current Baseline (v0.1.22)
+## 3) Current Baseline (v0.1.27)
 
 - Public package on PyPI/TestPyPI.
 - C++ core + Python bindings for runtime/tensor/ops/attention/integrated APIs.
@@ -289,6 +289,21 @@ Each milestone tracks:
 12. [completed] v0.1.22 fusion pilot pass-1 (M-C graph/benchmark/ci)
    - deliverable: rule-based `conv+relu` fusion v1 in GraphIR execution, fusion decision report API, and fusion pilot benchmark artifacts.
    - acceptance: fusion correctness and performance gate run in benchmark/release artifact workflows with explicit fallback-reason reporting.
+13. [completed] v0.1.23 fusion pass-2 (M-C graph/benchmark/test)
+   - deliverable: `matmul+bias+relu` rule-based fusion v1 with decision report + regression coverage.
+   - acceptance: fusion report includes both patterns and dedicated correctness/perf gate rows.
+14. [completed] v0.1.24 graph planner pass-2 + host-dispatch hard gate (M-B graph/benchmark/ci)
+   - deliverable: capability-aware planner score pass and release `graph_eager_ab` hard gate.
+   - acceptance: release artifact pipeline enforces minimum host-dispatch reduction rate and publishes graph/eager evidence.
+15. [completed] v0.1.25 fusion cost model v1 (M-C graph/docs)
+   - deliverable: fusion decision includes estimated unfused/fused cost + speedup and cost-model reject reason.
+   - acceptance: Python fusion report is timeline-friendly and explains fused vs fallback decisions.
+16. [completed] v0.1.26 engine federation stabilization (M-A python/benchmark/ci/docs)
+   - deliverable: `lightning/torch/auto` policy reflected consistently in API wrappers, split benchmarks, and release gates.
+   - acceptance: pure-LC vs interop evidence remains structurally separated and coverage-checked in benchmark script.
+17. [completed] v0.1.27 checkpoint IO v1 (M-D python/test/docs)
+   - deliverable: `save_checkpoint/load_checkpoint` with `state_dict/load_state_dict` support for integrated Python blocks.
+   - acceptance: checkpoint round-trip smoke test blocks regressions in CI.
 
 Progress update history is auto-generated from:
 
@@ -298,7 +313,7 @@ Progress update history is auto-generated from:
 
 ### Progress History (Auto-generated)
 
-- Total tracked updates: `52`
+- Total tracked updates: `58`
 - Source of truth: `docs/roadmap_updates.json`
 - Quick add command:
   `python scripts/generate_roadmap_history.py --add --date YYYY-MM-DD --milestone M-A --area runtime --title "your update"`
@@ -307,7 +322,7 @@ Progress update history is auto-generated from:
 
 | Date | Updates | Milestones | Highlights |
 | --- | --- | --- | --- |
-| 2026-04-08 | 7 | M-C, M-B, M-A | Completed v0.1.22 fusion pilot pass-1 with conv+relu v1 rule-based fusion, fusion report API, and benchmark/release artifact gate wiring. / Completed v0.1.21 graph parity + deterministic eager fallback hardening (integrated graph-request fallback contract + CI smoke coverage). / ... (+5 more) |
+| 2026-04-08 | 13 | M-D, M-C, M-B, M-A | Completed v0.1.27 checkpoint IO v1 with save/load helpers and integrated block state_dict/load_state_dict paths. / Completed v0.1.25 fusion cost model v1 with estimated fused/unfused costs, speedup fields, and cost-model reject reasons. / ... (+11 more) |
 | 2026-04-07 | 6 | M-A | Optimized tiny conv->attn integrated path using op_path timeline bottleneck guidance and tiny-chain CPU preference heuristic. / Finalized lc.api engine bridge (lightning/torch/auto) with same-surface engine switching / ... (+4 more) |
 | 2026-04-02 | 5 | M-B, M-A | Completed v0.1.15 generated API reference pipeline (Python/C++) in docs build and removed API index placeholder entries. / Expanded graph-path contract coverage: sync policy(auto/always/never), fallback/device-change boundary checks, and shape/layout/lifetime regression guards. / ... (+3 more) |
 | 2026-04-01 | 16 | M-B, M-A | Completed generated API reference pipeline with auto-built Python/C++ reference pages and docs link-check gate in CI/docs workflows. / Added graph/eager A/B benchmark script with runtime host-dispatch delta and fallback counters, plus CI artifact publishing. / ... (+14 more) |
@@ -318,12 +333,18 @@ Progress update history is auto-generated from:
 
 **Detailed Timeline**
 
-#### 2026-04-08 (7 updates)
+#### 2026-04-08 (13 updates)
 
+- [completed] [M-D] [python] Completed v0.1.27 checkpoint IO v1 with save/load helpers and integrated block state_dict/load_state_dict paths.
+- [completed] [M-C] [graph] Completed v0.1.25 fusion cost model v1 with estimated fused/unfused costs, speedup fields, and cost-model reject reasons.
+- [completed] [M-C] [graph] Completed v0.1.23 fusion pass-2 with matmul+bias+relu v1 pattern, expanded fusion report coverage, and dedicated benchmark rows.
 - [completed] [M-C] [graph] Completed v0.1.22 fusion pilot pass-1 with conv+relu v1 rule-based fusion, fusion report API, and benchmark/release artifact gate wiring.
+- [completed] [M-B] [graph] Completed v0.1.24 graph planner pass-2 with capability-aware scoring and release host-dispatch hard-gate wiring.
 - [completed] [M-B] [graph] Completed v0.1.21 graph parity + deterministic eager fallback hardening (integrated graph-request fallback contract + CI smoke coverage).
 - [completed] [M-B] [graph] Completed v0.1.20 graph execution foundation pass-1: capability-aware planner grouping and fixed host-dispatch reduction metrics in graph/eager artifacts. (`local`)
+- [completed] [M-A] [benchmark] Completed v0.1.26 engine federation stabilization with engine split coverage checks and release evidence consistency.
 - [completed] [M-A] [test] Completed v0.1.19 runtime contract freeze with strengthened tensor shape/layout/lifetime/alias regression tests and explicit CI hard gates. (`local`)
+- [completed] [M-A] [release] Bumped public baseline to v0.1.27 and aligned README/ROADMAP/pyproject version metadata.
 - [completed] [M-A] [release] Bumped public baseline to v0.1.22 and aligned README/ROADMAP/pyproject version metadata.
 - [completed] [M-A] [release] Bumped public baseline to v0.1.20 and aligned README/ROADMAP/pyproject version metadata. (`local`)
 - [completed] [M-A] [release] Bumped public baseline to v0.1.19 and aligned README/ROADMAP/pyproject version metadata. (`local`)
@@ -396,9 +417,9 @@ Progress update history is auto-generated from:
 
 <!-- AUTO-ROADMAP-HISTORY:END -->
 
-## 11) Release-Train Detail (v0.1.22 -> v1.0)
+## 11) Release-Train Detail (v0.1.27 -> v1.0)
 
-## 11.1 2026 Q2 (v0.1.22 ~ v0.2.0): Runtime Contracts
+## 11.1 2026 Q2 (v0.1.27 ~ v0.2.0): Runtime Contracts
 
 Planned scope:
 

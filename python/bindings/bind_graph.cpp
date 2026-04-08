@@ -153,6 +153,10 @@ py::list toFusionDecisionList(const std::vector<lc::graph::GraphFusionDecision>&
     row["end_node_id"] = d.end_node_id;
     row["assigned_device"] = toString(d.assigned_device);
     row["fused"] = d.fused;
+    row["cost_model_applied"] = d.cost_model_applied;
+    row["estimated_unfused_cost_ns"] = d.estimated_unfused_cost_ns;
+    row["estimated_fused_cost_ns"] = d.estimated_fused_cost_ns;
+    row["estimated_speedup"] = d.estimated_speedup;
     row["reason"] = d.reason;
     out.append(row);
   }
@@ -166,7 +170,9 @@ lc::graph::GraphPlannerOptions parseGraphPlannerOptions(
     bool group_by_backend_capability,
     bool separate_fallback_segments,
     bool insert_sync_on_device_change,
-    bool enable_fusion_v1) {
+    bool enable_fusion_v1,
+    bool enable_fusion_cost_model_v1,
+    double fusion_cost_min_speedup) {
   lc::graph::GraphPlannerOptions options;
   options.preferred_device = parseDevice(preferred_device);
   options.sync_policy.mode = parseSyncMode(sync_mode);
@@ -175,6 +181,8 @@ lc::graph::GraphPlannerOptions parseGraphPlannerOptions(
   options.separate_fallback_segments = separate_fallback_segments;
   options.insert_sync_on_device_change = insert_sync_on_device_change;
   options.enable_fusion_v1 = enable_fusion_v1;
+  options.enable_fusion_cost_model_v1 = enable_fusion_cost_model_v1;
+  options.fusion_cost_min_speedup = fusion_cost_min_speedup;
   return options;
 }
 
@@ -324,7 +332,9 @@ void bindGraph(py::module_& m) {
               bool group_by_backend_capability,
               bool separate_fallback_segments,
               bool insert_sync_on_device_change,
-              bool enable_fusion_v1) {
+              bool enable_fusion_v1,
+              bool enable_fusion_cost_model_v1,
+              double fusion_cost_min_speedup) {
              const lc::graph::GraphPlannerOptions options = parseGraphPlannerOptions(
                  preferred_device,
                  sync_mode,
@@ -332,7 +342,9 @@ void bindGraph(py::module_& m) {
                  group_by_backend_capability,
                  separate_fallback_segments,
                  insert_sync_on_device_change,
-                 enable_fusion_v1);
+                 enable_fusion_v1,
+                 enable_fusion_cost_model_v1,
+                 fusion_cost_min_speedup);
 
              std::vector<lc::graph::GraphExecutionGroup> groups;
              std::vector<lc::graph::GraphPlanStep> steps;
@@ -349,7 +361,9 @@ void bindGraph(py::module_& m) {
            py::arg("group_by_backend_capability") = true,
            py::arg("separate_fallback_segments") = true,
            py::arg("insert_sync_on_device_change") = true,
-           py::arg("enable_fusion_v1") = true)
+           py::arg("enable_fusion_v1") = true,
+           py::arg("enable_fusion_cost_model_v1") = true,
+           py::arg("fusion_cost_min_speedup") = 1.01)
       .def("fusion_report",
            [](const lc::graph::GraphIR& g,
               const std::string& preferred_device,
@@ -358,7 +372,9 @@ void bindGraph(py::module_& m) {
               bool group_by_backend_capability,
               bool separate_fallback_segments,
               bool insert_sync_on_device_change,
-              bool enable_fusion_v1) {
+              bool enable_fusion_v1,
+              bool enable_fusion_cost_model_v1,
+              double fusion_cost_min_speedup) {
              const lc::graph::GraphPlannerOptions options = parseGraphPlannerOptions(
                  preferred_device,
                  sync_mode,
@@ -366,7 +382,9 @@ void bindGraph(py::module_& m) {
                  group_by_backend_capability,
                  separate_fallback_segments,
                  insert_sync_on_device_change,
-                 enable_fusion_v1);
+                 enable_fusion_v1,
+                 enable_fusion_cost_model_v1,
+                 fusion_cost_min_speedup);
              std::vector<lc::graph::GraphFusionDecision> decisions;
              throwIfNotSuccess(g.fusionReport(options, &decisions));
              return toFusionDecisionList(decisions);
@@ -377,7 +395,9 @@ void bindGraph(py::module_& m) {
            py::arg("group_by_backend_capability") = true,
            py::arg("separate_fallback_segments") = true,
            py::arg("insert_sync_on_device_change") = true,
-           py::arg("enable_fusion_v1") = true)
+           py::arg("enable_fusion_v1") = true,
+           py::arg("enable_fusion_cost_model_v1") = true,
+           py::arg("fusion_cost_min_speedup") = 1.01)
       .def("execute_f32",
            [](const lc::graph::GraphIR& g,
               const py::dict& feeds,
@@ -387,7 +407,9 @@ void bindGraph(py::module_& m) {
               bool group_by_backend_capability,
               bool separate_fallback_segments,
               bool insert_sync_on_device_change,
-              bool enable_fusion_v1) {
+              bool enable_fusion_v1,
+              bool enable_fusion_cost_model_v1,
+              double fusion_cost_min_speedup) {
              const lc::graph::GraphPlannerOptions options = parseGraphPlannerOptions(
                  preferred_device,
                  sync_mode,
@@ -395,7 +417,9 @@ void bindGraph(py::module_& m) {
                  group_by_backend_capability,
                  separate_fallback_segments,
                  insert_sync_on_device_change,
-                 enable_fusion_v1);
+                 enable_fusion_v1,
+                 enable_fusion_cost_model_v1,
+                 fusion_cost_min_speedup);
              std::unordered_map<std::size_t, std::vector<float>> values;
              std::vector<lc::graph::GraphExecutionGroup> groups;
              std::vector<lc::graph::GraphPlanStep> steps;
@@ -415,7 +439,9 @@ void bindGraph(py::module_& m) {
            py::arg("group_by_backend_capability") = true,
            py::arg("separate_fallback_segments") = true,
            py::arg("insert_sync_on_device_change") = true,
-           py::arg("enable_fusion_v1") = true)
+           py::arg("enable_fusion_v1") = true,
+           py::arg("enable_fusion_cost_model_v1") = true,
+           py::arg("fusion_cost_min_speedup") = 1.01)
       .def("execute_f64",
            [](const lc::graph::GraphIR& g,
               const py::dict& feeds,
@@ -425,7 +451,9 @@ void bindGraph(py::module_& m) {
               bool group_by_backend_capability,
               bool separate_fallback_segments,
               bool insert_sync_on_device_change,
-              bool enable_fusion_v1) {
+              bool enable_fusion_v1,
+              bool enable_fusion_cost_model_v1,
+              double fusion_cost_min_speedup) {
              const lc::graph::GraphPlannerOptions options = parseGraphPlannerOptions(
                  preferred_device,
                  sync_mode,
@@ -433,7 +461,9 @@ void bindGraph(py::module_& m) {
                  group_by_backend_capability,
                  separate_fallback_segments,
                  insert_sync_on_device_change,
-                 enable_fusion_v1);
+                 enable_fusion_v1,
+                 enable_fusion_cost_model_v1,
+                 fusion_cost_min_speedup);
              std::unordered_map<std::size_t, std::vector<double>> values;
              std::vector<lc::graph::GraphExecutionGroup> groups;
              std::vector<lc::graph::GraphPlanStep> steps;
@@ -453,5 +483,7 @@ void bindGraph(py::module_& m) {
            py::arg("group_by_backend_capability") = true,
            py::arg("separate_fallback_segments") = true,
            py::arg("insert_sync_on_device_change") = true,
-           py::arg("enable_fusion_v1") = true);
+           py::arg("enable_fusion_v1") = true,
+           py::arg("enable_fusion_cost_model_v1") = true,
+           py::arg("fusion_cost_min_speedup") = 1.01);
 }

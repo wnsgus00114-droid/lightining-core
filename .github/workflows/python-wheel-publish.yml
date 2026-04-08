@@ -93,8 +93,9 @@ jobs:
           python benchmarks/python/quick_bench.py --device ${QB_DEVICE} --warmup ${QB_WARMUP} --iters ${QB_ITERS} --seed ${QB_SEED} --out ${REPORT_DIR}/quick_bench.csv
           python benchmarks/python/quick_bench_ci_summary.py --input ${REPORT_DIR}/quick_bench.csv --json ${REPORT_DIR}/quick_bench_summary.json --md ${REPORT_DIR}/quick_bench_summary.md --regress-threshold 1.0
           python benchmarks/python/quick_bench_variance_gate.py --runs-csv ${REPORT_DIR}/quick_bench_variance_runs.csv --json ${REPORT_DIR}/quick_bench_variance_summary.json --md ${REPORT_DIR}/quick_bench_variance_summary.md --repeats ${QB_VAR_REPEATS} --variance-threshold-pct ${QB_VAR_THRESHOLD_PCT} --device ${QB_DEVICE} --warmup ${QB_VAR_WARMUP} --iters ${QB_VAR_ITERS} --seed ${QB_SEED} --trim-runs ${QB_VAR_TRIM_RUNS}
-          python benchmarks/python/engine_split_bench.py --device auto --warmup ${QB_WARMUP} --iters ${QB_ITERS} --trace-iters ${QB_TRACE_ITERS} --seed ${QB_SEED} --out-dir ${REPORT_DIR} --pure-csv engine_split_pure_lc.csv --pure-json engine_split_pure_lc.json --interop-csv engine_split_interop.csv --interop-json engine_split_interop.json
-          python benchmarks/python/fusion_pilot_bench.py --device auto --warmup 6 --iters 24 --seed 20260408 --max-fused-over-unfused 1.15 --csv ${REPORT_DIR}/fusion_pilot.csv --json ${REPORT_DIR}/fusion_pilot.json --md ${REPORT_DIR}/fusion_pilot.md
+          python benchmarks/python/graph_eager_ab_bench.py --device auto --warmup 4 --iters 12 --trace-iters ${QB_TRACE_ITERS} --seed ${QB_SEED} --fusion-cost-min-speedup 1.01 --require-host-dispatch-reduction --min-host-dispatch-reduction-rate-pct 10.0 --csv ${REPORT_DIR}/graph_eager_ab.csv --json ${REPORT_DIR}/graph_eager_ab.json --md ${REPORT_DIR}/graph_eager_ab.md
+          python benchmarks/python/engine_split_bench.py --device auto --warmup ${QB_WARMUP} --iters ${QB_ITERS} --trace-iters ${QB_TRACE_ITERS} --seed ${QB_SEED} --require-shared-bench-coverage --out-dir ${REPORT_DIR} --pure-csv engine_split_pure_lc.csv --pure-json engine_split_pure_lc.json --interop-csv engine_split_interop.csv --interop-json engine_split_interop.json
+          python benchmarks/python/fusion_pilot_bench.py --device auto --warmup 6 --iters 24 --seed 20260408 --cost-model-min-speedup 1.01 --max-fused-over-unfused 1.15 --csv ${REPORT_DIR}/fusion_pilot.csv --json ${REPORT_DIR}/fusion_pilot.json --md ${REPORT_DIR}/fusion_pilot.md
           CMD
 
       - name: Capture release benchmark environment
@@ -199,6 +200,7 @@ jobs:
             --iters "$QB_ITERS" \
             --trace-iters "$QB_TRACE_ITERS" \
             --seed "$QB_SEED" \
+            --require-shared-bench-coverage \
             --out-dir "$REPORT_DIR" \
             --pure-csv engine_split_pure_lc.csv \
             --pure-json engine_split_pure_lc.json \
@@ -207,13 +209,31 @@ jobs:
             > "$REPORT_DIR/engine_split_bench.log"
           cat "$REPORT_DIR/engine_split_bench.log"
 
-      - name: Run release fusion pilot benchmark
+      - name: Run release graph/eager A/B benchmark
+        run: |
+          python benchmarks/python/graph_eager_ab_bench.py \
+            --device auto \
+            --warmup 4 \
+            --iters 12 \
+            --trace-iters "$QB_TRACE_ITERS" \
+            --seed "$QB_SEED" \
+            --fusion-cost-min-speedup 1.01 \
+            --require-host-dispatch-reduction \
+            --min-host-dispatch-reduction-rate-pct 10.0 \
+            --csv "$REPORT_DIR/graph_eager_ab.csv" \
+            --json "$REPORT_DIR/graph_eager_ab.json" \
+            --md "$REPORT_DIR/graph_eager_ab.md" \
+            > "$REPORT_DIR/graph_eager_ab.log"
+          cat "$REPORT_DIR/graph_eager_ab.log"
+
+      - name: Run release fusion pilot benchmark (v2)
         run: |
           python benchmarks/python/fusion_pilot_bench.py \
             --device auto \
             --warmup 6 \
             --iters 24 \
             --seed 20260408 \
+            --cost-model-min-speedup 1.01 \
             --max-fused-over-unfused 1.15 \
             --csv "$REPORT_DIR/fusion_pilot.csv" \
             --json "$REPORT_DIR/fusion_pilot.json" \
@@ -243,6 +263,10 @@ jobs:
               "engine_split_interop.csv",
               "engine_split_interop.json",
               "engine_split_bench.log",
+              "graph_eager_ab.csv",
+              "graph_eager_ab.json",
+              "graph_eager_ab.md",
+              "graph_eager_ab.log",
               "fusion_pilot.csv",
               "fusion_pilot.json",
               "fusion_pilot.md",
@@ -296,11 +320,16 @@ jobs:
           echo "- variance gate threshold: \`CV <= ${QB_VAR_THRESHOLD_PCT}%\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- variance gate trim-runs: \`${QB_VAR_TRIM_RUNS}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- engine split evidence: \`$REPORT_DIR/engine_split_pure_lc.csv\`, \`$REPORT_DIR/engine_split_interop.csv\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- graph/eager host-dispatch gate: \`$REPORT_DIR/graph_eager_ab.csv\`, \`$REPORT_DIR/graph_eager_ab.json\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- fusion pilot evidence: \`$REPORT_DIR/fusion_pilot.csv\`, \`$REPORT_DIR/fusion_pilot.json\`" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           cat "$REPORT_DIR/quick_bench_summary.md" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           cat "$REPORT_DIR/quick_bench_variance_summary.md" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f "$REPORT_DIR/graph_eager_ab.md" ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            cat "$REPORT_DIR/graph_eager_ab.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
           if [ -f "$REPORT_DIR/fusion_pilot.md" ]; then
             echo "" >> "$GITHUB_STEP_SUMMARY"
             cat "$REPORT_DIR/fusion_pilot.md" >> "$GITHUB_STEP_SUMMARY"
@@ -327,6 +356,10 @@ jobs:
             ${{ env.REPORT_DIR }}/engine_split_interop.csv
             ${{ env.REPORT_DIR }}/engine_split_interop.json
             ${{ env.REPORT_DIR }}/engine_split_bench.log
+            ${{ env.REPORT_DIR }}/graph_eager_ab.csv
+            ${{ env.REPORT_DIR }}/graph_eager_ab.json
+            ${{ env.REPORT_DIR }}/graph_eager_ab.md
+            ${{ env.REPORT_DIR }}/graph_eager_ab.log
             ${{ env.REPORT_DIR }}/fusion_pilot.csv
             ${{ env.REPORT_DIR }}/fusion_pilot.json
             ${{ env.REPORT_DIR }}/fusion_pilot.md

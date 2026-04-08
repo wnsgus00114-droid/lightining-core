@@ -57,6 +57,7 @@ jobs:
           python3 -m pip install -e .
           python3 tests/test_python_tensor_contract_smoke.py
           python3 tests/test_python_integrated_timeline_smoke.py
+          python3 tests/test_python_checkpoint_io_smoke.py
 
       - name: Publish CTest summary
         if: always()
@@ -75,6 +76,7 @@ jobs:
           fi
           echo "- python smoke: tests/test_python_tensor_contract_smoke.py" >> "$GITHUB_STEP_SUMMARY"
           echo "- python smoke: tests/test_python_integrated_timeline_smoke.py" >> "$GITHUB_STEP_SUMMARY"
+          echo "- python smoke: tests/test_python_checkpoint_io_smoke.py" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload CTest artifacts
         if: always()

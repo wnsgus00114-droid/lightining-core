@@ -1,10 +1,46 @@
 [
   {
+    "id": "2026-04-08-python-completed-v0-1-27-checkpoint-io-v1-with-save-load-helpers-and-integrated-block-state-dict-load-state-dict-paths",
+    "date": "2026-04-08",
+    "milestone": "M-D",
+    "area": "python",
+    "title": "Completed v0.1.27 checkpoint IO v1 with save/load helpers and integrated block state_dict/load_state_dict paths.",
+    "status": "completed",
+    "source": ""
+  },
+  {
+    "id": "2026-04-08-graph-completed-v0-1-25-fusion-cost-model-v1-with-estimated-fused-unfused-costs-speedup-fields-and-cost-model-reject-reasons",
+    "date": "2026-04-08",
+    "milestone": "M-C",
+    "area": "graph",
+    "title": "Completed v0.1.25 fusion cost model v1 with estimated fused/unfused costs, speedup fields, and cost-model reject reasons.",
+    "status": "completed",
+    "source": ""
+  },
+  {
+    "id": "2026-04-08-graph-completed-v0-1-23-fusion-pass-2-with-matmul-bias-relu-v1-pattern-expanded-fusion-report-coverage-and-dedicated-benchmark-rows",
+    "date": "2026-04-08",
+    "milestone": "M-C",
+    "area": "graph",
+    "title": "Completed v0.1.23 fusion pass-2 with matmul+bias+relu v1 pattern, expanded fusion report coverage, and dedicated benchmark rows.",
+    "status": "completed",
+    "source": ""
+  },
+  {
     "id": "2026-04-08-graph-completed-v0-1-22-fusion-pilot-pass-1-with-conv-relu-v1-rule-based-fusion-fusion-report-api-and-benchmark-release-artifact-gate-wiring",
     "date": "2026-04-08",
     "milestone": "M-C",
     "area": "graph",
     "title": "Completed v0.1.22 fusion pilot pass-1 with conv+relu v1 rule-based fusion, fusion report API, and benchmark/release artifact gate wiring.",
+    "status": "completed",
+    "source": ""
+  },
+  {
+    "id": "2026-04-08-graph-completed-v0-1-24-graph-planner-pass-2-with-capability-aware-scoring-and-release-host-dispatch-hard-gate-wiring",
+    "date": "2026-04-08",
+    "milestone": "M-B",
+    "area": "graph",
+    "title": "Completed v0.1.24 graph planner pass-2 with capability-aware scoring and release host-dispatch hard-gate wiring.",
     "status": "completed",
     "source": ""
   },
@@ -27,6 +63,15 @@
     "source": "local"
   },
   {
+    "id": "2026-04-08-benchmark-completed-v0-1-26-engine-federation-stabilization-with-engine-split-coverage-checks-and-release-evidence-consistency",
+    "date": "2026-04-08",
+    "milestone": "M-A",
+    "area": "benchmark",
+    "title": "Completed v0.1.26 engine federation stabilization with engine split coverage checks and release evidence consistency.",
+    "status": "completed",
+    "source": ""
+  },
+  {
     "id": "2026-04-08-test-completed-v0-1-19-runtime-contract-freeze-with-strengthened-tensor-shape-layout-lifetime-alias-regression-tests-and-explicit-ci-hard-gates",
     "date": "2026-04-08",
     "milestone": "M-A",
@@ -34,6 +79,15 @@
     "title": "Completed v0.1.19 runtime contract freeze with strengthened tensor shape/layout/lifetime/alias regression tests and explicit CI hard gates.",
     "status": "completed",
     "source": "local"
+  },
+  {
+    "id": "2026-04-08-release-bumped-public-baseline-to-v0-1-27-and-aligned-readme-roadmap-pyproject-version-metadata",
+    "date": "2026-04-08",
+    "milestone": "M-A",
+    "area": "release",
+    "title": "Bumped public baseline to v0.1.27 and aligned README/ROADMAP/pyproject version metadata.",
+    "status": "completed",
+    "source": ""
   },
   {
     "id": "2026-04-08-release-bumped-public-baseline-to-v0-1-22-and-aligned-readme-roadmap-pyproject-version-metadata",
