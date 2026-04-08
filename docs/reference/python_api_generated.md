@@ -41,7 +41,7 @@ Module-level functions:
 
 Classes:
 - `GraphIR`
-  - methods: `add_node`, `add_tensor`, `execute_f32`, `execute_f64`, `fusion_report`, `nodes`, `num_nodes`, `num_tensors`, `plan`, `plan_groups`, `tensors`, `validate`, `validate_report`
+  - methods: `add_node`, `add_tensor`, `execute_f32`, `execute_f64`, `fusion_report`, `nodes`, `num_nodes`, `num_tensors`, `plan`, `plan_groups`, `plan_summary`, `tensors`, `validate`, `validate_report`
 
 ## `bind_integrated.cpp`
 

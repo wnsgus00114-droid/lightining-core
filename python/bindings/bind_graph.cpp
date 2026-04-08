@@ -144,6 +144,25 @@ py::list toExecutionGroupsList(const std::vector<lc::graph::GraphExecutionGroup>
   return out;
 }
 
+py::dict toPlanSummaryDict(const lc::graph::GraphPlanSummary& summary) {
+  py::dict out;
+  out["total_nodes"] = summary.total_nodes;
+  out["total_groups"] = summary.total_groups;
+  out["planned_dispatch_groups"] = summary.planned_dispatch_groups;
+  out["total_fallback_nodes"] = summary.total_fallback_nodes;
+  out["total_fallback_groups"] = summary.total_fallback_groups;
+  out["sync_boundary_before_groups"] = summary.sync_boundary_before_groups;
+  out["sync_boundary_after_groups"] = summary.sync_boundary_after_groups;
+  out["device_switches"] = summary.device_switches;
+  out["cpu_nodes"] = summary.cpu_nodes;
+  out["cuda_nodes"] = summary.cuda_nodes;
+  out["metal_nodes"] = summary.metal_nodes;
+  out["cpu_groups"] = summary.cpu_groups;
+  out["cuda_groups"] = summary.cuda_groups;
+  out["metal_groups"] = summary.metal_groups;
+  return out;
+}
+
 py::list toFusionDecisionList(const std::vector<lc::graph::GraphFusionDecision>& decisions) {
   py::list out;
   for (const auto& d : decisions) {
@@ -349,8 +368,51 @@ void bindGraph(py::module_& m) {
              std::vector<lc::graph::GraphExecutionGroup> groups;
              std::vector<lc::graph::GraphPlanStep> steps;
              throwIfNotSuccess(g.planExecutionGroups(options, &groups, &steps));
+             lc::graph::GraphPlanSummary summary{};
+             throwIfNotSuccess(g.planSummary(options, &summary, nullptr, nullptr));
 
              py::dict out;
+             out["groups"] = toExecutionGroupsList(groups);
+             out["steps"] = toPlanStepsList(steps);
+             out["summary"] = toPlanSummaryDict(summary);
+             return out;
+           },
+           py::arg("preferred_device") = "metal",
+           py::arg("sync_mode") = "auto",
+           py::arg("trace_sync_boundary") = false,
+           py::arg("group_by_backend_capability") = true,
+           py::arg("separate_fallback_segments") = true,
+           py::arg("insert_sync_on_device_change") = true,
+           py::arg("enable_fusion_v1") = true,
+           py::arg("enable_fusion_cost_model_v1") = true,
+           py::arg("fusion_cost_min_speedup") = 1.01)
+      .def("plan_summary",
+           [](const lc::graph::GraphIR& g,
+              const std::string& preferred_device,
+              const std::string& sync_mode,
+              bool trace_sync_boundary,
+              bool group_by_backend_capability,
+              bool separate_fallback_segments,
+              bool insert_sync_on_device_change,
+              bool enable_fusion_v1,
+              bool enable_fusion_cost_model_v1,
+              double fusion_cost_min_speedup) {
+             const lc::graph::GraphPlannerOptions options = parseGraphPlannerOptions(
+                 preferred_device,
+                 sync_mode,
+                 trace_sync_boundary,
+                 group_by_backend_capability,
+                 separate_fallback_segments,
+                 insert_sync_on_device_change,
+                 enable_fusion_v1,
+                 enable_fusion_cost_model_v1,
+                 fusion_cost_min_speedup);
+             lc::graph::GraphPlanSummary summary{};
+             std::vector<lc::graph::GraphExecutionGroup> groups;
+             std::vector<lc::graph::GraphPlanStep> steps;
+             throwIfNotSuccess(g.planSummary(options, &summary, &groups, &steps));
+             py::dict out;
+             out["summary"] = toPlanSummaryDict(summary);
              out["groups"] = toExecutionGroupsList(groups);
              out["steps"] = toPlanStepsList(steps);
              return out;
@@ -423,13 +485,16 @@ void bindGraph(py::module_& m) {
              std::unordered_map<std::size_t, std::vector<float>> values;
              std::vector<lc::graph::GraphExecutionGroup> groups;
              std::vector<lc::graph::GraphPlanStep> steps;
+             lc::graph::GraphPlanSummary summary{};
              throwIfNotSuccess(g.executeF32(
                  options, parseValueFeedDict<float>(feeds), &values, &groups, &steps));
+             throwIfNotSuccess(g.planSummary(options, &summary, nullptr, nullptr));
 
              py::dict out;
              out["values"] = toValueDict<float>(values);
              out["groups"] = toExecutionGroupsList(groups);
              out["steps"] = toPlanStepsList(steps);
+             out["summary"] = toPlanSummaryDict(summary);
              return out;
            },
            py::arg("feeds"),
@@ -467,13 +532,16 @@ void bindGraph(py::module_& m) {
              std::unordered_map<std::size_t, std::vector<double>> values;
              std::vector<lc::graph::GraphExecutionGroup> groups;
              std::vector<lc::graph::GraphPlanStep> steps;
+             lc::graph::GraphPlanSummary summary{};
              throwIfNotSuccess(g.executeF64(
                  options, parseValueFeedDict<double>(feeds), &values, &groups, &steps));
+             throwIfNotSuccess(g.planSummary(options, &summary, nullptr, nullptr));
 
              py::dict out;
              out["values"] = toValueDict<double>(values);
              out["groups"] = toExecutionGroupsList(groups);
              out["steps"] = toPlanStepsList(steps);
+             out["summary"] = toPlanSummaryDict(summary);
              return out;
            },
            py::arg("feeds"),

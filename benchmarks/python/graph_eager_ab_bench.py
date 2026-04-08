@@ -50,6 +50,7 @@ def _collect_trace_metrics(run_once, trace_iters: int) -> dict:
 
     if not _runtime_trace_available():
         return {
+            "available": False,
             "events_total": 0,
             "events_per_iter": float("nan"),
             "dispatch_events": 0,
@@ -87,6 +88,7 @@ def _collect_trace_metrics(run_once, trace_iters: int) -> dict:
     top_op_path = groups[0]["key"] if groups else "n/a"
 
     return {
+        "available": True,
         "events_total": len(events),
         "events_per_iter": float(len(events)) / float(trace_iters),
         "dispatch_events": len(dispatch_events),
@@ -131,6 +133,34 @@ def _safe_dispatch_reduction(eager_dispatch: float, graph_dispatch: float) -> tu
     return reduction, reduction_pct
 
 
+def _effective_dispatch_value(trace_value: float, fallback_value: float) -> float:
+    if math.isfinite(trace_value):
+        return trace_value
+    return fallback_value
+
+
+def _dispatch_evidence(
+    *,
+    eager_trace_dispatch: float,
+    graph_trace_dispatch: float,
+    eager_proxy_dispatch: float,
+    graph_proxy_dispatch: float,
+) -> tuple[float, float, str]:
+    eager_value = _effective_dispatch_value(eager_trace_dispatch, eager_proxy_dispatch)
+    graph_value = _effective_dispatch_value(graph_trace_dispatch, graph_proxy_dispatch)
+    source = "runtime_trace" if (math.isfinite(eager_trace_dispatch) and math.isfinite(graph_trace_dispatch)) else "graph_plan_proxy"
+    return eager_value, graph_value, source
+
+
+def _plan_summary_dispatch_groups(summary_payload: dict) -> float:
+    summary = dict(summary_payload.get("summary", {}))
+    value = float(summary.get("planned_dispatch_groups", float("nan")))
+    if math.isfinite(value):
+        return value
+    groups = summary_payload.get("groups", [])
+    return float(len(groups))
+
+
 def _run_matmul_matrix_sub_case(
     *,
     m: int,
@@ -156,6 +186,10 @@ def _run_matmul_matrix_sub_case(
     g.add_node("matrix_sub", [tmm, tbias], [tout])
 
     feeds = {ta: a, tb: b, tbias: bias}
+    plan_payload = dict(g.plan_summary(preferred_device=device))
+    plan_summary = dict(plan_payload.get("summary", {}))
+    graph_proxy_dispatch = _plan_summary_dispatch_groups(plan_payload)
+    eager_proxy_dispatch = 2.0
 
     def eager_once():
         mm = lc.matmul2d(a, b, device)
@@ -175,15 +209,22 @@ def _run_matmul_matrix_sub_case(
     eager_trace = _collect_trace_metrics(eager_once, trace_iters)
     graph_trace = _collect_trace_metrics(graph_once, trace_iters)
 
-    dispatch_delta = graph_trace["dispatch_per_iter"] - eager_trace["dispatch_per_iter"]
+    eager_dispatch_value, graph_dispatch_value, dispatch_source = _dispatch_evidence(
+        eager_trace_dispatch=float(eager_trace["dispatch_per_iter"]),
+        graph_trace_dispatch=float(graph_trace["dispatch_per_iter"]),
+        eager_proxy_dispatch=eager_proxy_dispatch,
+        graph_proxy_dispatch=graph_proxy_dispatch,
+    )
+
+    dispatch_delta = graph_dispatch_value - eager_dispatch_value
     dispatch_delta_pct = (
-        (dispatch_delta / eager_trace["dispatch_per_iter"]) * 100.0
-        if math.isfinite(eager_trace["dispatch_per_iter"]) and eager_trace["dispatch_per_iter"] > 0
+        (dispatch_delta / eager_dispatch_value) * 100.0
+        if math.isfinite(eager_dispatch_value) and eager_dispatch_value > 0
         else float("nan")
     )
     dispatch_reduction_per_iter, dispatch_reduction_pct = _safe_dispatch_reduction(
-        eager_trace["dispatch_per_iter"],
-        graph_trace["dispatch_per_iter"],
+        eager_dispatch_value,
+        graph_dispatch_value,
     )
     fallback_delta = graph_trace["fallback_per_iter"] - eager_trace["fallback_per_iter"]
 
@@ -201,8 +242,8 @@ def _run_matmul_matrix_sub_case(
         "max_abs_diff": float(np.max(abs_diff)) if abs_diff.size else 0.0,
         "mean_abs_diff": float(np.mean(abs_diff)) if abs_diff.size else 0.0,
         "max_rel_diff": float(np.max(rel_diff)) if rel_diff.size else 0.0,
-        "eager_dispatch_per_iter": eager_trace["dispatch_per_iter"],
-        "graph_dispatch_per_iter": graph_trace["dispatch_per_iter"],
+        "eager_dispatch_per_iter": eager_dispatch_value,
+        "graph_dispatch_per_iter": graph_dispatch_value,
         "dispatch_delta_per_iter": dispatch_delta,
         "dispatch_delta_pct": dispatch_delta_pct,
         "dispatch_reduction_per_iter": dispatch_reduction_per_iter,
@@ -217,6 +258,11 @@ def _run_matmul_matrix_sub_case(
         "graph_events_per_iter": graph_trace["events_per_iter"],
         "eager_top_op_path": eager_trace["top_op_path"],
         "graph_top_op_path": graph_trace["top_op_path"],
+        "dispatch_evidence_source": dispatch_source,
+        "graph_plan_dispatch_groups": graph_proxy_dispatch,
+        "graph_plan_device_switches": int(plan_summary.get("device_switches", 0)),
+        "graph_plan_fallback_nodes": int(plan_summary.get("total_fallback_nodes", 0)),
+        "graph_plan_fallback_groups": int(plan_summary.get("total_fallback_groups", 0)),
         "note": "",
     }
     detail = {
@@ -225,8 +271,42 @@ def _run_matmul_matrix_sub_case(
             "eager": eager_trace,
             "graph": graph_trace,
         },
+        "graph_plan_summary": plan_summary,
     }
     return row, detail
+
+
+def _build_conv_attention_plan_proxy(
+    *,
+    batch: int,
+    in_ch: int,
+    h: int,
+    w: int,
+    out_ch: int,
+    seq_len: int,
+    head_dim: int,
+    device: str,
+    fusion_cost_min_speedup: float,
+) -> dict:
+    g = lc.GraphIR()
+    tx = g.add_tensor([batch, in_ch, h, w], dtype="float32", name="x", constant=True)
+    tw = g.add_tensor([out_ch, in_ch, 3, 3], dtype="float32", name="w", constant=True)
+    tb = g.add_tensor([out_ch], dtype="float32", name="b", constant=True)
+    ty = g.add_tensor([batch, out_ch, h, w], dtype="float32", name="conv_out")
+    tq = g.add_tensor([seq_len, head_dim], dtype="float32", name="q", constant=True)
+    tk = g.add_tensor([seq_len, head_dim], dtype="float32", name="k", constant=True)
+    tv = g.add_tensor([seq_len, head_dim], dtype="float32", name="v", constant=True)
+    tout = g.add_tensor([seq_len, head_dim], dtype="float32", name="attn_out")
+    g.add_node("conv2d_nchw3x3s1p1", [tx, tw, tb], [ty])
+    g.add_node("attention_forward", [tq, tk, tv], [tout])
+    return dict(
+        g.plan_summary(
+            preferred_device=device,
+            enable_fusion_v1=True,
+            enable_fusion_cost_model_v1=True,
+            fusion_cost_min_speedup=float(fusion_cost_min_speedup),
+        )
+    )
 
 
 def _run_conv_attention_case(
@@ -250,6 +330,20 @@ def _run_conv_attention_case(
     x = rng.random((batch, in_ch, h, w), dtype=np.float32)
     w_conv = rng.random((out_ch, in_ch, 3, 3), dtype=np.float32)
     b_conv = rng.random((out_ch,), dtype=np.float32)
+    plan_payload = _build_conv_attention_plan_proxy(
+        batch=batch,
+        in_ch=in_ch,
+        h=h,
+        w=w,
+        out_ch=out_ch,
+        seq_len=seq_len,
+        head_dim=head_dim,
+        device=device,
+        fusion_cost_min_speedup=1.01,
+    )
+    plan_summary = dict(plan_payload.get("summary", {}))
+    graph_proxy_dispatch = _plan_summary_dispatch_groups(plan_payload)
+    eager_proxy_dispatch = 2.0
 
     def eager_once():
         _ = lc.api.conv_attention_torchstrong_nchw(
@@ -302,15 +396,21 @@ def _run_conv_attention_case(
     eager_trace = _collect_trace_metrics(eager_once, trace_iters)
     graph_trace = _collect_trace_metrics(graph_once, trace_iters)
 
-    dispatch_delta = graph_trace["dispatch_per_iter"] - eager_trace["dispatch_per_iter"]
+    eager_dispatch_value, graph_dispatch_value, dispatch_source = _dispatch_evidence(
+        eager_trace_dispatch=float(eager_trace["dispatch_per_iter"]),
+        graph_trace_dispatch=float(graph_trace["dispatch_per_iter"]),
+        eager_proxy_dispatch=eager_proxy_dispatch,
+        graph_proxy_dispatch=graph_proxy_dispatch,
+    )
+    dispatch_delta = graph_dispatch_value - eager_dispatch_value
     dispatch_delta_pct = (
-        (dispatch_delta / eager_trace["dispatch_per_iter"]) * 100.0
-        if math.isfinite(eager_trace["dispatch_per_iter"]) and eager_trace["dispatch_per_iter"] > 0
+        (dispatch_delta / eager_dispatch_value) * 100.0
+        if math.isfinite(eager_dispatch_value) and eager_dispatch_value > 0
         else float("nan")
     )
     dispatch_reduction_per_iter, dispatch_reduction_pct = _safe_dispatch_reduction(
-        eager_trace["dispatch_per_iter"],
-        graph_trace["dispatch_per_iter"],
+        eager_dispatch_value,
+        graph_dispatch_value,
     )
     fallback_delta = graph_trace["fallback_per_iter"] - eager_trace["fallback_per_iter"]
 
@@ -328,8 +428,8 @@ def _run_conv_attention_case(
         "max_abs_diff": float(np.max(abs_diff)) if abs_diff.size else 0.0,
         "mean_abs_diff": float(np.mean(abs_diff)) if abs_diff.size else 0.0,
         "max_rel_diff": float(np.max(rel_diff)) if rel_diff.size else 0.0,
-        "eager_dispatch_per_iter": eager_trace["dispatch_per_iter"],
-        "graph_dispatch_per_iter": graph_trace["dispatch_per_iter"],
+        "eager_dispatch_per_iter": eager_dispatch_value,
+        "graph_dispatch_per_iter": graph_dispatch_value,
         "dispatch_delta_per_iter": dispatch_delta,
         "dispatch_delta_pct": dispatch_delta_pct,
         "dispatch_reduction_per_iter": dispatch_reduction_per_iter,
@@ -344,6 +444,11 @@ def _run_conv_attention_case(
         "graph_events_per_iter": graph_trace["events_per_iter"],
         "eager_top_op_path": eager_trace["top_op_path"],
         "graph_top_op_path": graph_trace["top_op_path"],
+        "dispatch_evidence_source": dispatch_source,
+        "graph_plan_dispatch_groups": graph_proxy_dispatch,
+        "graph_plan_device_switches": int(plan_summary.get("device_switches", 0)),
+        "graph_plan_fallback_nodes": int(plan_summary.get("total_fallback_nodes", 0)),
+        "graph_plan_fallback_groups": int(plan_summary.get("total_fallback_groups", 0)),
         "note": "",
     }
     detail = {
@@ -352,6 +457,7 @@ def _run_conv_attention_case(
             "eager": eager_trace,
             "graph": graph_trace,
         },
+        "graph_plan_summary": plan_summary,
     }
     return row, detail
 
@@ -383,6 +489,17 @@ def _run_matmul_bias_relu_case(
     g.add_node("vector_add", [tmm, tbias], [tadd])
     g.add_node("relu", [tadd], [tout])
     feeds = {ta: a, tb: b, tbias: bias}
+    plan_payload = dict(
+        g.plan_summary(
+            preferred_device=device,
+            enable_fusion_v1=True,
+            enable_fusion_cost_model_v1=True,
+            fusion_cost_min_speedup=fusion_cost_min_speedup,
+        )
+    )
+    plan_summary = dict(plan_payload.get("summary", {}))
+    graph_proxy_dispatch = _plan_summary_dispatch_groups(plan_payload)
+    eager_proxy_dispatch = 3.0
 
     def eager_once():
         mm = np.asarray(lc.matmul2d(a, b, device), dtype=np.float32).reshape(-1)
@@ -424,15 +541,21 @@ def _run_matmul_bias_relu_case(
     eager_trace = _collect_trace_metrics(eager_once, trace_iters)
     graph_trace = _collect_trace_metrics(graph_once, trace_iters)
 
-    dispatch_delta = graph_trace["dispatch_per_iter"] - eager_trace["dispatch_per_iter"]
+    eager_dispatch_value, graph_dispatch_value, dispatch_source = _dispatch_evidence(
+        eager_trace_dispatch=float(eager_trace["dispatch_per_iter"]),
+        graph_trace_dispatch=float(graph_trace["dispatch_per_iter"]),
+        eager_proxy_dispatch=eager_proxy_dispatch,
+        graph_proxy_dispatch=graph_proxy_dispatch,
+    )
+    dispatch_delta = graph_dispatch_value - eager_dispatch_value
     dispatch_delta_pct = (
-        (dispatch_delta / eager_trace["dispatch_per_iter"]) * 100.0
-        if math.isfinite(eager_trace["dispatch_per_iter"]) and eager_trace["dispatch_per_iter"] > 0
+        (dispatch_delta / eager_dispatch_value) * 100.0
+        if math.isfinite(eager_dispatch_value) and eager_dispatch_value > 0
         else float("nan")
     )
     dispatch_reduction_per_iter, dispatch_reduction_pct = _safe_dispatch_reduction(
-        eager_trace["dispatch_per_iter"],
-        graph_trace["dispatch_per_iter"],
+        eager_dispatch_value,
+        graph_dispatch_value,
     )
     fallback_delta = graph_trace["fallback_per_iter"] - eager_trace["fallback_per_iter"]
 
@@ -450,8 +573,8 @@ def _run_matmul_bias_relu_case(
         "max_abs_diff": float(np.max(abs_diff)) if abs_diff.size else 0.0,
         "mean_abs_diff": float(np.mean(abs_diff)) if abs_diff.size else 0.0,
         "max_rel_diff": float(np.max(rel_diff)) if rel_diff.size else 0.0,
-        "eager_dispatch_per_iter": eager_trace["dispatch_per_iter"],
-        "graph_dispatch_per_iter": graph_trace["dispatch_per_iter"],
+        "eager_dispatch_per_iter": eager_dispatch_value,
+        "graph_dispatch_per_iter": graph_dispatch_value,
         "dispatch_delta_per_iter": dispatch_delta,
         "dispatch_delta_pct": dispatch_delta_pct,
         "dispatch_reduction_per_iter": dispatch_reduction_per_iter,
@@ -466,6 +589,11 @@ def _run_matmul_bias_relu_case(
         "graph_events_per_iter": graph_trace["events_per_iter"],
         "eager_top_op_path": eager_trace["top_op_path"],
         "graph_top_op_path": graph_trace["top_op_path"],
+        "dispatch_evidence_source": dispatch_source,
+        "graph_plan_dispatch_groups": graph_proxy_dispatch,
+        "graph_plan_device_switches": int(plan_summary.get("device_switches", 0)),
+        "graph_plan_fallback_nodes": int(plan_summary.get("total_fallback_nodes", 0)),
+        "graph_plan_fallback_groups": int(plan_summary.get("total_fallback_groups", 0)),
         "note": "",
     }
     detail = {
@@ -474,6 +602,7 @@ def _run_matmul_bias_relu_case(
             "eager": eager_trace,
             "graph": graph_trace,
         },
+        "graph_plan_summary": plan_summary,
     }
     return row, detail
 
@@ -507,6 +636,11 @@ def _unsupported_row(bench: str, shape: str, device: str, reason: str) -> tuple[
         "graph_events_per_iter": float("nan"),
         "eager_top_op_path": "n/a",
         "graph_top_op_path": "n/a",
+        "dispatch_evidence_source": "unsupported",
+        "graph_plan_dispatch_groups": float("nan"),
+        "graph_plan_device_switches": 0,
+        "graph_plan_fallback_nodes": 0,
+        "graph_plan_fallback_groups": 0,
         "note": reason,
     }
     detail = {"row": row, "trace": {"eager": {}, "graph": {}}, "error": reason}
@@ -589,6 +723,11 @@ def _write_csv(path: Path, rows: list[dict]) -> None:
         "graph_events_per_iter",
         "eager_top_op_path",
         "graph_top_op_path",
+        "dispatch_evidence_source",
+        "graph_plan_dispatch_groups",
+        "graph_plan_device_switches",
+        "graph_plan_fallback_nodes",
+        "graph_plan_fallback_groups",
         "note",
     ]
     with path.open("w", newline="", encoding="utf-8") as f:
@@ -620,14 +759,15 @@ def _to_markdown(rows: list[dict], summary: dict, device: str, warmup: int, iter
         f"mean reduction/iter={_fmt_ms(summary['mean_dispatch_reduction_per_iter'])}"
     )
     lines.append("")
-    lines.append("| bench | shape | status | eager (ms) | graph (ms) | graph/eager | dispatch delta (%) | dispatch reduction (%) | fallback delta/iter |")
-    lines.append("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |")
+    lines.append("| bench | shape | status | eager (ms) | graph (ms) | graph/eager | dispatch delta (%) | dispatch reduction (%) | fallback delta/iter | evidence | plan groups |")
+    lines.append("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |")
     for r in rows:
         lines.append(
             f"| {r['bench']} | {r['shape']} | {r['status']} | {_fmt_ms(float(r['eager_ms']))} | "
             f"{_fmt_ms(float(r['graph_ms']))} | {_fmt_ratio(float(r['graph_over_eager']))} | "
             f"{_fmt_pct(float(r['dispatch_delta_pct']))} | {_fmt_pct(float(r['dispatch_reduction_pct']))} | "
-            f"{_fmt_ms(float(r['fallback_delta_per_iter']))} |"
+            f"{_fmt_ms(float(r['fallback_delta_per_iter']))} | {r['dispatch_evidence_source']} | "
+            f"{r['graph_plan_dispatch_groups']} |"
         )
     lines.append("")
     unsupported = [r for r in rows if r["status"] != "ok"]

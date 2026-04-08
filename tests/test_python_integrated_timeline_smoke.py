@@ -24,10 +24,23 @@ def main() -> None:
     _require(lc_api.get_backend() == "lightning", "integrated backend should be 'lightning'")
     _require(hasattr(lc, "api") and hasattr(lc.api, "set_engine"), "lc.api.set_engine must be available")
     _require(hasattr(lc.api, "get_engine"), "lc.api.get_engine must be available")
+    _require(hasattr(lc, "GraphIR"), "GraphIR binding must be available")
 
     lc.api.set_engine("lightning")
     _require(lc.api.get_engine() == "lightning", "lc.api engine should be 'lightning'")
     _require(lc_api.get_backend() == "lightning", "helper backend should match lc.api engine")
+
+    g = lc.GraphIR()
+    ta = g.add_tensor([8, 8], dtype="float32", name="a", constant=True)
+    tb = g.add_tensor([8, 8], dtype="float32", name="b", constant=True)
+    tout = g.add_tensor([8, 8], dtype="float32", name="out")
+    g.add_node("matmul", [ta, tb], [tout])
+    plan_payload = g.plan_summary(preferred_device="metal")
+    _require(isinstance(plan_payload, dict), "GraphIR.plan_summary should return dict")
+    _require("summary" in plan_payload, "plan_summary should include summary")
+    ps = dict(plan_payload["summary"])
+    _require(int(ps.get("total_nodes", 0)) == 1, "plan_summary total_nodes mismatch")
+    _require(int(ps.get("planned_dispatch_groups", 0)) >= 1, "plan_summary dispatch groups must be >=1")
 
     a = np.random.rand(64, 64).astype(np.float32)
     b = np.random.rand(64, 64).astype(np.float32)

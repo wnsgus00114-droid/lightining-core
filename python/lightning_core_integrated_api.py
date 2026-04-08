@@ -23,6 +23,7 @@ _LC_API_BRIDGE_INSTALLED = False
 _LC_API_DIRECT_EXPORTS: dict[str, Any] = {}
 _CHECKPOINT_META_KEY = "__lc_checkpoint_meta__"
 _CHECKPOINT_FORMAT = "lc_checkpoint_v1"
+_CHECKPOINT_FORMAT_V11 = "lc_checkpoint_v1_1"
 
 
 def _import_torch():
@@ -206,6 +207,16 @@ def _flatten_checkpoint_state(state: dict[str, Any], *, prefix: str = "") -> dic
     return out
 
 
+def _strip_state_prefix(state: dict[str, Any], prefix: str) -> dict[str, Any]:
+    p = str(prefix).rstrip(".") + "."
+    out: dict[str, Any] = {}
+    for k, v in state.items():
+        key = str(k)
+        if key.startswith(p):
+            out[key[len(p) :]] = v
+    return out
+
+
 def save_checkpoint(
     path: str | os.PathLike[str],
     state_or_obj: Any,
@@ -270,6 +281,78 @@ def load_checkpoint(
     return {"path": load_path, "meta": meta, "state": state}
 
 
+def save_model_checkpoint(
+    path: str | os.PathLike[str],
+    model: Any,
+    *,
+    metadata: dict[str, Any] | None = None,
+    compressed: bool = True,
+) -> str:
+    """Save model-level checkpoint (format: lc_checkpoint_v1_1)."""
+    state_fn = getattr(model, "state_dict", None)
+    if not callable(state_fn):
+        raise TypeError("model must implement state_dict()")
+
+    model_state = state_fn()
+    if not isinstance(model_state, dict):
+        raise TypeError("model.state_dict() must return dict")
+
+    flat_state = _flatten_checkpoint_state(model_state, prefix="model")
+    meta_payload = {
+        "format": _CHECKPOINT_FORMAT_V11,
+        "compat_read": [_CHECKPOINT_FORMAT, _CHECKPOINT_FORMAT_V11],
+        "saved_at_utc": datetime.now(timezone.utc).isoformat(),
+        "engine": get_backend(),
+        "model_class": model.__class__.__name__,
+        "model_keys": sorted(flat_state.keys()),
+        "num_tensors": len(flat_state),
+        "user_metadata": metadata or {},
+    }
+    save_dict: dict[str, np.ndarray] = dict(flat_state)
+    save_dict[_CHECKPOINT_META_KEY] = _checkpoint_meta_array(meta_payload)
+
+    save_path = os.fspath(path)
+    if compressed:
+        np.savez_compressed(save_path, **save_dict)
+    else:
+        np.savez(save_path, **save_dict)
+    return save_path
+
+
+def load_model_checkpoint(
+    path: str | os.PathLike[str],
+    *,
+    into: Any | None = None,
+    strict: bool = True,
+) -> dict[str, Any]:
+    """Load model-level checkpoint with forward-compat support for v1."""
+    payload = load_checkpoint(path, into=None, strict=strict)
+    meta = dict(payload.get("meta", {}))
+    state = dict(payload.get("state", {}))
+    fmt = str(meta.get("format", ""))
+    if fmt and fmt not in {_CHECKPOINT_FORMAT, _CHECKPOINT_FORMAT_V11}:
+        raise ValueError(f"unsupported checkpoint format: {fmt}")
+
+    model_state = _strip_state_prefix(state, "model")
+    # Forward-compat: old v1 checkpoints may store top-level state without
+    # model.* prefix.
+    if not model_state:
+        model_state = state
+
+    if into is not None:
+        load_fn = getattr(into, "load_state_dict", None)
+        if not callable(load_fn):
+            raise TypeError("into must implement load_state_dict(state, strict=...)")
+        load_fn(model_state, strict=bool(strict))
+
+    return {
+        "path": payload.get("path"),
+        "meta": meta,
+        "state": state,
+        "model_state": model_state,
+    }
+
+
 class Linear:
     def __init__(self, in_features: int, out_features: int, bias: bool = True):
         self.in_features = int(in_features)
@@ -329,6 +412,256 @@ class Linear:
                 self.bias = np.ascontiguousarray(b)
         else:
             self.bias = None
+
+
+class TinyMLPModel:
+    """Tiny model-runner style block for checkpoint/model-level smoke."""
+
+    def __init__(self, d_in: int, d_hidden: int, d_out: int):
+        self.d_in = int(d_in)
+        self.d_hidden = int(d_hidden)
+        self.d_out = int(d_out)
+        self.fc1 = Linear(self.d_in, self.d_hidden, bias=True)
+        self.fc2 = Linear(self.d_hidden, self.d_out, bias=True)
+
+    def __call__(self, x: Any) -> np.ndarray:
+        arr = np.asarray(x, dtype=np.float32)
+        if arr.ndim != 2 or arr.shape[1] != self.d_in:
+            raise ValueError("TinyMLPModel input must be [batch, d_in]")
+        h = self.fc1(arr)
+        h = np.maximum(h, 0.0).astype(np.float32, copy=False)
+        return self.fc2(h)
+
+    def state_dict(self, prefix: str = "") -> dict[str, np.ndarray]:
+        key = (str(prefix).rstrip(".") + ".") if prefix else ""
+        out: dict[str, np.ndarray] = {
+            f"{key}d_in": np.asarray([self.d_in], dtype=np.int32),
+            f"{key}d_hidden": np.asarray([self.d_hidden], dtype=np.int32),
+            f"{key}d_out": np.asarray([self.d_out], dtype=np.int32),
+            f"{key}format_version": np.asarray([11], dtype=np.int32),
+        }
+        out.update(self.fc1.state_dict(prefix=f"{key}fc1"))
+        out.update(self.fc2.state_dict(prefix=f"{key}fc2"))
+        return out
+
+    def load_state_dict(self, state: dict[str, Any], strict: bool = True, prefix: str = "") -> None:
+        key = (str(prefix).rstrip(".") + ".") if prefix else ""
+        for name in ("d_in", "d_hidden", "d_out"):
+            sk = f"{key}{name}"
+            if sk in state:
+                val = np.asarray(state[sk]).reshape(-1)
+                if val.size > 0:
+                    setattr(self, name, int(val[0]))
+            elif strict:
+                raise KeyError(f"missing key: {sk}")
+
+        self.fc1 = Linear(self.d_in, self.d_hidden, bias=True)
+        self.fc2 = Linear(self.d_hidden, self.d_out, bias=True)
+        self.fc1.load_state_dict(state, strict=strict, prefix=f"{key}fc1")
+        self.fc2.load_state_dict(state, strict=strict, prefix=f"{key}fc2")
+
+
+def _sum_to_shape(grad: np.ndarray, shape: tuple[int, ...]) -> np.ndarray:
+    g = np.asarray(grad, dtype=np.float32)
+    target = tuple(int(x) for x in shape)
+    if g.shape == target:
+        return g
+
+    while g.ndim > len(target):
+        g = g.sum(axis=0)
+    for axis, dim in enumerate(target):
+        if dim == 1 and g.shape[axis] != 1:
+            g = g.sum(axis=axis, keepdims=True)
+    return g.reshape(target)
+
+
+class AutoTensor:
+    """Minimal autograd tensor for matmul/add/relu training bootstrap."""
+
+    def __init__(
+        self,
+        data: Any,
+        *,
+        requires_grad: bool = False,
+        parents: tuple["AutoTensor", ...] = (),
+        op: str = "",
+    ):
+        self.data = np.asarray(data, dtype=np.float32)
+        self.requires_grad = bool(requires_grad)
+        self.grad: np.ndarray | None = None
+        self._parents = tuple(parents)
+        self._op = str(op)
+        self._backward = lambda: None
+
+    def zero_grad(self) -> None:
+        self.grad = None
+
+    def backward(self, grad: Any | None = None) -> None:
+        if grad is None:
+            if self.data.size != 1:
+                raise ValueError("grad must be provided for non-scalar tensor")
+            upstream = np.ones_like(self.data, dtype=np.float32)
+        else:
+            upstream = np.asarray(grad, dtype=np.float32)
+            if upstream.shape != self.data.shape:
+                raise ValueError("backward grad shape mismatch")
+
+        topo: list[AutoTensor] = []
+        visited: set[int] = set()
+
+        def _build(v: AutoTensor) -> None:
+            key = id(v)
+            if key in visited:
+                return
+            visited.add(key)
+            for p in v._parents:
+                _build(p)
+            topo.append(v)
+
+        _build(self)
+        self.grad = upstream
+        for node in reversed(topo):
+            node._backward()
+
+
+def ag_tensor(x: Any, *, requires_grad: bool = False) -> AutoTensor:
+    return AutoTensor(x, requires_grad=requires_grad)
+
+
+def ag_parameter(x: Any) -> AutoTensor:
+    return AutoTensor(x, requires_grad=True)
+
+
+def _as_tensor(x: Any) -> AutoTensor:
+    if isinstance(x, AutoTensor):
+        return x
+    return ag_tensor(x, requires_grad=False)
+
+
+def ag_matmul(a: Any, b: Any) -> AutoTensor:
+    ta = _as_tensor(a)
+    tb = _as_tensor(b)
+    out = AutoTensor(
+        ta.data @ tb.data,
+        requires_grad=(ta.requires_grad or tb.requires_grad),
+        parents=(ta, tb),
+        op="matmul",
+    )
+
+    def _backward() -> None:
+        if out.grad is None:
+            return
+        if ta.requires_grad:
+            ga = out.grad @ tb.data.T
+            ta.grad = ga if ta.grad is None else (ta.grad + ga)
+        if tb.requires_grad:
+            gb = ta.data.T @ out.grad
+            tb.grad = gb if tb.grad is None else (tb.grad + gb)
+
+    out._backward = _backward
+    return out
+
+
+def ag_add(a: Any, b: Any) -> AutoTensor:
+    ta = _as_tensor(a)
+    tb = _as_tensor(b)
+    out = AutoTensor(
+        ta.data + tb.data,
+        requires_grad=(ta.requires_grad or tb.requires_grad),
+        parents=(ta, tb),
+        op="add",
+    )
+
+    def _backward() -> None:
+        if out.grad is None:
+            return
+        if ta.requires_grad:
+            ga = _sum_to_shape(out.grad, ta.data.shape)
+            ta.grad = ga if ta.grad is None else (ta.grad + ga)
+        if tb.requires_grad:
+            gb = _sum_to_shape(out.grad, tb.data.shape)
+            tb.grad = gb if tb.grad is None else (tb.grad + gb)
+
+    out._backward = _backward
+    return out
+
+
+def ag_relu(x: Any) -> AutoTensor:
+    tx = _as_tensor(x)
+    out_data = np.maximum(tx.data, 0.0).astype(np.float32, copy=False)
+    out = AutoTensor(out_data, requires_grad=tx.requires_grad, parents=(tx,), op="relu")
+
+    def _backward() -> None:
+        if out.grad is None or not tx.requires_grad:
+            return
+        gx = out.grad * (tx.data > 0.0).astype(np.float32)
+        tx.grad = gx if tx.grad is None else (tx.grad + gx)
+
+    out._backward = _backward
+    return out
+
+
+def ag_mse_loss(pred: Any, target: Any) -> AutoTensor:
+    tp = _as_tensor(pred)
+    tt = _as_tensor(target)
+    if tp.data.shape != tt.data.shape:
+        raise ValueError("mse loss shape mismatch")
+    diff = tp.data - tt.data
+    value = np.asarray([float(np.mean(diff * diff))], dtype=np.float32)
+    out = AutoTensor(value, requires_grad=tp.requires_grad, parents=(tp,), op="mse_loss")
+
+    def _backward() -> None:
+        if out.grad is None or not tp.requires_grad:
+            return
+        scale = float(out.grad.reshape(-1)[0]) * (2.0 / float(tp.data.size))
+        gp = scale * diff
+        tp.grad = gp if tp.grad is None else (tp.grad + gp)
+
+    out._backward = _backward
+    return out
+
+
+def ag_zero_grad(params: list[AutoTensor]) -> None:
+    for p in params:
+        p.zero_grad()
+
+
+def ag_sgd_step(params: list[AutoTensor], *, lr: float) -> None:
+    lr_f = float(lr)
+    for p in params:
+        if p.grad is None:
+            continue
+        p.data = np.asarray(p.data - lr_f * p.grad, dtype=np.float32)
+
+
+class TinyAutogradMLP:
+    """Tiny 2-layer MLP with manual autograd graph (matmul/add/relu)."""
+
+    def __init__(self, d_in: int, d_hidden: int, d_out: int, *, seed: int = 20260408):
+        self.d_in = int(d_in)
+        self.d_hidden = int(d_hidden)
+        self.d_out = int(d_out)
+        rng = np.random.default_rng(int(seed))
+        self.w1 = ag_parameter((rng.standard_normal((self.d_in, self.d_hidden)) * 0.02).astype(np.float32))
+        self.b1 = ag_parameter(np.zeros((1, self.d_hidden), dtype=np.float32))
+        self.w2 = ag_parameter((rng.standard_normal((self.d_hidden, self.d_out)) * 0.02).astype(np.float32))
+        self.b2 = ag_parameter(np.zeros((1, self.d_out), dtype=np.float32))
+
+    def parameters(self) -> list[AutoTensor]:
+        return [self.w1, self.b1, self.w2, self.b2]
+
+    def forward(self, x: Any) -> AutoTensor:
+        tx = _as_tensor(x)
+        h = ag_relu(ag_add(ag_matmul(tx, self.w1), self.b1))
+        return ag_add(ag_matmul(h, self.w2), self.b2)
+
+    def train_step(self, x: Any, y: Any, *, lr: float = 1e-2) -> float:
+        ag_zero_grad(self.parameters())
+        pred = self.forward(x)
+        loss = ag_mse_loss(pred, y)
+        loss.backward()
+        ag_sgd_step(self.parameters(), lr=float(lr))
+        return float(loss.data.reshape(-1)[0])
 
 
 def lightning_matmul(a: Any, b: Any, device: str = "metal") -> np.ndarray:
@@ -1381,6 +1714,8 @@ def _install_lc_api_engine_bridge() -> bool:
         api.clear_attention_session_cache = _api_clear_attention_session_cache
         api.save_checkpoint = save_checkpoint
         api.load_checkpoint = load_checkpoint
+        api.save_model_checkpoint = save_model_checkpoint
+        api.load_model_checkpoint = load_model_checkpoint
 
         def _api_conv_relu_nchw(
             x: Any,

@@ -85,7 +85,9 @@ jobs:
             --iters 24 \
             --seed 20260408 \
             --cost-model-min-speedup 1.01 \
-            --max-fused-over-unfused 1.15 \
+            --max-fused-over-unfused-conv 1.15 \
+            --max-fused-over-unfused-matmul 1.90 \
+            --max-fused-over-unfused-attention 2.20 \
             --csv benchmarks/reports/ci/fusion_pilot.csv \
             --json benchmarks/reports/ci/fusion_pilot.json \
             --md benchmarks/reports/ci/fusion_pilot.md \

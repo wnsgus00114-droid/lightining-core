@@ -261,9 +261,27 @@ struct GraphExecutionGroup {
   std::vector<std::size_t> node_ids;
 };
 
+struct GraphPlanSummary {
+  std::size_t total_nodes{0};
+  std::size_t total_groups{0};
+  std::size_t total_fallback_nodes{0};
+  std::size_t total_fallback_groups{0};
+  std::size_t sync_boundary_before_groups{0};
+  std::size_t sync_boundary_after_groups{0};
+  std::size_t device_switches{0};
+  std::size_t planned_dispatch_groups{0};
+  std::size_t cpu_nodes{0};
+  std::size_t cuda_nodes{0};
+  std::size_t metal_nodes{0};
+  std::size_t cpu_groups{0};
+  std::size_t cuda_groups{0};
+  std::size_t metal_groups{0};
+};
+
 enum class FusionPattern {
   kConvReluV1 = 0,
-  kMatMulBiasReluV1
+  kMatMulBiasReluV1,
+  kAttentionProjV1
 };
 
 inline const char* fusionPatternName(FusionPattern pattern) {
@@ -272,6 +290,8 @@ inline const char* fusionPatternName(FusionPattern pattern) {
       return "conv_relu_v1";
     case FusionPattern::kMatMulBiasReluV1:
       return "matmul_bias_relu_v1";
+    case FusionPattern::kAttentionProjV1:
+      return "attention_proj_v1";
     default:
       return "unknown";
   }
@@ -670,6 +690,30 @@ class GraphIR {
     return runtime::Status::kSuccess;
   }
 
+  runtime::Status planSummary(
+      const GraphPlannerOptions& options,
+      GraphPlanSummary* out_summary,
+      std::vector<GraphExecutionGroup>* out_groups = nullptr,
+      std::vector<GraphPlanStep>* out_steps = nullptr) const {
+    if (out_summary == nullptr) {
+      return runtime::Status::kInvalidValue;
+    }
+    std::vector<GraphExecutionGroup> local_groups;
+    std::vector<GraphPlanStep> local_steps;
+    runtime::Status st = planExecutionGroups(options, &local_groups, &local_steps);
+    if (st != runtime::Status::kSuccess) {
+      return st;
+    }
+    buildPlanSummary(local_groups, local_steps, out_summary);
+    if (out_groups != nullptr) {
+      *out_groups = std::move(local_groups);
+    }
+    if (out_steps != nullptr) {
+      *out_steps = std::move(local_steps);
+    }
+    return runtime::Status::kSuccess;
+  }
+
   runtime::Status executeF32(
       const GraphPlannerOptions& options,
       const std::unordered_map<std::size_t, std::vector<float>>& feeds,
@@ -867,6 +911,76 @@ class GraphIR {
             ? formatCostModelPassReason(estimate.speedup)
             : "fused_matmul_bias_relu_v1";
         out_decisions->push_back(std::move(decision));
+        continue;
+      }
+
+      if (node.op == OpKind::kAttentionForward) {
+        GraphFusionDecision decision;
+        decision.pattern = FusionPattern::kAttentionProjV1;
+        decision.start_node_id = node.id;
+        decision.end_node_id = node.id;
+        auto step_it = step_device.find(node.id);
+        decision.assigned_device = (step_it != step_device.end()) ? step_it->second : runtime::Device::kCPU;
+
+        if (i + 1 >= nodes_.size()) {
+          decision.reason = "next_op_missing";
+          out_decisions->push_back(std::move(decision));
+          continue;
+        }
+
+        const GraphNode& next = nodes_[i + 1];
+        decision.end_node_id = next.id;
+        if (next.op != OpKind::kMatMul) {
+          decision.reason = "next_op_not_matmul";
+          out_decisions->push_back(std::move(decision));
+          continue;
+        }
+
+        std::string eligibility_reason;
+        if (!canFuseAttentionProjPair(node, next, consumer_counts, &eligibility_reason)) {
+          decision.reason = eligibility_reason;
+          out_decisions->push_back(std::move(decision));
+          continue;
+        }
+
+        const auto g0_it = node_group.find(node.id);
+        const auto g1_it = node_group.find(next.id);
+        if (g0_it == node_group.end() || g1_it == node_group.end() || g0_it->second != g1_it->second) {
+          decision.reason = "planner_group_boundary";
+          out_decisions->push_back(std::move(decision));
+          continue;
+        }
+
+        const auto d1_it = step_device.find(next.id);
+        const runtime::Device d1 = (d1_it != step_device.end()) ? d1_it->second : decision.assigned_device;
+        if (d1 != decision.assigned_device) {
+          decision.reason = "device_boundary";
+          out_decisions->push_back(std::move(decision));
+          continue;
+        }
+
+        if (!options.enable_fusion_v1) {
+          decision.reason = "fusion_disabled";
+          out_decisions->push_back(std::move(decision));
+          continue;
+        }
+
+        const GraphTensorValue& q_tensor = tensors_[node.inputs[0]];
+        const GraphTensorValue& attn_out_tensor = tensors_[node.outputs[0]];
+        const GraphTensorValue& proj_weight_tensor = tensors_[next.inputs[1]];
+        const GraphTensorValue& proj_out_tensor = tensors_[next.outputs[0]];
+        const FusionCostEstimate estimate =
+            estimateAttentionProjCost(options, q_tensor, attn_out_tensor, proj_weight_tensor, proj_out_tensor);
+        if (!applyCostModelDecision(options, estimate, &decision)) {
+          out_decisions->push_back(std::move(decision));
+          continue;
+        }
+
+        decision.fused = true;
+        decision.reason = options.enable_fusion_cost_model_v1
+            ? formatCostModelPassReason(estimate.speedup)
+            : "fused_attention_proj_v1";
+        out_decisions->push_back(std::move(decision));
       }
     }
     return runtime::Status::kSuccess;
@@ -889,6 +1003,84 @@ class GraphIR {
   }
 
  private:
+  static void incrementDeviceNodeCount(runtime::Device device, GraphPlanSummary* summary) {
+    if (summary == nullptr) {
+      return;
+    }
+    switch (device) {
+      case runtime::Device::kCPU:
+        summary->cpu_nodes += 1;
+        break;
+      case runtime::Device::kCUDA:
+        summary->cuda_nodes += 1;
+        break;
+      case runtime::Device::kMetal:
+      default:
+        summary->metal_nodes += 1;
+        break;
+    }
+  }
+
+  static void incrementDeviceGroupCount(runtime::Device device, GraphPlanSummary* summary) {
+    if (summary == nullptr) {
+      return;
+    }
+    switch (device) {
+      case runtime::Device::kCPU:
+        summary->cpu_groups += 1;
+        break;
+      case runtime::Device::kCUDA:
+        summary->cuda_groups += 1;
+        break;
+      case runtime::Device::kMetal:
+      default:
+        summary->metal_groups += 1;
+        break;
+    }
+  }
+
+  static void buildPlanSummary(
+      const std::vector<GraphExecutionGroup>& groups,
+      const std::vector<GraphPlanStep>& steps,
+      GraphPlanSummary* out_summary) {
+    if (out_summary == nullptr) {
+      return;
+    }
+    GraphPlanSummary summary{};
+    summary.total_nodes = steps.size();
+    summary.total_groups = groups.size();
+    summary.planned_dispatch_groups = groups.size();
+
+    runtime::Device prev_group_device = runtime::Device::kCPU;
+    bool has_prev_group = false;
+    for (const auto& group : groups) {
+      if (group.fallback) {
+        summary.total_fallback_groups += 1;
+      }
+      if (group.sync_boundary_before) {
+        summary.sync_boundary_before_groups += 1;
+      }
+      if (group.sync_boundary_after) {
+        summary.sync_boundary_after_groups += 1;
+      }
+      incrementDeviceGroupCount(group.assigned_device, &summary);
+      if (has_prev_group && prev_group_device != group.assigned_device) {
+        summary.device_switches += 1;
+      }
+      prev_group_device = group.assigned_device;
+      has_prev_group = true;
+    }
+
+    for (const auto& step : steps) {
+      if (step.fallback) {
+        summary.total_fallback_nodes += 1;
+      }
+      incrementDeviceNodeCount(step.assigned_device, &summary);
+    }
+
+    *out_summary = summary;
+  }
+
   struct FusionCostEstimate {
     double unfused_ns{std::numeric_limits<double>::quiet_NaN()};
     double fused_ns{std::numeric_limits<double>::quiet_NaN()};
@@ -995,6 +1187,37 @@ class GraphIR {
         (3.0 * options.cost_launch_overhead_ns) + (2.0 * options.cost_transfer_overhead_ns) + mm_core_ns + bias_core_ns + relu_core_ns;
     out.fused_ns =
         options.cost_launch_overhead_ns + mm_core_ns + (0.65 * bias_core_ns) + (0.50 * relu_core_ns);
+    out.speedup = (out.fused_ns > 0.0) ? (out.unfused_ns / out.fused_ns) : std::numeric_limits<double>::quiet_NaN();
+    return out;
+  }
+
+  static FusionCostEstimate estimateAttentionProjCost(
+      const GraphPlannerOptions& options,
+      const GraphTensorValue& q_tensor,
+      const GraphTensorValue& attn_out_tensor,
+      const GraphTensorValue& proj_weight_tensor,
+      const GraphTensorValue& proj_out_tensor) {
+    FusionCostEstimate out;
+    if (q_tensor.spec.shape.size() != 2 ||
+        attn_out_tensor.spec.shape.size() != 2 ||
+        proj_weight_tensor.spec.shape.size() != 2 ||
+        proj_out_tensor.spec.shape.size() != 2) {
+      return out;
+    }
+    const double seq = static_cast<double>(q_tensor.spec.shape[0]);
+    const double d = static_cast<double>(q_tensor.spec.shape[1]);
+    const double proj_out = static_cast<double>(proj_out_tensor.spec.shape[1]);
+    const double attn_macs = (2.0 * seq * seq * d) + (seq * seq * d);
+    const double proj_macs = seq * d * proj_out;
+    const double softmax_elems = seq * seq;
+    const double attn_core_ns =
+        (attn_macs * options.cost_matmul_per_mac_ns * 1.10) +
+        (softmax_elems * options.cost_elementwise_per_element_ns * 1.35);
+    const double proj_core_ns = proj_macs * options.cost_matmul_per_mac_ns;
+
+    out.unfused_ns =
+        (2.0 * options.cost_launch_overhead_ns) + options.cost_transfer_overhead_ns + attn_core_ns + proj_core_ns;
+    out.fused_ns = options.cost_launch_overhead_ns + attn_core_ns + proj_core_ns;
     out.speedup = (out.fused_ns > 0.0) ? (out.unfused_ns / out.fused_ns) : std::numeric_limits<double>::quiet_NaN();
     return out;
   }
@@ -1193,6 +1416,105 @@ class GraphIR {
     }
     if (!bias_node.control_deps.empty() || !relu_node.control_deps.empty()) {
       set_reason("control_dependency_present");
+      return false;
+    }
+    set_reason("eligible");
+    return true;
+  }
+
+  bool canFuseAttentionProjPair(const GraphNode& attn_node,
+                                const GraphNode& proj_node,
+                                const std::vector<std::size_t>& consumer_counts,
+                                std::string* out_reason) const {
+    auto set_reason = [&](const char* reason) {
+      if (out_reason != nullptr) {
+        *out_reason = reason;
+      }
+    };
+
+    if (attn_node.op != OpKind::kAttentionForward) {
+      set_reason("attention_pattern_mismatch");
+      return false;
+    }
+    if (proj_node.op != OpKind::kMatMul) {
+      set_reason("next_op_not_matmul");
+      return false;
+    }
+    if (attn_node.id + 1 != proj_node.id) {
+      set_reason("non_adjacent_node");
+      return false;
+    }
+    if (attn_node.inputs.size() != 3 ||
+        attn_node.outputs.size() != 1 ||
+        proj_node.inputs.size() != 2 ||
+        proj_node.outputs.size() != 1) {
+      set_reason("arity_mismatch");
+      return false;
+    }
+
+    const std::size_t attn_out_id = attn_node.outputs[0];
+    const std::size_t proj_lhs = proj_node.inputs[0];
+    const std::size_t proj_rhs = proj_node.inputs[1];
+    const std::size_t proj_out_id = proj_node.outputs[0];
+    if (attn_out_id >= tensors_.size() || proj_rhs >= tensors_.size() || proj_out_id >= tensors_.size()) {
+      set_reason("tensor_out_of_range");
+      return false;
+    }
+    if (proj_lhs != attn_out_id) {
+      set_reason("matmul_input_not_attention_output");
+      return false;
+    }
+    if (attn_out_id >= consumer_counts.size() || consumer_counts[attn_out_id] != 1) {
+      set_reason("attention_output_multi_consumer");
+      return false;
+    }
+
+    const GraphTensorValue& q_tensor = tensors_[attn_node.inputs[0]];
+    const GraphTensorValue& k_tensor = tensors_[attn_node.inputs[1]];
+    const GraphTensorValue& v_tensor = tensors_[attn_node.inputs[2]];
+    const GraphTensorValue& attn_out_tensor = tensors_[attn_out_id];
+    const GraphTensorValue& proj_weight_tensor = tensors_[proj_rhs];
+    const GraphTensorValue& proj_out_tensor = tensors_[proj_out_id];
+    if (q_tensor.spec.shape.size() != 2 ||
+        k_tensor.spec.shape.size() != 2 ||
+        v_tensor.spec.shape.size() != 2 ||
+        attn_out_tensor.spec.shape.size() != 2 ||
+        proj_weight_tensor.spec.shape.size() != 2 ||
+        proj_out_tensor.spec.shape.size() != 2) {
+      set_reason("tensor_rank_mismatch");
+      return false;
+    }
+    if (q_tensor.spec.shape != k_tensor.spec.shape ||
+        q_tensor.spec.shape != v_tensor.spec.shape ||
+        q_tensor.spec.shape != attn_out_tensor.spec.shape) {
+      set_reason("attention_shape_mismatch");
+      return false;
+    }
+    if (proj_weight_tensor.spec.shape[0] != attn_out_tensor.spec.shape[1] ||
+        proj_out_tensor.spec.shape[0] != attn_out_tensor.spec.shape[0] ||
+        proj_out_tensor.spec.shape[1] != proj_weight_tensor.spec.shape[1]) {
+      set_reason("projection_shape_mismatch");
+      return false;
+    }
+    if (q_tensor.spec.dtype != k_tensor.spec.dtype ||
+        q_tensor.spec.dtype != v_tensor.spec.dtype ||
+        q_tensor.spec.dtype != attn_out_tensor.spec.dtype ||
+        q_tensor.spec.dtype != proj_weight_tensor.spec.dtype ||
+        q_tensor.spec.dtype != proj_out_tensor.spec.dtype) {
+      set_reason("dtype_mismatch");
+      return false;
+    }
+    if (q_tensor.spec.layout != Layout::kContiguous ||
+        k_tensor.spec.layout != Layout::kContiguous ||
+        v_tensor.spec.layout != Layout::kContiguous ||
+        attn_out_tensor.spec.layout != Layout::kContiguous ||
+        proj_weight_tensor.spec.layout != Layout::kContiguous ||
+        proj_out_tensor.spec.layout != Layout::kContiguous) {
+      set_reason("layout_not_contiguous");
+      return false;
+    }
+    if (!proj_node.control_deps.empty()) {
+      set_reason("projection_control_dependency_present");
       return false;
     }
     set_reason("eligible");
@@ -1818,6 +2140,109 @@ class GraphIR {
   }
 
   template <typename T>
+  runtime::Status executeAttentionProjFusedNodeTyped(
+      const GraphNode& attn_node,
+      const GraphNode& proj_node,
+      runtime::Device assigned_device,
+      const std::vector<std::size_t>& consumer_counts,
+      std::unordered_map<std::size_t, std::vector<T>>* values) const {
+    if constexpr (!std::is_same_v<T, float>) {
+      return runtime::Status::kNotSupported;
+    }
+    if (values == nullptr) {
+      return runtime::Status::kInvalidValue;
+    }
+    std::string fuse_reason;
+    if (!canFuseAttentionProjPair(attn_node, proj_node, consumer_counts, &fuse_reason)) {
+      return runtime::Status::kInvalidValue;
+    }
+
+    auto get_value = [&](std::size_t tensor_id) -> const std::vector<T>* {
+      auto it = values->find(tensor_id);
+      if (it == values->end()) {
+        return nullptr;
+      }
+      return &it->second;
+    };
+
+    const std::size_t q_id = attn_node.inputs[0];
+    const std::size_t k_id = attn_node.inputs[1];
+    const std::size_t v_id = attn_node.inputs[2];
+    const std::size_t attn_out_id = attn_node.outputs[0];
+    const std::size_t proj_w_id = proj_node.inputs[1];
+    const std::size_t proj_out_id = proj_node.outputs[0];
+    if (q_id >= tensors_.size() ||
+        k_id >= tensors_.size() ||
+        v_id >= tensors_.size() ||
+        attn_out_id >= tensors_.size() ||
+        proj_w_id >= tensors_.size() ||
+        proj_out_id >= tensors_.size()) {
+      return runtime::Status::kInvalidValue;
+    }
+
+    const GraphTensorValue& q_tensor = tensors_[q_id];
+    const GraphTensorValue& attn_out_tensor = tensors_[attn_out_id];
+    const GraphTensorValue& proj_weight_tensor = tensors_[proj_w_id];
+    const GraphTensorValue& proj_out_tensor = tensors_[proj_out_id];
+    if (q_tensor.spec.shape.size() != 2 ||
+        attn_out_tensor.spec.shape.size() != 2 ||
+        proj_weight_tensor.spec.shape.size() != 2 ||
+        proj_out_tensor.spec.shape.size() != 2) {
+      return runtime::Status::kInvalidValue;
+    }
+
+    const std::vector<T>* q = get_value(q_id);
+    const std::vector<T>* k = get_value(k_id);
+    const std::vector<T>* v = get_value(v_id);
+    const std::vector<T>* proj_w = get_value(proj_w_id);
+    if (q == nullptr || k == nullptr || v == nullptr || proj_w == nullptr) {
+      return runtime::Status::kInvalidValue;
+    }
+
+    const std::size_t seq = static_cast<std::size_t>(q_tensor.spec.shape[0]);
+    const std::size_t head_dim = static_cast<std::size_t>(q_tensor.spec.shape[1]);
+    const std::size_t proj_out_cols = static_cast<std::size_t>(proj_weight_tensor.spec.shape[1]);
+    const std::size_t attn_numel = detail::numelFromShapeContract(attn_out_tensor.spec.shape);
+    const std::size_t proj_numel = detail::numelFromShapeContract(proj_out_tensor.spec.shape);
+    if (q->size() != attn_numel ||
+        k->size() != attn_numel ||
+        v->size() != attn_numel ||
+        proj_w->size() != (head_dim * proj_out_cols) ||
+        proj_numel != (seq * proj_out_cols)) {
+      return runtime::Status::kInvalidValue;
+    }
+
+    std::vector<T> attn_out(attn_numel, static_cast<T>(0));
+    std::vector<T> proj_out(proj_numel, static_cast<T>(0));
+    AttentionConfig cfg{seq, head_dim, false};
+    runtime::Status st = attentionForward(
+        reinterpret_cast<const float*>(q->data()),
+        reinterpret_cast<const float*>(k->data()),
+        reinterpret_cast<const float*>(v->data()),
+        reinterpret_cast<float*>(attn_out.data()),
+        cfg,
+        assigned_device);
+    if (st != runtime::Status::kSuccess) {
+      return st;
+    }
+    st = ops::matMul<T>(
+        attn_out.data(),
+        proj_w->data(),
+        proj_out.data(),
+        seq,
+        head_dim,
+        proj_out_cols,
+        assigned_device);
+    if (st != runtime::Status::kSuccess) {
+      return st;
+    }
+
+    values->insert_or_assign(attn_out_id, attn_out);
+    values->insert_or_assign(proj_out_id, std::move(proj_out));
+    return runtime::Status::kSuccess;
+  }
+
+  template <typename T>
   runtime::Status executeTyped(
       const GraphPlannerOptions& options,
       const std::unordered_map<std::size_t, std::vector<T>>& feeds,
@@ -1924,6 +2349,40 @@ class GraphIR {
                 visited_nodes.insert(next_node_id);
                 visited_nodes.insert(next2_node_id);
                 gi += 2;
+                continue;
+              }
+            }
+          }
+        }
+
+        if (options.enable_fusion_v1 && node.op == OpKind::kAttentionForward && gi + 1 < group.node_ids.size()) {
+          const std::size_t next_node_id = group.node_ids[gi + 1];
+          if (next_node_id < nodes_.size()) {
+            const GraphNode& next_node = nodes_[next_node_id];
+            std::string fuse_reason;
+            if (canFuseAttentionProjPair(node, next_node, consumer_counts, &fuse_reason)) {
+              bool allow_fusion = true;
+              if (options.enable_fusion_cost_model_v1) {
+                const FusionCostEstimate estimate = estimateAttentionProjCost(
+                    options,
+                    tensors_[node.inputs[0]],
+                    tensors_[node.outputs[0]],
+                    tensors_[next_node.inputs[1]],
+                    tensors_[next_node.outputs[0]]);
+                allow_fusion = std::isfinite(estimate.speedup) && estimate.speedup >= options.fusion_cost_min_speedup;
+              }
+              if (allow_fusion) {
+                if (visited_nodes.find(next_node_id) != visited_nodes.end()) {
+                  return runtime::Status::kInvalidValue;
+                }
+                st = executeAttentionProjFusedNodeTyped<T>(
+                    node, next_node, group.assigned_device, consumer_counts, &values);
+                if (st != runtime::Status::kSuccess) {
+                  return st;
+                }
+                visited_nodes.insert(node_id);
+                visited_nodes.insert(next_node_id);
+                gi += 1;
                 continue;
               }
             }

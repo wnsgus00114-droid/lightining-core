@@ -1,6 +1,6 @@
 # Lightning Core Roadmap
 
-Version context: v0.1.27 (2026-04-08)
+Version context: v0.1.32 (2026-04-08)
 
 ## 1) North Star
 
@@ -20,7 +20,7 @@ Lightning Core started as a macOS Apple-Silicon performance runtime. The long-te
 - Keep API ergonomics improvements performance-safe by default.
 - Keep deprecation policy explicit; no silent API behavior changes.
 
-## 3) Current Baseline (v0.1.27)
+## 3) Current Baseline (v0.1.32)
 
 - Public package on PyPI/TestPyPI.
 - C++ core + Python bindings for runtime/tensor/ops/attention/integrated APIs.
@@ -28,6 +28,10 @@ Lightning Core started as a macOS Apple-Silicon performance runtime. The long-te
 - Public benchmark source and quick benchmark script.
 - Legacy `cudajun` forwarding headers removed; canonical namespace is `lightning_core`.
 - `lc.api` engine bridge (`set_engine/get_engine`) is stabilized for `lightning/torch/auto` on the same API surface.
+- Graph plan summary API + fixed host-dispatch evidence fields are available in graph/eager benchmark artifacts.
+- Fusion pass-3 includes `attention_forward + projection(matmul)` rule-based pattern with explain report coverage.
+- Checkpoint IO v1.1 includes model-level save/load helpers with forward-compat loading for v1 checkpoints.
+- Autograd bootstrap v0 (`matmul/add/relu` backward + tiny 1-step SGD) is available in Python helper surface.
 
 ## 4) Evolution Plan (Mac Runtime -> General Framework)
 
@@ -304,6 +308,21 @@ Each milestone tracks:
 17. [completed] v0.1.27 checkpoint IO v1 (M-D python/test/docs)
    - deliverable: `save_checkpoint/load_checkpoint` with `state_dict/load_state_dict` support for integrated Python blocks.
    - acceptance: checkpoint round-trip smoke test blocks regressions in CI.
+18. [completed] v0.1.28 graph execution foundation pass-2 (M-B graph/benchmark/docs)
+   - deliverable: graph plan summary API (`backend/sync/fallback` grouping stats) and fixed host-dispatch evidence fields in graph/eager artifacts.
+   - acceptance: graph/eager CSV/JSON/MD always exposes host-dispatch reduction evidence source and planner-summary counters.
+19. [completed] v0.1.29 fusion pass-3 attention pattern (M-C graph/benchmark/test)
+   - deliverable: rule-based `attention_forward + projection(matmul)` fusion (`attention_proj_v1`) with fallback reasons and cost-model explain fields.
+   - acceptance: correctness + perf gate rows pass in fusion pilot benchmark and fallback reasons are reported deterministically.
+20. [completed] v0.1.30 deterministic fallback + numerical stress hardening (M-A test/ci/graph)
+   - deliverable: randomized boundary shape/dtype/layout regression smoke and expanded graph-request fallback contract checks.
+   - acceptance: CI hard gate blocks numerical drift and boundary regressions through dedicated stress smoke scripts.
+21. [completed] v0.1.31 checkpoint IO v1.1 model-level expansion (M-D python/test/docs)
+   - deliverable: model-level checkpoint helpers (`save_model_checkpoint/load_model_checkpoint`) with compatibility metadata.
+   - acceptance: forward-compat smoke verifies v1 checkpoints load through v1.1 model loader.
+22. [completed] v0.1.32 autograd bootstrap v0 (M-D python/test)
+   - deliverable: `matmul/add/relu` backward graph + tiny MLP 1-step SGD training helper.
+   - acceptance: Torch gradient parity smoke and tiny training-step regression test pass in CI.
 
 Progress update history is auto-generated from:
 
@@ -313,7 +332,7 @@ Progress update history is auto-generated from:
 
 ### Progress History (Auto-generated)
 
-- Total tracked updates: `58`
+- Total tracked updates: `64`
 - Source of truth: `docs/roadmap_updates.json`
 - Quick add command:
   `python scripts/generate_roadmap_history.py --add --date YYYY-MM-DD --milestone M-A --area runtime --title "your update"`
@@ -322,7 +341,7 @@ Progress update history is auto-generated from:
 
 | Date | Updates | Milestones | Highlights |
 | --- | --- | --- | --- |
-| 2026-04-08 | 13 | M-D, M-C, M-B, M-A | Completed v0.1.27 checkpoint IO v1 with save/load helpers and integrated block state_dict/load_state_dict paths. / Completed v0.1.25 fusion cost model v1 with estimated fused/unfused costs, speedup fields, and cost-model reject reasons. / ... (+11 more) |
+| 2026-04-08 | 19 | M-D, M-C, M-B, M-A | Completed v0.1.32 autograd bootstrap v0 (matmul/add/relu backward + tiny 1-step SGD) with Torch gradient parity smoke. / Completed v0.1.31 checkpoint IO v1.1 model-level save/load helpers with v1 forward-compat smoke coverage. / ... (+17 more) |
 | 2026-04-07 | 6 | M-A | Optimized tiny conv->attn integrated path using op_path timeline bottleneck guidance and tiny-chain CPU preference heuristic. / Finalized lc.api engine bridge (lightning/torch/auto) with same-surface engine switching / ... (+4 more) |
 | 2026-04-02 | 5 | M-B, M-A | Completed v0.1.15 generated API reference pipeline (Python/C++) in docs build and removed API index placeholder entries. / Expanded graph-path contract coverage: sync policy(auto/always/never), fallback/device-change boundary checks, and shape/layout/lifetime regression guards. / ... (+3 more) |
 | 2026-04-01 | 16 | M-B, M-A | Completed generated API reference pipeline with auto-built Python/C++ reference pages and docs link-check gate in CI/docs workflows. / Added graph/eager A/B benchmark script with runtime host-dispatch delta and fallback counters, plus CI artifact publishing. / ... (+14 more) |
@@ -333,17 +352,23 @@ Progress update history is auto-generated from:
 
 **Detailed Timeline**
 
-#### 2026-04-08 (13 updates)
+#### 2026-04-08 (19 updates)
 
+- [completed] [M-D] [test] Completed v0.1.32 autograd bootstrap v0 (matmul/add/relu backward + tiny 1-step SGD) with Torch gradient parity smoke. (`local`)
+- [completed] [M-D] [python] Completed v0.1.31 checkpoint IO v1.1 model-level save/load helpers with v1 forward-compat smoke coverage. (`local`)
 - [completed] [M-D] [python] Completed v0.1.27 checkpoint IO v1 with save/load helpers and integrated block state_dict/load_state_dict paths.
+- [completed] [M-C] [graph] Completed v0.1.29 fusion pass-3 with attention_forward+projection(matmul) rule-based pattern, explain report, and benchmark gate coverage. (`local`)
 - [completed] [M-C] [graph] Completed v0.1.25 fusion cost model v1 with estimated fused/unfused costs, speedup fields, and cost-model reject reasons.
 - [completed] [M-C] [graph] Completed v0.1.23 fusion pass-2 with matmul+bias+relu v1 pattern, expanded fusion report coverage, and dedicated benchmark rows.
 - [completed] [M-C] [graph] Completed v0.1.22 fusion pilot pass-1 with conv+relu v1 rule-based fusion, fusion report API, and benchmark/release artifact gate wiring.
+- [completed] [M-B] [graph] Completed v0.1.28 graph plan summary API and fixed host-dispatch evidence fields in graph/eager artifacts. (`local`)
 - [completed] [M-B] [graph] Completed v0.1.24 graph planner pass-2 with capability-aware scoring and release host-dispatch hard-gate wiring.
 - [completed] [M-B] [graph] Completed v0.1.21 graph parity + deterministic eager fallback hardening (integrated graph-request fallback contract + CI smoke coverage).
 - [completed] [M-B] [graph] Completed v0.1.20 graph execution foundation pass-1: capability-aware planner grouping and fixed host-dispatch reduction metrics in graph/eager artifacts. (`local`)
+- [completed] [M-A] [test] Completed v0.1.30 deterministic fallback and numerical stress hardening with randomized boundary shape/dtype/layout CI smoke. (`local`)
 - [completed] [M-A] [benchmark] Completed v0.1.26 engine federation stabilization with engine split coverage checks and release evidence consistency.
 - [completed] [M-A] [test] Completed v0.1.19 runtime contract freeze with strengthened tensor shape/layout/lifetime/alias regression tests and explicit CI hard gates. (`local`)
+- [completed] [M-A] [release] Bumped public baseline to v0.1.32 and aligned README/ROADMAP/pyproject version metadata. (`local`)
 - [completed] [M-A] [release] Bumped public baseline to v0.1.27 and aligned README/ROADMAP/pyproject version metadata.
 - [completed] [M-A] [release] Bumped public baseline to v0.1.22 and aligned README/ROADMAP/pyproject version metadata.
 - [completed] [M-A] [release] Bumped public baseline to v0.1.20 and aligned README/ROADMAP/pyproject version metadata. (`local`)
@@ -417,9 +442,9 @@ Progress update history is auto-generated from:
 
 <!-- AUTO-ROADMAP-HISTORY:END -->
 
-## 11) Release-Train Detail (v0.1.27 -> v1.0)
+## 11) Release-Train Detail (v0.1.32 -> v1.0)
 
-## 11.1 2026 Q2 (v0.1.27 ~ v0.2.0): Runtime Contracts
+## 11.1 2026 Q2 (v0.1.32 ~ v0.2.0): Runtime Contracts
 
 Planned scope:
 

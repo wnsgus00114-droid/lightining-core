@@ -5,6 +5,7 @@ This benchmark compares GraphIR execution with fusion enabled vs disabled and
 emits explain reports for:
 - conv+relu (conv_relu_v1)
 - matmul+bias+relu (matmul_bias_relu_v1)
+- attention_forward+projection(matmul) (attention_proj_v1)
 """
 
 from __future__ import annotations
@@ -98,6 +99,30 @@ def _build_mm_bias_relu_graph(*, multi_consumer: bool) -> tuple[object, dict[str
     return g, ids, feeds, "matmul_bias_relu_v1", "matmul(128x128x128)+bias+relu"
 
 
+def _build_attention_proj_graph(*, multi_consumer: bool) -> tuple[object, dict[str, int], dict[int, np.ndarray], str, str]:
+    g = lc.GraphIR()
+    ids: dict[str, int] = {}
+    seq = 48
+    head_dim = 48
+    proj_out = 64
+    ids["q"] = g.add_tensor([seq, head_dim], dtype="float32", name="q", constant=True)
+    ids["k"] = g.add_tensor([seq, head_dim], dtype="float32", name="k", constant=True)
+    ids["v"] = g.add_tensor([seq, head_dim], dtype="float32", name="v", constant=True)
+    ids["proj_w"] = g.add_tensor([head_dim, proj_out], dtype="float32", name="proj_w", constant=True)
+    ids["attn_mid"] = g.add_tensor([seq, head_dim], dtype="float32", name="attn_mid")
+    ids["out"] = g.add_tensor([seq, proj_out], dtype="float32", name="out")
+    g.add_node("attention_forward", [ids["q"], ids["k"], ids["v"]], [ids["attn_mid"]])
+    g.add_node("matmul", [ids["attn_mid"], ids["proj_w"]], [ids["out"]])
+
+    feeds: dict[int, np.ndarray] = {}
+    if multi_consumer:
+        ids["side_bias"] = g.add_tensor([seq, head_dim], dtype="float32", name="side_bias", constant=True)
+        ids["side"] = g.add_tensor([seq, head_dim], dtype="float32", name="side")
+        g.add_node("matrix_sub", [ids["attn_mid"], ids["side_bias"]], [ids["side"]])
+
+    return g, ids, feeds, "attention_proj_v1", "attention(seq=48,d=48)+proj(48x64)"
+
+
 def _run_case(
     *,
     case_name: str,
@@ -119,12 +144,19 @@ def _run_case(
         feeds[ids["b"]] = rng.random((16,), dtype=np.float32)
         if multi_consumer:
             feeds[ids["bias2"]] = rng.random((1, 16, 8, 8), dtype=np.float32)
-    else:
+    elif pattern == "matmul_bias_relu_v1":
         feeds[ids["a"]] = rng.random((128, 128), dtype=np.float32) * 2.0 - 1.0
         feeds[ids["b"]] = rng.random((128, 128), dtype=np.float32) * 2.0 - 1.0
         feeds[ids["bias"]] = rng.random((128, 128), dtype=np.float32) * 0.2 - 0.1
         if multi_consumer:
             feeds[ids["side_bias"]] = rng.random((128, 128), dtype=np.float32) * 0.2 - 0.1
+    else:
+        feeds[ids["q"]] = rng.random((48, 48), dtype=np.float32) * 2.0 - 1.0
+        feeds[ids["k"]] = rng.random((48, 48), dtype=np.float32) * 2.0 - 1.0
+        feeds[ids["v"]] = rng.random((48, 48), dtype=np.float32) * 2.0 - 1.0
+        feeds[ids["proj_w"]] = rng.random((48, 64), dtype=np.float32) * 0.2 - 0.1
+        if multi_consumer:
+            feeds[ids["side_bias"]] = rng.random((48, 48), dtype=np.float32) * 0.2 - 0.1
 
     def run_fused_once():
         _ = g.execute_f32(
@@ -315,6 +347,7 @@ def _to_markdown(
     iters: int,
     conv_threshold: float,
     matmul_threshold: float,
+    attention_threshold: float,
 ) -> str:
     lines = []
     lines.append("## Fusion Pilot (v2)")
@@ -325,7 +358,8 @@ def _to_markdown(
     lines.append(f"- fusion applied cases: {summary['fusion_applied_cases']}/{summary['ok_cases']}")
     lines.append(
         f"- median fused/unfused: {_fmt_ratio(summary['median_fused_over_unfused'])}, "
-        f"perf gate thresholds: conv<={conv_threshold:.3f}x, matmul<={matmul_threshold:.3f}x"
+        f"perf gate thresholds: conv<={conv_threshold:.3f}x, matmul<={matmul_threshold:.3f}x, "
+        f"attention<={attention_threshold:.3f}x"
     )
     lines.append("")
     lines.append("| pattern | bench | status | fused (ms) | unfused (ms) | fused/unfused | fusion_applied | reason | est speedup |")
@@ -367,6 +401,12 @@ def main() -> None:
         help="Fail when matmul eligible fused case exceeds this ratio.",
     )
     p.add_argument(
+        "--max-fused-over-unfused-attention",
+        type=float,
+        default=2.20,
+        help="Fail when attention eligible fused case exceeds this ratio.",
+    )
+    p.add_argument(
         "--fail-on-empty",
         action=argparse.BooleanOptionalAction,
         default=False,
@@ -385,10 +425,17 @@ def main() -> None:
         ("conv_relu_multi_consumer", "conv_relu_v1", _build_conv_relu_graph, True),
         ("matmul_bias_relu_eligible", "matmul_bias_relu_v1", _build_mm_bias_relu_graph, False),
         ("matmul_bias_relu_multi_consumer", "matmul_bias_relu_v1", _build_mm_bias_relu_graph, True),
+        ("attention_proj_eligible", "attention_proj_v1", _build_attention_proj_graph, False),
+        ("attention_proj_multi_consumer", "attention_proj_v1", _build_attention_proj_graph, True),
     ]
 
     for case_name, pattern, builder, multi_consumer in cases:
-        shape = "conv(n=1,c=3->16,h=8,w=8,k=3)+relu" if pattern == "conv_relu_v1" else "matmul(128x128x128)+bias+relu"
+        if pattern == "conv_relu_v1":
+            shape = "conv(n=1,c=3->16,h=8,w=8,k=3)+relu"
+        elif pattern == "matmul_bias_relu_v1":
+            shape = "matmul(128x128x128)+bias+relu"
+        else:
+            shape = "attention(seq=48,d=48)+proj(48x64)"
         try:
             row, detail = _run_case(
                 case_name=case_name,
@@ -409,9 +456,11 @@ def main() -> None:
     summary = _summary(rows)
     conv_threshold = float(args.max_fused_over_unfused_conv)
     matmul_threshold = float(args.max_fused_over_unfused_matmul)
+    attention_threshold = float(args.max_fused_over_unfused_attention)
     if math.isfinite(float(args.max_fused_over_unfused)):
         conv_threshold = float(args.max_fused_over_unfused)
         matmul_threshold = float(args.max_fused_over_unfused)
+        attention_threshold = float(args.max_fused_over_unfused)
     payload = {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "suite": "fusion_pilot",
@@ -424,6 +473,7 @@ def main() -> None:
         "max_fused_over_unfused": args.max_fused_over_unfused,
         "max_fused_over_unfused_conv": conv_threshold,
         "max_fused_over_unfused_matmul": matmul_threshold,
+        "max_fused_over_unfused_attention": attention_threshold,
         "summary": summary,
         "rows": rows,
         "details": details,
@@ -434,7 +484,16 @@ def main() -> None:
     args.json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     args.md.parent.mkdir(parents=True, exist_ok=True)
     args.md.write_text(
-        _to_markdown(rows, summary, device, args.warmup, args.iters, conv_threshold, matmul_threshold),
+        _to_markdown(
+            rows,
+            summary,
+            device,
+            args.warmup,
+            args.iters,
+            conv_threshold,
+            matmul_threshold,
+            attention_threshold,
+        ),
         encoding="utf-8",
     )
 
@@ -450,12 +509,19 @@ def main() -> None:
     if any(not bool(r.get("allclose", False)) for r in ok_rows):
         raise SystemExit(3)
 
-    eligible_rows = [r for r in ok_rows if r["bench"] in {"conv_relu_eligible", "matmul_bias_relu_eligible"}]
+    eligible_rows = [
+        r for r in ok_rows if r["bench"] in {"conv_relu_eligible", "matmul_bias_relu_eligible", "attention_proj_eligible"}
+    ]
     for r in eligible_rows:
         ratio = float(r.get("fused_over_unfused", float("nan")))
         if not bool(r.get("fusion_applied", False)) or not math.isfinite(ratio):
             continue
-        threshold = conv_threshold if r.get("pattern") == "conv_relu_v1" else matmul_threshold
+        if r.get("pattern") == "conv_relu_v1":
+            threshold = conv_threshold
+        elif r.get("pattern") == "matmul_bias_relu_v1":
+            threshold = matmul_threshold
+        else:
+            threshold = attention_threshold
         if ratio > threshold:
             raise SystemExit(4)
 
