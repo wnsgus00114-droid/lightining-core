@@ -44,11 +44,18 @@ jobs:
           set -o pipefail
           ctest --test-dir build-ci --output-on-failure --no-tests=error | tee build-ci/ctest.log
 
+      - name: Run Contract Regression Subset (hard gate)
+        run: |
+          set -o pipefail
+          ctest --test-dir build-ci --output-on-failure --no-tests=error \
+            -R "test_tensor|test_tensor_contract_freeze|test_graph_ir" | tee build-ci/ctest-contract.log
+
       - name: Run Python smoke (integrated API + timeline)
         run: |
           python3 -m pip install --upgrade pip
           python3 -m pip install numpy
           python3 -m pip install -e .
+          python3 tests/test_python_tensor_contract_smoke.py
           python3 tests/test_python_integrated_timeline_smoke.py
 
       - name: Publish CTest summary
@@ -61,6 +68,12 @@ jobs:
           else
             echo "- ctest log not found" >> "$GITHUB_STEP_SUMMARY"
           fi
+          if [ -f build-ci/ctest-contract.log ]; then
+            grep -E "100% tests passed|tests failed out of|Total Test time" build-ci/ctest-contract.log >> "$GITHUB_STEP_SUMMARY" || true
+          else
+            echo "- contract subset log not found" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "- python smoke: tests/test_python_tensor_contract_smoke.py" >> "$GITHUB_STEP_SUMMARY"
           echo "- python smoke: tests/test_python_integrated_timeline_smoke.py" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload CTest artifacts
@@ -72,6 +85,7 @@ jobs:
           retention-days: 14
           path: |
             build-ci/ctest.log
+            build-ci/ctest-contract.log
             build-ci/CMakeCache.txt
             build-ci/CMakeFiles/CMakeOutput.log
             build-ci/CMakeFiles/CMakeError.log

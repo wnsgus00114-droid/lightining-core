@@ -1,0 +1,30 @@
+[
+  {
+    "category": "shape",
+    "contract": "Tensor shape must be non-empty and each dim > 0.",
+    "invariant": "Invalid shape metadata is rejected by contract validators.",
+    "cpp_gate": "test_tensor_contract_freeze, test_tensor",
+    "python_gate": "tests/test_python_tensor_contract_smoke.py"
+  },
+  {
+    "category": "layout",
+    "contract": "Contiguous tensors keep canonical strides; slice views are strided with bounded offsets.",
+    "invariant": "View metadata (shape/strides/layout/offset) must pass bounds checks against storage.",
+    "cpp_gate": "test_tensor_contract_freeze, test_tensor, test_graph_ir",
+    "python_gate": "tests/test_python_tensor_contract_smoke.py"
+  },
+  {
+    "category": "lifetime",
+    "contract": "fromHost/toHost data exchange is copy-based and must not alias caller-owned buffers.",
+    "invariant": "Caller buffer mutation after transfer cannot affect tensor/device-owned state.",
+    "cpp_gate": "test_tensor_contract_freeze, test_graph_ir",
+    "python_gate": "tests/test_python_tensor_contract_smoke.py"
+  },
+  {
+    "category": "alias",
+    "contract": "TensorView is metadata alias over tensor storage, with strict same-device contract.",
+    "invariant": "Valid same-device view reads reflect latest tensor storage; cross-device view contract fails.",
+    "cpp_gate": "test_tensor_contract_freeze, test_tensor",
+    "python_gate": "tests/test_python_tensor_contract_smoke.py"
+  }
+]

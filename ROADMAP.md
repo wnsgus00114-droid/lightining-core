@@ -1,6 +1,6 @@
 # Lightning Core Roadmap
 
-Version context: v0.1.18 (2026-04-07)
+Version context: v0.1.19 (2026-04-08)
 
 ## 1) North Star
 
@@ -20,7 +20,7 @@ Lightning Core started as a macOS Apple-Silicon performance runtime. The long-te
 - Keep API ergonomics improvements performance-safe by default.
 - Keep deprecation policy explicit; no silent API behavior changes.
 
-## 3) Current Baseline (v0.1.18)
+## 3) Current Baseline (v0.1.19)
 
 - Public package on PyPI/TestPyPI.
 - C++ core + Python bindings for runtime/tensor/ops/attention/integrated APIs.
@@ -277,6 +277,9 @@ Each milestone tracks:
 8. [completed] v0.1.18 performance round (M-A runtime/benchmark/ci)
    - deliverable: timeline(`group_by=op_path`) guided tiny conv/conv->attn bottleneck optimization and hotspot shape-set coverage in release evidence.
    - acceptance: targeted bottleneck shapes are included in engine-split release artifacts and trace-hotspot fields are emitted per path.
+9. [completed] v0.1.19 runtime contract freeze pass (M-A tensor/test/docs/ci)
+   - deliverable: stronger tensor shape/layout/lifetime/alias regression tests + frozen contract matrix docs.
+   - acceptance: contract-regression subset and Python tensor-contract smoke are explicit hard gates in CI.
 
 Progress update history is auto-generated from:
 
@@ -286,7 +289,7 @@ Progress update history is auto-generated from:
 
 ### Progress History (Auto-generated)
 
-- Total tracked updates: `45`
+- Total tracked updates: `47`
 - Source of truth: `docs/roadmap_updates.json`
 - Quick add command:
   `python scripts/generate_roadmap_history.py --add --date YYYY-MM-DD --milestone M-A --area runtime --title "your update"`
@@ -295,6 +298,7 @@ Progress update history is auto-generated from:
 
 | Date | Updates | Milestones | Highlights |
 | --- | --- | --- | --- |
+| 2026-04-08 | 2 | M-A | Completed v0.1.19 runtime contract freeze with strengthened tensor shape/layout/lifetime/alias regression tests and explicit CI hard gates. / Bumped public baseline to v0.1.19 and aligned README/ROADMAP/pyproject version metadata. |
 | 2026-04-07 | 6 | M-A | Optimized tiny conv->attn integrated path using op_path timeline bottleneck guidance and tiny-chain CPU preference heuristic. / Finalized lc.api engine bridge (lightning/torch/auto) with same-surface engine switching / ... (+4 more) |
 | 2026-04-02 | 5 | M-B, M-A | Completed v0.1.15 generated API reference pipeline (Python/C++) in docs build and removed API index placeholder entries. / Expanded graph-path contract coverage: sync policy(auto/always/never), fallback/device-change boundary checks, and shape/layout/lifetime regression guards. / ... (+3 more) |
 | 2026-04-01 | 16 | M-B, M-A | Completed generated API reference pipeline with auto-built Python/C++ reference pages and docs link-check gate in CI/docs workflows. / Added graph/eager A/B benchmark script with runtime host-dispatch delta and fallback counters, plus CI artifact publishing. / ... (+14 more) |
@@ -304,6 +308,11 @@ Progress update history is auto-generated from:
 | 2026-03-28 | 1 | M-A | Initial macOS package and release workflow launch. |
 
 **Detailed Timeline**
+
+#### 2026-04-08 (2 updates)
+
+- [completed] [M-A] [test] Completed v0.1.19 runtime contract freeze with strengthened tensor shape/layout/lifetime/alias regression tests and explicit CI hard gates. (`local`)
+- [completed] [M-A] [release] Bumped public baseline to v0.1.19 and aligned README/ROADMAP/pyproject version metadata. (`local`)
 
 #### 2026-04-07 (6 updates)
 
@@ -373,9 +382,9 @@ Progress update history is auto-generated from:
 
 <!-- AUTO-ROADMAP-HISTORY:END -->
 
-## 11) Release-Train Detail (v0.1.18 -> v1.0)
+## 11) Release-Train Detail (v0.1.19 -> v1.0)
 
-## 11.1 2026 Q2 (v0.1.18 ~ v0.2.0): Runtime Contracts
+## 11.1 2026 Q2 (v0.1.19 ~ v0.2.0): Runtime Contracts
 
 Planned scope:
 

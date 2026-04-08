@@ -8,6 +8,11 @@ add_executable(test_tensor test_tensor.cpp)
 target_link_libraries(test_tensor PRIVATE lightning_core::lightning_core)
 add_test(NAME test_tensor COMMAND test_tensor)
 
+# Shape/layout/lifetime/alias contract freeze regression test.
+add_executable(test_tensor_contract_freeze test_tensor_contract_freeze.cpp)
+target_link_libraries(test_tensor_contract_freeze PRIVATE lightning_core::lightning_core)
+add_test(NAME test_tensor_contract_freeze COMMAND test_tensor_contract_freeze)
+
 # attention forward/train 스모크 테스트.
 add_executable(test_attention test_attention.cpp)
 target_link_libraries(test_attention PRIVATE lightning_core::lightning_core)

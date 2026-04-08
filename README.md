@@ -13,7 +13,7 @@
 
 # 3. One-line Summary
 Lightning Core is a macOS-first, Metal-backed runtime that provides low-level control (resident IO, policy routing, fused paths) with easy Python APIs.
-Current public release: **v0.1.18** (2026-04-07).
+Current public release: **v0.1.19** (2026-04-08).
 
 # 4. Abstract
 Lightning Core targets high-iteration experimentation on Apple Silicon by combining:
@@ -140,6 +140,18 @@ Capability and environment disclosure in this section is auto-generated from:
 | runtime_trace_clear | Yes | Clear ring buffer events |
 | runtime_backend_capabilities | Yes | Per-backend contract query (metal/cpu/cuda) |
 | runtime_active_backend_capabilities | Yes | Capability contract of current active backend |
+
+### Tensor Contract Matrix (Auto-generated, Frozen)
+
+- Source of truth: `docs/tensor_contract_matrix.json`
+- Contract regressions are hard-gated by CI (`ci-contract-tests.yml`).
+
+| Category | Contract | Invariant | C++ Gate | Python Gate |
+| --- | --- | --- | --- | --- |
+| shape | Tensor shape must be non-empty and each dim > 0. | Invalid shape metadata is rejected by contract validators. | test_tensor_contract_freeze, test_tensor | tests/test_python_tensor_contract_smoke.py |
+| layout | Contiguous tensors keep canonical strides; slice views are strided with bounded offsets. | View metadata (shape/strides/layout/offset) must pass bounds checks against storage. | test_tensor_contract_freeze, test_tensor, test_graph_ir | tests/test_python_tensor_contract_smoke.py |
+| lifetime | fromHost/toHost data exchange is copy-based and must not alias caller-owned buffers. | Caller buffer mutation after transfer cannot affect tensor/device-owned state. | test_tensor_contract_freeze, test_graph_ir | tests/test_python_tensor_contract_smoke.py |
+| alias | TensorView is metadata alias over tensor storage, with strict same-device contract. | Valid same-device view reads reflect latest tensor storage; cross-device view contract fails. | test_tensor_contract_freeze, test_tensor | tests/test_python_tensor_contract_smoke.py |
 
 ### Tested Environment Matrix (Auto-generated)
 
@@ -4853,7 +4865,7 @@ docs/                           # quickstart/advanced/contributor docs
 ```
 
 # 35. Roadmap
-Roadmap baseline is now aligned to **v0.1.18** and tracked in detail in [ROADMAP.md](ROADMAP.md).
+Roadmap baseline is now aligned to **v0.1.19** and tracked in detail in [ROADMAP.md](ROADMAP.md).
 
 Immediate replan (2026-04-01, roadmap-aligned):
 1. [completed] Complete backend abstraction split (compute/memory/sync/profiler) and lock public docs/examples.
@@ -4863,6 +4875,7 @@ Immediate replan (2026-04-01, roadmap-aligned):
 5. [completed] Expand parity/contract tests for graph path + sync-policy scenarios.
 6. [completed] Stabilize macOS-first generic engine mode (`lightning`/`torch`/`auto`) and keep pure-LC vs interop benchmark evidence separated.
 7. [completed] v0.1.18 performance round: `group_by=op_path` timeline-guided tiny conv/conv->attn bottleneck optimization + release-gate hotspot shape coverage.
+8. [completed] v0.1.19 runtime contract freeze: tensor shape/layout/lifetime/alias contract tests + frozen contract matrix + CI hard gate.
 
 Roadmap progress history is auto-generated from:
 - `docs/roadmap_updates.json`
@@ -4871,7 +4884,7 @@ Roadmap progress history is auto-generated from:
 
 ### Progress History (Auto-generated)
 
-- Total tracked updates: `45`
+- Total tracked updates: `47`
 - Source of truth: `docs/roadmap_updates.json`
 - Quick add command:
   `python scripts/generate_roadmap_history.py --add --date YYYY-MM-DD --milestone M-A --area runtime --title "your update"`
@@ -4880,6 +4893,7 @@ Roadmap progress history is auto-generated from:
 
 | Date | Updates | Milestones | Highlights |
 | --- | --- | --- | --- |
+| 2026-04-08 | 2 | M-A | Completed v0.1.19 runtime contract freeze with strengthened tensor shape/layout/lifetime/alias regression tests and explicit CI hard gates. / Bumped public baseline to v0.1.19 and aligned README/ROADMAP/pyproject version metadata. |
 | 2026-04-07 | 6 | M-A | Optimized tiny conv->attn integrated path using op_path timeline bottleneck guidance and tiny-chain CPU preference heuristic. / Finalized lc.api engine bridge (lightning/torch/auto) with same-surface engine switching / ... (+4 more) |
 | 2026-04-02 | 5 | M-B, M-A | Completed v0.1.15 generated API reference pipeline (Python/C++) in docs build and removed API index placeholder entries. / Expanded graph-path contract coverage: sync policy(auto/always/never), fallback/device-change boundary checks, and shape/layout/lifetime regression guards. / ... (+3 more) |
 | 2026-04-01 | 16 | M-B, M-A | Completed generated API reference pipeline with auto-built Python/C++ reference pages and docs link-check gate in CI/docs workflows. / Added graph/eager A/B benchmark script with runtime host-dispatch delta and fallback counters, plus CI artifact publishing. / ... (+14 more) |
@@ -4889,6 +4903,11 @@ Roadmap progress history is auto-generated from:
 | 2026-03-28 | 1 | M-A | Initial macOS package and release workflow launch. |
 
 **Detailed Timeline**
+
+#### 2026-04-08 (2 updates)
+
+- [completed] [M-A] [test] Completed v0.1.19 runtime contract freeze with strengthened tensor shape/layout/lifetime/alias regression tests and explicit CI hard gates. (`local`)
+- [completed] [M-A] [release] Bumped public baseline to v0.1.19 and aligned README/ROADMAP/pyproject version metadata. (`local`)
 
 #### 2026-04-07 (6 updates)
 
@@ -4958,7 +4977,7 @@ Roadmap progress history is auto-generated from:
 
 <!-- AUTO-ROADMAP-HISTORY:END -->
 
-Phase A (2026 Q2, `v0.1.18`-`v0.2.0`): Runtime Core Hardening
+Phase A (2026 Q2, `v0.1.19`-`v0.2.0`): Runtime Core Hardening
 - Finalize backend contracts (compute/memory/sync/profiler split).
 - Stabilize integrated engine selector (`lightning` / `torch` / `auto`) for macOS-first workflows.
 - Lock tensor lifetime and metadata rules across Metal/CPU parity tests.
@@ -5030,4 +5049,4 @@ Community feedback channels we actively monitor:
 
 Lightning Core is stable enough for experimentation and benchmarking, while APIs and internals continue to evolve quickly.
 Visibility update: repository topics and benchmark discoverability documentation are actively maintained.
-Current release train: **v0.1.18**.
+Current release train: **v0.1.19**.

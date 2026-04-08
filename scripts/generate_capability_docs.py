@@ -177,12 +177,31 @@ def render_tested_env_table(entries: list[dict[str, Any]]) -> str:
     return md_table(headers, rows)
 
 
-def render_block(snapshot: dict[str, Any], env_entries: list[dict[str, Any]]) -> str:
+def render_tensor_contract_table(entries: list[dict[str, Any]]) -> str:
+    headers = ["Category", "Contract", "Invariant", "C++ Gate", "Python Gate"]
+    rows: list[list[str]] = []
+    for item in entries:
+        rows.append(
+            [
+                norm_cell(item.get("category")),
+                norm_cell(item.get("contract")),
+                norm_cell(item.get("invariant")),
+                norm_cell(item.get("cpp_gate")),
+                norm_cell(item.get("python_gate")),
+            ]
+        )
+    if not rows:
+        rows = [["-", "-", "-", "-", "-"]]
+    return md_table(headers, rows)
+
+
+def render_block(snapshot: dict[str, Any], env_entries: list[dict[str, Any]], contract_entries: list[dict[str, Any]]) -> str:
     generated = norm_cell(snapshot.get("generated_at_utc"))
     backend_name = norm_cell(snapshot.get("backend_name"))
     memory_model = norm_cell(snapshot.get("memory_model_name"))
     capability = render_runtime_capability_table(snapshot)
     runtime_api = render_runtime_api_surface_table(snapshot)
+    contracts = render_tensor_contract_table(contract_entries)
     environments = render_tested_env_table(env_entries)
     return (
         "### Runtime Capability Matrix (Auto-generated)\n\n"
@@ -194,6 +213,10 @@ def render_block(snapshot: dict[str, Any], env_entries: list[dict[str, Any]]) ->
         f"{capability}\n\n"
         "### Runtime Trace / Capability API Surface (Auto-generated)\n\n"
         f"{runtime_api}\n\n"
+        "### Tensor Contract Matrix (Auto-generated, Frozen)\n\n"
+        "- Source of truth: `docs/tensor_contract_matrix.json`\n"
+        "- Contract regressions are hard-gated by CI (`ci-contract-tests.yml`).\n\n"
+        f"{contracts}\n\n"
         "### Tested Environment Matrix (Auto-generated)\n\n"
         f"{environments}\n"
     )
@@ -224,6 +247,7 @@ def main() -> int:
     parser.add_argument("--docs-page", type=Path, default=Path("docs/capability_matrix.md"))
     parser.add_argument("--env-json", type=Path, default=Path("docs/tested_environments.json"))
     parser.add_argument("--runtime-json", type=Path, default=Path("docs/runtime_capabilities.json"))
+    parser.add_argument("--contract-json", type=Path, default=Path("docs/tensor_contract_matrix.json"))
     parser.add_argument("--refresh-runtime-snapshot", action="store_true")
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
@@ -233,6 +257,7 @@ def main() -> int:
     docs_path = (root / args.docs_page).resolve()
     env_json_path = (root / args.env_json).resolve()
     runtime_json_path = (root / args.runtime_json).resolve()
+    contract_json_path = (root / args.contract_json).resolve()
 
     if args.refresh_runtime_snapshot:
         runtime_snapshot = try_capture_runtime_snapshot()
@@ -246,7 +271,8 @@ def main() -> int:
         runtime_snapshot = load_json(runtime_json_path)
 
     env_entries = load_json(env_json_path)
-    payload = render_block(runtime_snapshot, env_entries)
+    contract_entries = load_json(contract_json_path)
+    payload = render_block(runtime_snapshot, env_entries, contract_entries)
 
     readme_text = readme_path.read_text(encoding="utf-8")
     readme_next = replace_between_markers(readme_text, README_START, README_END, payload)
@@ -261,6 +287,7 @@ def main() -> int:
         "docs_changed": docs_changed,
         "runtime_snapshot": str(runtime_json_path),
         "env_manifest": str(env_json_path),
+        "contract_manifest": str(contract_json_path),
     }
     print(json.dumps(status, ensure_ascii=False))
 

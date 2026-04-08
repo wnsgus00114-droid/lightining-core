@@ -38,6 +38,18 @@ python scripts/generate_capability_docs.py --refresh-runtime-snapshot
 | runtime_backend_capabilities | Yes | Per-backend contract query (metal/cpu/cuda) |
 | runtime_active_backend_capabilities | Yes | Capability contract of current active backend |
 
+### Tensor Contract Matrix (Auto-generated, Frozen)
+
+- Source of truth: `docs/tensor_contract_matrix.json`
+- Contract regressions are hard-gated by CI (`ci-contract-tests.yml`).
+
+| Category | Contract | Invariant | C++ Gate | Python Gate |
+| --- | --- | --- | --- | --- |
+| shape | Tensor shape must be non-empty and each dim > 0. | Invalid shape metadata is rejected by contract validators. | test_tensor_contract_freeze, test_tensor | tests/test_python_tensor_contract_smoke.py |
+| layout | Contiguous tensors keep canonical strides; slice views are strided with bounded offsets. | View metadata (shape/strides/layout/offset) must pass bounds checks against storage. | test_tensor_contract_freeze, test_tensor, test_graph_ir | tests/test_python_tensor_contract_smoke.py |
+| lifetime | fromHost/toHost data exchange is copy-based and must not alias caller-owned buffers. | Caller buffer mutation after transfer cannot affect tensor/device-owned state. | test_tensor_contract_freeze, test_graph_ir | tests/test_python_tensor_contract_smoke.py |
+| alias | TensorView is metadata alias over tensor storage, with strict same-device contract. | Valid same-device view reads reflect latest tensor storage; cross-device view contract fails. | test_tensor_contract_freeze, test_tensor | tests/test_python_tensor_contract_smoke.py |
+
 ### Tested Environment Matrix (Auto-generated)
 
 | Date | Scope | Hardware / OS | Python | Torch | Status | Notes |
