@@ -833,6 +833,159 @@ int main() {
       std::cerr << "mixed_graph sync boundary trace count mismatch\n";
       return 1;
     }
+
+    // fusion pilot v1: conv+relu should fuse on eligible graph and preserve output.
+    GraphIR fusion_graph;
+    std::size_t fx = 0;
+    std::size_t fw = 0;
+    std::size_t fb = 0;
+    std::size_t fmid = 0;
+    std::size_t fout = 0;
+    TensorSpec fx_spec;
+    fx_spec.shape = {1, 3, 8, 8};
+    fx_spec.dtype = DType::kFloat32;
+    fx_spec.layout = lightning_core::Layout::kContiguous;
+    TensorSpec fw_spec;
+    fw_spec.shape = {16, 3, 3, 3};
+    fw_spec.dtype = DType::kFloat32;
+    fw_spec.layout = lightning_core::Layout::kContiguous;
+    TensorSpec fb_spec;
+    fb_spec.shape = {16};
+    fb_spec.dtype = DType::kFloat32;
+    fb_spec.layout = lightning_core::Layout::kContiguous;
+    TensorSpec fy_spec;
+    fy_spec.shape = {1, 16, 8, 8};
+    fy_spec.dtype = DType::kFloat32;
+    fy_spec.layout = lightning_core::Layout::kContiguous;
+    if (fusion_graph.addTensorSpec(fx_spec, &fx, "fx", true) != Status::kSuccess ||
+        fusion_graph.addTensorSpec(fw_spec, &fw, "fw", true) != Status::kSuccess ||
+        fusion_graph.addTensorSpec(fb_spec, &fb, "fb", true) != Status::kSuccess ||
+        fusion_graph.addTensorSpec(fy_spec, &fmid, "fmid", false) != Status::kSuccess ||
+        fusion_graph.addTensorSpec(fy_spec, &fout, "fout", false) != Status::kSuccess) {
+      std::cerr << "fusion_graph addTensorSpec failed\n";
+      return 1;
+    }
+    if (fusion_graph.addNode(OpKind::kConv2dNchw3x3s1p1, {fx, fw, fb}, {fmid}) != Status::kSuccess ||
+        fusion_graph.addNode(OpKind::kRelu, {fmid}, {fout}) != Status::kSuccess) {
+      std::cerr << "fusion_graph addNode failed\n";
+      return 1;
+    }
+
+    std::unordered_map<std::size_t, std::vector<float>> fusion_feeds;
+    fusion_feeds[fx] = xv;
+    fusion_feeds[fw] = wv;
+    fusion_feeds[fb] = bv;
+    std::unordered_map<std::size_t, std::vector<float>> fusion_values_on;
+    std::unordered_map<std::size_t, std::vector<float>> fusion_values_off;
+    lightning_core::graph::GraphPlannerOptions fusion_opts_on = exec_options;
+    fusion_opts_on.enable_fusion_v1 = true;
+    lightning_core::graph::GraphPlannerOptions fusion_opts_off = exec_options;
+    fusion_opts_off.enable_fusion_v1 = false;
+    if (fusion_graph.executeF32(fusion_opts_on, fusion_feeds, &fusion_values_on, nullptr, nullptr) != Status::kSuccess) {
+      std::cerr << "fusion_graph executeF32(enable_fusion_v1=true) failed\n";
+      return 1;
+    }
+    if (fusion_graph.executeF32(fusion_opts_off, fusion_feeds, &fusion_values_off, nullptr, nullptr) != Status::kSuccess) {
+      std::cerr << "fusion_graph executeF32(enable_fusion_v1=false) failed\n";
+      return 1;
+    }
+    const auto fusion_out_on_it = fusion_values_on.find(fout);
+    const auto fusion_out_off_it = fusion_values_off.find(fout);
+    if (fusion_out_on_it == fusion_values_on.end() || fusion_out_off_it == fusion_values_off.end()) {
+      std::cerr << "fusion_graph output missing\n";
+      return 1;
+    }
+    if (fusion_out_on_it->second.size() != fusion_out_off_it->second.size()) {
+      std::cerr << "fusion_graph output size mismatch\n";
+      return 1;
+    }
+    for (std::size_t i = 0; i < fusion_out_on_it->second.size(); ++i) {
+      const float diff = fusion_out_on_it->second[i] - fusion_out_off_it->second[i];
+      if (diff > 1e-3f || diff < -1e-3f) {
+        std::cerr << "fusion_graph fused/unfused mismatch at index " << i << "\n";
+        return 1;
+      }
+    }
+
+    std::vector<lightning_core::graph::GraphFusionDecision> fusion_decisions_on;
+    if (fusion_graph.fusionReport(fusion_opts_on, &fusion_decisions_on) != Status::kSuccess) {
+      std::cerr << "fusion_graph fusionReport(enable=true) failed\n";
+      return 1;
+    }
+    bool saw_fused_conv_relu = false;
+    for (const auto& d : fusion_decisions_on) {
+      if (d.pattern == lightning_core::graph::FusionPattern::kConvReluV1 && d.fused) {
+        saw_fused_conv_relu = true;
+        break;
+      }
+    }
+    if (!saw_fused_conv_relu) {
+      std::cerr << "fusion_graph should report fused conv+relu decision\n";
+      return 1;
+    }
+
+    std::vector<lightning_core::graph::GraphFusionDecision> fusion_decisions_off;
+    if (fusion_graph.fusionReport(fusion_opts_off, &fusion_decisions_off) != Status::kSuccess) {
+      std::cerr << "fusion_graph fusionReport(enable=false) failed\n";
+      return 1;
+    }
+    bool saw_disabled_reason = false;
+    for (const auto& d : fusion_decisions_off) {
+      if (d.pattern == lightning_core::graph::FusionPattern::kConvReluV1 &&
+          !d.fused &&
+          d.reason == "fusion_disabled") {
+        saw_disabled_reason = true;
+        break;
+      }
+    }
+    if (!saw_disabled_reason) {
+      std::cerr << "fusion_graph should report fusion_disabled reason when v1 fusion is disabled\n";
+      return 1;
+    }
+
+    // fallback explanation report: non-eligible conv+relu pair should include reason.
+    GraphIR no_fuse_graph;
+    std::size_t nfx = 0;
+    std::size_t nfw = 0;
+    std::size_t nfb = 0;
+    std::size_t nfmid = 0;
+    std::size_t nfout = 0;
+    std::size_t nfadd = 0;
+    std::size_t nfadd_out = 0;
+    if (no_fuse_graph.addTensorSpec(fx_spec, &nfx, "nfx", true) != Status::kSuccess ||
+        no_fuse_graph.addTensorSpec(fw_spec, &nfw, "nfw", true) != Status::kSuccess ||
+        no_fuse_graph.addTensorSpec(fb_spec, &nfb, "nfb", true) != Status::kSuccess ||
+        no_fuse_graph.addTensorSpec(fy_spec, &nfmid, "nfmid", false) != Status::kSuccess ||
+        no_fuse_graph.addTensorSpec(fy_spec, &nfout, "nfout", false) != Status::kSuccess ||
+        no_fuse_graph.addTensorSpec(fy_spec, &nfadd, "nfadd", true) != Status::kSuccess ||
+        no_fuse_graph.addTensorSpec(fy_spec, &nfadd_out, "nfadd_out", false) != Status::kSuccess) {
+      std::cerr << "no_fuse_graph addTensorSpec failed\n";
+      return 1;
+    }
+    if (no_fuse_graph.addNode(OpKind::kConv2dNchw3x3s1p1, {nfx, nfw, nfb}, {nfmid}) != Status::kSuccess ||
+        no_fuse_graph.addNode(OpKind::kRelu, {nfmid}, {nfout}) != Status::kSuccess ||
+        no_fuse_graph.addNode(OpKind::kVectorAdd, {nfmid, nfadd}, {nfadd_out}) != Status::kSuccess) {
+      std::cerr << "no_fuse_graph addNode failed\n";
+      return 1;
+    }
+    std::vector<lightning_core::graph::GraphFusionDecision> no_fuse_decisions;
+    if (no_fuse_graph.fusionReport(fusion_opts_on, &no_fuse_decisions) != Status::kSuccess) {
+      std::cerr << "no_fuse_graph fusionReport failed\n";
+      return 1;
+    }
+    bool saw_multi_consumer_reason = false;
+    for (const auto& d : no_fuse_decisions) {
+      if (d.pattern == lightning_core::graph::FusionPattern::kConvReluV1 &&
+          !d.fused &&
+          d.reason == "intermediate_multi_consumer") {
+        saw_multi_consumer_reason = true;
+        break;
+      }
+    }
+    if (!saw_multi_consumer_reason) {
+      std::cerr << "no_fuse_graph should report intermediate_multi_consumer reason\n";
+      return 1;
+    }
   }
 
   GraphIR bad_graph;

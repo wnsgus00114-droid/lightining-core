@@ -13,7 +13,7 @@
 
 # 3. One-line Summary
 Lightning Core is a macOS-first, Metal-backed runtime that provides low-level control (resident IO, policy routing, fused paths) with easy Python APIs.
-Current public release: **v0.1.20** (2026-04-08).
+Current public release: **v0.1.22** (2026-04-08).
 
 # 4. Abstract
 Lightning Core targets high-iteration experimentation on Apple Silicon by combining:
@@ -4867,7 +4867,7 @@ docs/                           # quickstart/advanced/contributor docs
 ```
 
 # 35. Roadmap
-Roadmap baseline is now aligned to **v0.1.20** and tracked in detail in [ROADMAP.md](ROADMAP.md).
+Roadmap baseline is now aligned to **v0.1.22** and tracked in detail in [ROADMAP.md](ROADMAP.md).
 
 Immediate replan (2026-04-01, roadmap-aligned):
 1. [completed] Complete backend abstraction split (compute/memory/sync/profiler) and lock public docs/examples.
@@ -4879,6 +4879,8 @@ Immediate replan (2026-04-01, roadmap-aligned):
 7. [completed] v0.1.18 performance round: `group_by=op_path` timeline-guided tiny conv/conv->attn bottleneck optimization + release-gate hotspot shape coverage.
 8. [completed] v0.1.19 runtime contract freeze: tensor shape/layout/lifetime/alias contract tests + frozen contract matrix + CI hard gate.
 9. [completed] v0.1.20 graph execution foundation pass-1: capability-aware planner grouping (backend/sync-boundary) + fixed host-dispatch reduction metrics in graph/eager artifacts.
+10. [completed] v0.1.21 graph parity + deterministic eager fallback hardening: graph-request unsupported/failed path deterministically falls back to eager in integrated API + CI smoke guard.
+11. [completed] v0.1.22 fusion pilot pass-1: rule-based `conv+relu` fusion v1 + fusion decision report API + benchmark/release artifact gate wiring.
 
 Roadmap progress history is auto-generated from:
 - `docs/roadmap_updates.json`
@@ -4887,7 +4889,7 @@ Roadmap progress history is auto-generated from:
 
 ### Progress History (Auto-generated)
 
-- Total tracked updates: `49`
+- Total tracked updates: `52`
 - Source of truth: `docs/roadmap_updates.json`
 - Quick add command:
   `python scripts/generate_roadmap_history.py --add --date YYYY-MM-DD --milestone M-A --area runtime --title "your update"`
@@ -4896,7 +4898,7 @@ Roadmap progress history is auto-generated from:
 
 | Date | Updates | Milestones | Highlights |
 | --- | --- | --- | --- |
-| 2026-04-08 | 4 | M-B, M-A | Completed v0.1.20 graph execution foundation pass-1: capability-aware planner grouping and fixed host-dispatch reduction metrics in graph/eager artifacts. / Completed v0.1.19 runtime contract freeze with strengthened tensor shape/layout/lifetime/alias regression tests and explicit CI hard gates. / ... (+2 more) |
+| 2026-04-08 | 7 | M-C, M-B, M-A | Completed v0.1.22 fusion pilot pass-1 with conv+relu v1 rule-based fusion, fusion report API, and benchmark/release artifact gate wiring. / Completed v0.1.21 graph parity + deterministic eager fallback hardening (integrated graph-request fallback contract + CI smoke coverage). / ... (+5 more) |
 | 2026-04-07 | 6 | M-A | Optimized tiny conv->attn integrated path using op_path timeline bottleneck guidance and tiny-chain CPU preference heuristic. / Finalized lc.api engine bridge (lightning/torch/auto) with same-surface engine switching / ... (+4 more) |
 | 2026-04-02 | 5 | M-B, M-A | Completed v0.1.15 generated API reference pipeline (Python/C++) in docs build and removed API index placeholder entries. / Expanded graph-path contract coverage: sync policy(auto/always/never), fallback/device-change boundary checks, and shape/layout/lifetime regression guards. / ... (+3 more) |
 | 2026-04-01 | 16 | M-B, M-A | Completed generated API reference pipeline with auto-built Python/C++ reference pages and docs link-check gate in CI/docs workflows. / Added graph/eager A/B benchmark script with runtime host-dispatch delta and fallback counters, plus CI artifact publishing. / ... (+14 more) |
@@ -4907,10 +4909,13 @@ Roadmap progress history is auto-generated from:
 
 **Detailed Timeline**
 
-#### 2026-04-08 (4 updates)
+#### 2026-04-08 (7 updates)
 
+- [completed] [M-C] [graph] Completed v0.1.22 fusion pilot pass-1 with conv+relu v1 rule-based fusion, fusion report API, and benchmark/release artifact gate wiring.
+- [completed] [M-B] [graph] Completed v0.1.21 graph parity + deterministic eager fallback hardening (integrated graph-request fallback contract + CI smoke coverage).
 - [completed] [M-B] [graph] Completed v0.1.20 graph execution foundation pass-1: capability-aware planner grouping and fixed host-dispatch reduction metrics in graph/eager artifacts. (`local`)
 - [completed] [M-A] [test] Completed v0.1.19 runtime contract freeze with strengthened tensor shape/layout/lifetime/alias regression tests and explicit CI hard gates. (`local`)
+- [completed] [M-A] [release] Bumped public baseline to v0.1.22 and aligned README/ROADMAP/pyproject version metadata.
 - [completed] [M-A] [release] Bumped public baseline to v0.1.20 and aligned README/ROADMAP/pyproject version metadata. (`local`)
 - [completed] [M-A] [release] Bumped public baseline to v0.1.19 and aligned README/ROADMAP/pyproject version metadata. (`local`)
 
@@ -5054,4 +5059,4 @@ Community feedback channels we actively monitor:
 
 Lightning Core is stable enough for experimentation and benchmarking, while APIs and internals continue to evolve quickly.
 Visibility update: repository topics and benchmark discoverability documentation are actively maintained.
-Current release train: **v0.1.20**.
+Current release train: **v0.1.22**.

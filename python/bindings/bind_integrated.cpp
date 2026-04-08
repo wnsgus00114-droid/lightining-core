@@ -124,6 +124,10 @@ bool envFlagEnabled(const char* name) {
   return c0 == '1' || c0 == 't' || c0 == 'y';
 }
 
+bool graphModeStrictEnabled() {
+  return envFlagEnabled("LC_GRAPH_MODE_STRICT");
+}
+
 bool shouldPreferTinyCpuConvAttnChain(
     lc::Device requested_device,
     std::size_t batch,
@@ -932,10 +936,21 @@ void convAttentionTorchstrongNchwIntoWithMode(
       convAttentionTorchstrongNchwIntoDirect(
           x, w, bias_obj, out, seq_len, head_dim, stride_h, stride_w, pad_h, pad_w, device_name);
       return;
-    case IntegratedExecutionMode::kGraph:
-      convAttentionTorchstrongNchwIntoGraph(
-          x, w, bias_obj, out, seq_len, head_dim, stride_h, stride_w, pad_h, pad_w, device_name);
+    case IntegratedExecutionMode::kGraph: {
+      try {
+        convAttentionTorchstrongNchwIntoGraph(
+            x, w, bias_obj, out, seq_len, head_dim, stride_h, stride_w, pad_h, pad_w, device_name);
+      } catch (const std::exception&) {
+        if (graphModeStrictEnabled()) {
+          throw;
+        }
+        // Deterministic fallback contract:
+        // graph-plan failure or unsupported path should always resolve to eager path output.
+        convAttentionTorchstrongNchwIntoDirect(
+            x, w, bias_obj, out, seq_len, head_dim, stride_h, stride_w, pad_h, pad_w, device_name);
+      }
       return;
+    }
     default:
       throw std::invalid_argument("unsupported execution mode");
   }

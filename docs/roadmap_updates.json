@@ -1,5 +1,23 @@
 [
   {
+    "id": "2026-04-08-graph-completed-v0-1-22-fusion-pilot-pass-1-with-conv-relu-v1-rule-based-fusion-fusion-report-api-and-benchmark-release-artifact-gate-wiring",
+    "date": "2026-04-08",
+    "milestone": "M-C",
+    "area": "graph",
+    "title": "Completed v0.1.22 fusion pilot pass-1 with conv+relu v1 rule-based fusion, fusion report API, and benchmark/release artifact gate wiring.",
+    "status": "completed",
+    "source": ""
+  },
+  {
+    "id": "2026-04-08-graph-completed-v0-1-21-graph-parity-deterministic-eager-fallback-hardening-integrated-graph-request-fallback-contract-ci-smoke-coverage",
+    "date": "2026-04-08",
+    "milestone": "M-B",
+    "area": "graph",
+    "title": "Completed v0.1.21 graph parity + deterministic eager fallback hardening (integrated graph-request fallback contract + CI smoke coverage).",
+    "status": "completed",
+    "source": ""
+  },
+  {
     "id": "2026-04-08-graph-completed-v0-1-20-graph-execution-foundation-pass-1-capability-aware-planner-grouping-and-fixed-host-dispatch-reduction-metrics-in-graph-eager-artifacts",
     "date": "2026-04-08",
     "milestone": "M-B",
@@ -16,6 +34,15 @@
     "title": "Completed v0.1.19 runtime contract freeze with strengthened tensor shape/layout/lifetime/alias regression tests and explicit CI hard gates.",
     "status": "completed",
     "source": "local"
+  },
+  {
+    "id": "2026-04-08-release-bumped-public-baseline-to-v0-1-22-and-aligned-readme-roadmap-pyproject-version-metadata",
+    "date": "2026-04-08",
+    "milestone": "M-A",
+    "area": "release",
+    "title": "Bumped public baseline to v0.1.22 and aligned README/ROADMAP/pyproject version metadata.",
+    "status": "completed",
+    "source": ""
   },
   {
     "id": "2026-04-08-release-bumped-public-baseline-to-v0-1-20-and-aligned-readme-roadmap-pyproject-version-metadata",

@@ -75,6 +75,20 @@ jobs:
             > benchmarks/reports/ci/engine_split_bench.log
           cat benchmarks/reports/ci/engine_split_bench.log
 
+      - name: Run fusion pilot benchmark (conv+relu v1)
+        run: |
+          python benchmarks/python/fusion_pilot_bench.py \
+            --device auto \
+            --warmup 6 \
+            --iters 24 \
+            --seed 20260408 \
+            --max-fused-over-unfused 1.15 \
+            --csv benchmarks/reports/ci/fusion_pilot.csv \
+            --json benchmarks/reports/ci/fusion_pilot.json \
+            --md benchmarks/reports/ci/fusion_pilot.md \
+            > benchmarks/reports/ci/fusion_pilot.log
+          cat benchmarks/reports/ci/fusion_pilot.log
+
       - name: Publish summary to workflow
         if: always()
         run: |
@@ -96,6 +110,12 @@ jobs:
             echo "- files: \`engine_split_pure_lc.csv\`, \`engine_split_interop.csv\`" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "engine split benchmark outputs not found." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f benchmarks/reports/ci/fusion_pilot.md ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            cat benchmarks/reports/ci/fusion_pilot.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "fusion_pilot summary not found." >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Upload benchmark artifacts
@@ -119,3 +139,7 @@ jobs:
             benchmarks/reports/ci/engine_split_interop.csv
             benchmarks/reports/ci/engine_split_interop.json
             benchmarks/reports/ci/engine_split_bench.log
+            benchmarks/reports/ci/fusion_pilot.csv
+            benchmarks/reports/ci/fusion_pilot.json
+            benchmarks/reports/ci/fusion_pilot.md
+            benchmarks/reports/ci/fusion_pilot.log

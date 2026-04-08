@@ -86,6 +86,49 @@ def main() -> None:
     )
     _require(np.asarray(out_lc_eager).dtype == np.float32, "lightning conv->attn eager dtype mismatch")
     _require(np.asarray(out_lc_graph_req).dtype == np.float32, "lightning conv->attn graph-request dtype mismatch")
+    _require(
+        np.allclose(np.asarray(out_lc_eager).reshape(-1), np.asarray(out_lc_graph_req).reshape(-1), atol=1e-4, rtol=1e-4),
+        "lightning backend graph-request should deterministically match eager path output",
+    )
+
+    # Deterministic eager fallback contract:
+    # graph mode only supports conv3x3 in graph path; conv5x5 should fallback to eager deterministically.
+    w5 = np.random.rand(16, 3, 5, 5).astype(np.float32)
+    out_lc_eager_5x5 = lc_api.lightning_conv_attention_torchstrong_nchw(
+        x,
+        w5,
+        bias,
+        seq=48,
+        head_dim=48,
+        stride_h=1,
+        stride_w=1,
+        pad_h=2,
+        pad_w=2,
+        device="metal",
+        execution_mode="eager",
+    )
+    out_lc_graph_req_5x5 = lc_api.lightning_conv_attention_torchstrong_nchw(
+        x,
+        w5,
+        bias,
+        seq=48,
+        head_dim=48,
+        stride_h=1,
+        stride_w=1,
+        pad_h=2,
+        pad_w=2,
+        device="metal",
+        execution_mode="graph",
+    )
+    _require(
+        np.allclose(
+            np.asarray(out_lc_eager_5x5).reshape(-1),
+            np.asarray(out_lc_graph_req_5x5).reshape(-1),
+            atol=1e-4,
+            rtol=1e-4,
+        ),
+        "graph-request conv5x5 path should deterministically fallback to eager output",
+    )
 
     # Hybrid engine policy smoke:
     # torch backend should execute conv->attn path without using lightning graph mode internals.

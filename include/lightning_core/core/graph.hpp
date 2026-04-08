@@ -37,7 +37,8 @@ enum class OpKind {
   kMatrixSub,
   kMatrixDiv,
   kAttentionForward,
-  kConv2dNchw3x3s1p1
+  kConv2dNchw3x3s1p1,
+  kRelu
 };
 
 inline const char* opKindName(OpKind kind) {
@@ -54,6 +55,8 @@ inline const char* opKindName(OpKind kind) {
       return "attention_forward";
     case OpKind::kConv2dNchw3x3s1p1:
       return "conv2d_nchw3x3s1p1";
+    case OpKind::kRelu:
+      return "relu";
     default:
       return "unknown";
   }
@@ -115,6 +118,8 @@ class OperatorRegistry {
         OpKind::kAttentionForward, "attention_forward", 3, 3, 1, 1, true, false, metal_supported});
     (void)registerSchema(OperatorSchema{
         OpKind::kConv2dNchw3x3s1p1, "conv2d_nchw3x3s1p1", 2, 3, 1, 1, false, false, metal_supported});
+    (void)registerSchema(OperatorSchema{
+        OpKind::kRelu, "relu", 1, 1, 1, 1, true, cuda_supported, metal_supported});
   }
 
   runtime::Status registerSchema(const OperatorSchema& schema) {
@@ -230,6 +235,7 @@ struct GraphPlannerOptions {
   bool group_by_backend_capability{true};
   bool separate_fallback_segments{true};
   bool insert_sync_on_device_change{true};
+  bool enable_fusion_v1{true};
 };
 
 struct GraphExecutionGroup {
@@ -239,6 +245,28 @@ struct GraphExecutionGroup {
   bool sync_boundary_before{false};
   bool sync_boundary_after{false};
   std::vector<std::size_t> node_ids;
+};
+
+enum class FusionPattern {
+  kConvReluV1 = 0
+};
+
+inline const char* fusionPatternName(FusionPattern pattern) {
+  switch (pattern) {
+    case FusionPattern::kConvReluV1:
+      return "conv_relu_v1";
+    default:
+      return "unknown";
+  }
+}
+
+struct GraphFusionDecision {
+  FusionPattern pattern{FusionPattern::kConvReluV1};
+  std::size_t start_node_id{0};
+  std::size_t end_node_id{0};
+  runtime::Device assigned_device{runtime::Device::kCPU};
+  bool fused{false};
+  std::string reason;
 };
 
 inline runtime::Status validateTensorSpec(const TensorSpec& spec) {
@@ -600,6 +628,97 @@ class GraphIR {
     return executeTyped<double>(options, feeds, out_values, out_groups, out_steps);
   }
 
+  runtime::Status fusionReport(
+      const GraphPlannerOptions& options,
+      std::vector<GraphFusionDecision>* out_decisions) const {
+    if (out_decisions == nullptr) {
+      return runtime::Status::kInvalidValue;
+    }
+    std::vector<GraphExecutionGroup> groups;
+    std::vector<GraphPlanStep> steps;
+    runtime::Status st = planExecutionGroups(options, &groups, &steps);
+    if (st != runtime::Status::kSuccess) {
+      return st;
+    }
+
+    out_decisions->clear();
+    std::unordered_map<std::size_t, runtime::Device> step_device;
+    step_device.reserve(steps.size());
+    for (const auto& step : steps) {
+      step_device[step.node_id] = step.assigned_device;
+    }
+    std::unordered_map<std::size_t, std::size_t> node_group;
+    node_group.reserve(nodes_.size());
+    for (std::size_t gi = 0; gi < groups.size(); ++gi) {
+      for (std::size_t node_id : groups[gi].node_ids) {
+        node_group[node_id] = gi;
+      }
+    }
+    const std::vector<std::size_t> consumer_counts = buildTensorConsumerCounts();
+
+    for (std::size_t i = 0; i < nodes_.size(); ++i) {
+      const GraphNode& node = nodes_[i];
+      if (node.op != OpKind::kConv2dNchw3x3s1p1) {
+        continue;
+      }
+
+      GraphFusionDecision decision;
+      decision.pattern = FusionPattern::kConvReluV1;
+      decision.start_node_id = node.id;
+      decision.end_node_id = node.id;
+      auto step_it = step_device.find(node.id);
+      decision.assigned_device = (step_it != step_device.end()) ? step_it->second : runtime::Device::kCPU;
+
+      if (i + 1 >= nodes_.size()) {
+        decision.reason = "next_op_missing";
+        out_decisions->push_back(std::move(decision));
+        continue;
+      }
+
+      const GraphNode& next = nodes_[i + 1];
+      decision.end_node_id = next.id;
+      if (next.op != OpKind::kRelu) {
+        decision.reason = "next_op_not_relu";
+        out_decisions->push_back(std::move(decision));
+        continue;
+      }
+
+      std::string eligibility_reason;
+      if (!canFuseConvReluPair(node, next, consumer_counts, &eligibility_reason)) {
+        decision.reason = eligibility_reason;
+        out_decisions->push_back(std::move(decision));
+        continue;
+      }
+
+      const auto g0_it = node_group.find(node.id);
+      const auto g1_it = node_group.find(next.id);
+      if (g0_it == node_group.end() || g1_it == node_group.end() || g0_it->second != g1_it->second) {
+        decision.reason = "planner_group_boundary";
+        out_decisions->push_back(std::move(decision));
+        continue;
+      }
+
+      const auto d1_it = step_device.find(next.id);
+      const runtime::Device next_device = (d1_it != step_device.end()) ? d1_it->second : decision.assigned_device;
+      if (next_device != decision.assigned_device) {
+        decision.reason = "device_boundary";
+        out_decisions->push_back(std::move(decision));
+        continue;
+      }
+
+      if (!options.enable_fusion_v1) {
+        decision.reason = "fusion_disabled";
+        out_decisions->push_back(std::move(decision));
+        continue;
+      }
+
+      decision.fused = true;
+      decision.reason = "fused_conv_relu_v1";
+      out_decisions->push_back(std::move(decision));
+    }
+    return runtime::Status::kSuccess;
+  }
+
   const std::vector<GraphTensorValue>& tensors() const {
     return tensors_;
   }
@@ -617,6 +736,82 @@ class GraphIR {
   }
 
  private:
+  std::vector<std::size_t> buildTensorConsumerCounts() const {
+    std::vector<std::size_t> counts(tensors_.size(), 0);
+    for (const auto& node : nodes_) {
+      for (std::size_t input_id : node.inputs) {
+        if (input_id < counts.size()) {
+          counts[input_id] += 1;
+        }
+      }
+    }
+    return counts;
+  }
+
+  bool canFuseConvReluPair(const GraphNode& conv_node,
+                           const GraphNode& relu_node,
+                           const std::vector<std::size_t>& consumer_counts,
+                           std::string* out_reason) const {
+    auto set_reason = [&](const char* reason) {
+      if (out_reason != nullptr) {
+        *out_reason = reason;
+      }
+    };
+
+    if (conv_node.op != OpKind::kConv2dNchw3x3s1p1) {
+      set_reason("conv_pattern_mismatch");
+      return false;
+    }
+    if (relu_node.op != OpKind::kRelu) {
+      set_reason("next_op_not_relu");
+      return false;
+    }
+    if (conv_node.id + 1 != relu_node.id) {
+      set_reason("non_adjacent_node");
+      return false;
+    }
+    if (conv_node.inputs.size() != 2 && conv_node.inputs.size() != 3) {
+      set_reason("conv_arity_mismatch");
+      return false;
+    }
+    if (conv_node.outputs.size() != 1 || relu_node.inputs.size() != 1 || relu_node.outputs.size() != 1) {
+      set_reason("relu_arity_mismatch");
+      return false;
+    }
+    const std::size_t conv_out_id = conv_node.outputs[0];
+    if (conv_out_id >= tensors_.size()) {
+      set_reason("intermediate_out_of_range");
+      return false;
+    }
+    if (relu_node.inputs[0] != conv_out_id) {
+      set_reason("intermediate_tensor_mismatch");
+      return false;
+    }
+    if (conv_out_id >= consumer_counts.size() || consumer_counts[conv_out_id] != 1) {
+      set_reason("intermediate_multi_consumer");
+      return false;
+    }
+    const std::size_t relu_out_id = relu_node.outputs[0];
+    if (relu_out_id >= tensors_.size()) {
+      set_reason("relu_output_out_of_range");
+      return false;
+    }
+    const GraphTensorValue& conv_mid_tensor = tensors_[conv_out_id];
+    const GraphTensorValue& relu_out_tensor = tensors_[relu_out_id];
+    if (conv_mid_tensor.spec.dtype != relu_out_tensor.spec.dtype ||
+        conv_mid_tensor.spec.layout != relu_out_tensor.spec.layout ||
+        conv_mid_tensor.spec.shape != relu_out_tensor.spec.shape) {
+      set_reason("relu_output_spec_mismatch");
+      return false;
+    }
+    if (!relu_node.control_deps.empty()) {
+      set_reason("relu_control_dependency_present");
+      return false;
+    }
+    set_reason("eligible");
+    return true;
+  }
+
   static runtime::Status chooseDeviceForSchema(
       const OperatorSchema& schema,
       runtime::Device preferred_device,
@@ -976,9 +1171,158 @@ class GraphIR {
         }
         return set_output(out_id, std::move(out));
       }
+      case OpKind::kRelu: {
+        if (node.inputs.size() != 1) {
+          return runtime::Status::kInvalidValue;
+        }
+        const std::size_t in_id = node.inputs[0];
+        const GraphTensorValue& in_tensor = tensors_[in_id];
+        const std::vector<T>* in = get_value(in_id);
+        if (in == nullptr) {
+          return runtime::Status::kInvalidValue;
+        }
+        const std::size_t in_numel = detail::numelFromShapeContract(in_tensor.spec.shape);
+        const std::size_t out_numel = detail::numelFromShapeContract(out_tensor.spec.shape);
+        if (in_numel == 0 ||
+            in_numel != out_numel ||
+            in_tensor.spec.shape != out_tensor.spec.shape ||
+            in_tensor.spec.layout != out_tensor.spec.layout) {
+          return runtime::Status::kInvalidValue;
+        }
+        std::vector<T> out(out_numel, static_cast<T>(0));
+        for (std::size_t i = 0; i < out_numel; ++i) {
+          const T v = (*in)[i];
+          out[i] = (v < static_cast<T>(0)) ? static_cast<T>(0) : v;
+        }
+        return set_output(out_id, std::move(out));
+      }
       default:
         return runtime::Status::kNotSupported;
     }
+  }
+
+  template <typename T>
+  runtime::Status executeConvReluFusedNodeTyped(
+      const GraphNode& conv_node,
+      const GraphNode& relu_node,
+      runtime::Device assigned_device,
+      const std::vector<std::size_t>& consumer_counts,
+      std::unordered_map<std::size_t, std::vector<T>>* values) const {
+    if (values == nullptr) {
+      return runtime::Status::kInvalidValue;
+    }
+    std::string fuse_reason;
+    if (!canFuseConvReluPair(conv_node, relu_node, consumer_counts, &fuse_reason)) {
+      return runtime::Status::kInvalidValue;
+    }
+
+    auto get_value = [&](std::size_t tensor_id) -> const std::vector<T>* {
+      auto it = values->find(tensor_id);
+      if (it == values->end()) {
+        return nullptr;
+      }
+      return &it->second;
+    };
+
+    const std::size_t x_id = conv_node.inputs[0];
+    const std::size_t w_id = conv_node.inputs[1];
+    const std::size_t bias_id = (conv_node.inputs.size() == 3) ? conv_node.inputs[2] : static_cast<std::size_t>(-1);
+    const std::size_t conv_out_id = conv_node.outputs[0];
+    const std::size_t relu_out_id = relu_node.outputs[0];
+
+    if (x_id >= tensors_.size() ||
+        w_id >= tensors_.size() ||
+        conv_out_id >= tensors_.size() ||
+        relu_out_id >= tensors_.size()) {
+      return runtime::Status::kInvalidValue;
+    }
+    if (bias_id != static_cast<std::size_t>(-1) && bias_id >= tensors_.size()) {
+      return runtime::Status::kInvalidValue;
+    }
+
+    const GraphTensorValue& x_tensor = tensors_[x_id];
+    const GraphTensorValue& w_tensor = tensors_[w_id];
+    const GraphTensorValue& conv_mid_tensor = tensors_[conv_out_id];
+    const GraphTensorValue& out_tensor = tensors_[relu_out_id];
+
+    const std::vector<T>* x = get_value(x_id);
+    const std::vector<T>* w = get_value(w_id);
+    if (x == nullptr || w == nullptr) {
+      return runtime::Status::kInvalidValue;
+    }
+    const std::vector<T>* bias = nullptr;
+    const GraphTensorValue* bias_tensor = nullptr;
+    if (bias_id != static_cast<std::size_t>(-1)) {
+      bias_tensor = &tensors_[bias_id];
+      bias = get_value(bias_id);
+      if (bias == nullptr) {
+        return runtime::Status::kInvalidValue;
+      }
+    }
+
+    if (x_tensor.spec.shape.size() != 4 ||
+        w_tensor.spec.shape.size() != 4 ||
+        conv_mid_tensor.spec.shape.size() != 4 ||
+        out_tensor.spec.shape.size() != 4) {
+      return runtime::Status::kInvalidValue;
+    }
+    if (conv_mid_tensor.spec.shape != out_tensor.spec.shape) {
+      return runtime::Status::kInvalidValue;
+    }
+
+    const std::size_t batch = static_cast<std::size_t>(x_tensor.spec.shape[0]);
+    const std::size_t in_channels = static_cast<std::size_t>(x_tensor.spec.shape[1]);
+    const std::size_t in_h = static_cast<std::size_t>(x_tensor.spec.shape[2]);
+    const std::size_t in_w = static_cast<std::size_t>(x_tensor.spec.shape[3]);
+    const std::size_t out_channels = static_cast<std::size_t>(w_tensor.spec.shape[0]);
+    const std::size_t w_in_channels = static_cast<std::size_t>(w_tensor.spec.shape[1]);
+    const std::size_t kernel_h = static_cast<std::size_t>(w_tensor.spec.shape[2]);
+    const std::size_t kernel_w = static_cast<std::size_t>(w_tensor.spec.shape[3]);
+    if (kernel_h != 3 || kernel_w != 3 || in_channels != w_in_channels) {
+      return runtime::Status::kInvalidValue;
+    }
+    if (out_tensor.spec.shape[0] != static_cast<std::int64_t>(batch) ||
+        out_tensor.spec.shape[1] != static_cast<std::int64_t>(out_channels) ||
+        out_tensor.spec.shape[2] != static_cast<std::int64_t>(in_h) ||
+        out_tensor.spec.shape[3] != static_cast<std::int64_t>(in_w)) {
+      return runtime::Status::kInvalidValue;
+    }
+
+    const T* bias_ptr = nullptr;
+    if (bias != nullptr) {
+      if (bias_tensor->spec.shape.size() != 1 ||
+          bias_tensor->spec.shape[0] != static_cast<std::int64_t>(out_channels)) {
+        return runtime::Status::kInvalidValue;
+      }
+      bias_ptr = bias->data();
+    }
+
+    std::vector<T> out(detail::numelFromShapeContract(out_tensor.spec.shape), static_cast<T>(0));
+    runtime::Status st = ops::conv2dNchw<T>(
+        x->data(),
+        w->data(),
+        bias_ptr,
+        out.data(),
+        batch,
+        in_channels,
+        in_h,
+        in_w,
+        out_channels,
+        /*kernel_h=*/3,
+        /*kernel_w=*/3,
+        /*stride_h=*/1,
+        /*stride_w=*/1,
+        /*pad_h=*/1,
+        /*pad_w=*/1,
+        assigned_device,
+        /*apply_relu=*/true);
+    if (st != runtime::Status::kSuccess) {
+      return st;
+    }
+
+    values->insert_or_assign(relu_out_id, out);
+    values->insert_or_assign(conv_out_id, std::move(out));
+    return runtime::Status::kSuccess;
   }
 
   template <typename T>
@@ -1007,6 +1351,7 @@ class GraphIR {
 
     std::unordered_set<std::size_t> visited_nodes;
     visited_nodes.reserve(nodes_.size());
+    const std::vector<std::size_t> consumer_counts = buildTensorConsumerCounts();
 
     for (const auto& group : groups) {
       if (group.sync_boundary_before) {
@@ -1016,17 +1361,44 @@ class GraphIR {
         }
       }
 
-      for (std::size_t node_id : group.node_ids) {
+      for (std::size_t gi = 0; gi < group.node_ids.size(); ++gi) {
+        const std::size_t node_id = group.node_ids[gi];
         if (node_id >= nodes_.size()) {
           return runtime::Status::kInvalidValue;
         }
-        if (!visited_nodes.insert(node_id).second) {
+        if (visited_nodes.find(node_id) != visited_nodes.end()) {
           return runtime::Status::kInvalidValue;
         }
-        st = executeNodeTyped<T>(nodes_[node_id], group.assigned_device, &values);
+        const GraphNode& node = nodes_[node_id];
+        if (options.enable_fusion_v1 &&
+            node.op == OpKind::kConv2dNchw3x3s1p1 &&
+            gi + 1 < group.node_ids.size()) {
+          const std::size_t next_node_id = group.node_ids[gi + 1];
+          if (next_node_id < nodes_.size()) {
+            const GraphNode& next_node = nodes_[next_node_id];
+            std::string fuse_reason;
+            if (canFuseConvReluPair(node, next_node, consumer_counts, &fuse_reason)) {
+              if (visited_nodes.find(next_node_id) != visited_nodes.end()) {
+                return runtime::Status::kInvalidValue;
+              }
+              st = executeConvReluFusedNodeTyped<T>(
+                  node, next_node, group.assigned_device, consumer_counts, &values);
+              if (st != runtime::Status::kSuccess) {
+                return st;
+              }
+              visited_nodes.insert(node_id);
+              visited_nodes.insert(next_node_id);
+              gi += 1;
+              continue;
+            }
+          }
+        }
+
+        st = executeNodeTyped<T>(node, group.assigned_device, &values);
         if (st != runtime::Status::kSuccess) {
           return st;
         }
+        visited_nodes.insert(node_id);
       }
 
       if (group.sync_boundary_after) {
