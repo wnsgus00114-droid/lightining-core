@@ -55,6 +55,15 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 45
     env:
+      LC_PHASE_B_CONTRACT_JSON: docs/phase_b_graph_contract.json
+      LC_GRAPH_AB_WARMUP: "4"
+      LC_GRAPH_AB_ITERS: "12"
+      LC_GRAPH_AB_TRACE_ITERS: "6"
+      LC_GRAPH_AB_FUSION_COST_MIN_SPEEDUP: "1.01"
+      LC_GRAPH_AB_MIN_HOST_DISPATCH_REDUCTION_RATE_PCT: "25.0"
+      LC_FUSION_MAX_CONV: "1.15"
+      LC_FUSION_MAX_MATMUL: "1.90"
+      LC_FUSION_MAX_ATTENTION: "2.20"
       QB_DEVICE: cpu
       QB_WARMUP: "10"
       QB_ITERS: "40"
@@ -83,6 +92,11 @@ jobs:
           python -m pip install numpy
           python -m pip install -e .
 
+      - name: Verify Phase B contract sync
+        run: |
+          python scripts/generate_phase_b_contract_docs.py --check
+          python scripts/check_phase_b_contract_sync.py
+
       - name: Prepare release benchmark evidence directory
         run: |
           REPORT_DIR="benchmarks/reports/releases/${GITHUB_REF_NAME}"
@@ -93,9 +107,9 @@ jobs:
           python benchmarks/python/quick_bench.py --device ${QB_DEVICE} --warmup ${QB_WARMUP} --iters ${QB_ITERS} --seed ${QB_SEED} --out ${REPORT_DIR}/quick_bench.csv
           python benchmarks/python/quick_bench_ci_summary.py --input ${REPORT_DIR}/quick_bench.csv --json ${REPORT_DIR}/quick_bench_summary.json --md ${REPORT_DIR}/quick_bench_summary.md --regress-threshold 1.0
           python benchmarks/python/quick_bench_variance_gate.py --runs-csv ${REPORT_DIR}/quick_bench_variance_runs.csv --json ${REPORT_DIR}/quick_bench_variance_summary.json --md ${REPORT_DIR}/quick_bench_variance_summary.md --repeats ${QB_VAR_REPEATS} --variance-threshold-pct ${QB_VAR_THRESHOLD_PCT} --device ${QB_DEVICE} --warmup ${QB_VAR_WARMUP} --iters ${QB_VAR_ITERS} --seed ${QB_SEED} --trim-runs ${QB_VAR_TRIM_RUNS}
-          python benchmarks/python/graph_eager_ab_bench.py --device auto --warmup 4 --iters 12 --trace-iters ${QB_TRACE_ITERS} --seed ${QB_SEED} --fusion-cost-min-speedup 1.01 --require-host-dispatch-reduction --min-host-dispatch-reduction-rate-pct 10.0 --csv ${REPORT_DIR}/graph_eager_ab.csv --json ${REPORT_DIR}/graph_eager_ab.json --md ${REPORT_DIR}/graph_eager_ab.md
+          python benchmarks/python/graph_eager_ab_bench.py --device auto --warmup ${LC_GRAPH_AB_WARMUP} --iters ${LC_GRAPH_AB_ITERS} --trace-iters ${LC_GRAPH_AB_TRACE_ITERS} --seed ${QB_SEED} --fusion-cost-min-speedup ${LC_GRAPH_AB_FUSION_COST_MIN_SPEEDUP} --require-host-dispatch-reduction --min-host-dispatch-reduction-rate-pct ${LC_GRAPH_AB_MIN_HOST_DISPATCH_REDUCTION_RATE_PCT} --csv ${REPORT_DIR}/graph_eager_ab.csv --json ${REPORT_DIR}/graph_eager_ab.json --md ${REPORT_DIR}/graph_eager_ab.md
           python benchmarks/python/engine_split_bench.py --device auto --warmup ${QB_WARMUP} --iters ${QB_ITERS} --trace-iters ${QB_TRACE_ITERS} --seed ${QB_SEED} --require-shared-bench-coverage --out-dir ${REPORT_DIR} --pure-csv engine_split_pure_lc.csv --pure-json engine_split_pure_lc.json --interop-csv engine_split_interop.csv --interop-json engine_split_interop.json
-          python benchmarks/python/fusion_pilot_bench.py --device auto --warmup 6 --iters 24 --seed 20260408 --cost-model-min-speedup 1.01 --max-fused-over-unfused-conv 1.15 --max-fused-over-unfused-matmul 1.90 --max-fused-over-unfused-attention 2.20 --csv ${REPORT_DIR}/fusion_pilot.csv --json ${REPORT_DIR}/fusion_pilot.json --md ${REPORT_DIR}/fusion_pilot.md
+          python benchmarks/python/fusion_pilot_bench.py --device auto --warmup 6 --iters 24 --seed 20260408 --cost-model-min-speedup ${LC_GRAPH_AB_FUSION_COST_MIN_SPEEDUP} --max-fused-over-unfused-conv ${LC_FUSION_MAX_CONV} --max-fused-over-unfused-matmul ${LC_FUSION_MAX_MATMUL} --max-fused-over-unfused-attention ${LC_FUSION_MAX_ATTENTION} --csv ${REPORT_DIR}/fusion_pilot.csv --json ${REPORT_DIR}/fusion_pilot.json --md ${REPORT_DIR}/fusion_pilot.md
           CMD
 
       - name: Capture release benchmark environment
@@ -213,13 +227,13 @@ jobs:
         run: |
           python benchmarks/python/graph_eager_ab_bench.py \
             --device auto \
-            --warmup 4 \
-            --iters 12 \
-            --trace-iters "$QB_TRACE_ITERS" \
+            --warmup "$LC_GRAPH_AB_WARMUP" \
+            --iters "$LC_GRAPH_AB_ITERS" \
+            --trace-iters "$LC_GRAPH_AB_TRACE_ITERS" \
             --seed "$QB_SEED" \
-            --fusion-cost-min-speedup 1.01 \
+            --fusion-cost-min-speedup "$LC_GRAPH_AB_FUSION_COST_MIN_SPEEDUP" \
             --require-host-dispatch-reduction \
-            --min-host-dispatch-reduction-rate-pct 10.0 \
+            --min-host-dispatch-reduction-rate-pct "$LC_GRAPH_AB_MIN_HOST_DISPATCH_REDUCTION_RATE_PCT" \
             --csv "$REPORT_DIR/graph_eager_ab.csv" \
             --json "$REPORT_DIR/graph_eager_ab.json" \
             --md "$REPORT_DIR/graph_eager_ab.md" \
@@ -233,10 +247,10 @@ jobs:
             --warmup 6 \
             --iters 24 \
             --seed 20260408 \
-            --cost-model-min-speedup 1.01 \
-            --max-fused-over-unfused-conv 1.15 \
-            --max-fused-over-unfused-matmul 1.90 \
-            --max-fused-over-unfused-attention 2.20 \
+            --cost-model-min-speedup "$LC_GRAPH_AB_FUSION_COST_MIN_SPEEDUP" \
+            --max-fused-over-unfused-conv "$LC_FUSION_MAX_CONV" \
+            --max-fused-over-unfused-matmul "$LC_FUSION_MAX_MATMUL" \
+            --max-fused-over-unfused-attention "$LC_FUSION_MAX_ATTENTION" \
             --csv "$REPORT_DIR/fusion_pilot.csv" \
             --json "$REPORT_DIR/fusion_pilot.json" \
             --md "$REPORT_DIR/fusion_pilot.md" \

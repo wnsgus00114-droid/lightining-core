@@ -178,14 +178,14 @@ lc::graph::GraphPlannerOptions defaultGraphPlannerOptions(lc::Device preferred_d
 
 const char* validationHintForPass(lc::graph::ValidationPass pass) {
   switch (pass) {
-    case lc::graph::ValidationPass::kTensorSpec:
-      return "check tensor shape/dtype/layout for the graph tensors";
-    case lc::graph::ValidationPass::kSchemaArity:
-      return "check operator input/output counts for the node schema";
-    case lc::graph::ValidationPass::kTensorReference:
-      return "check node tensor ids and feed dictionary coverage";
-    case lc::graph::ValidationPass::kControlDependency:
-      return "check control deps reference only prior node ids";
+    case lc::graph::ValidationPass::kSchemaContract:
+      return "check operator schema contract (arity/rank/dtype/layout/attributes)";
+    case lc::graph::ValidationPass::kTopology:
+      return "check node/tensor references and control dependency ordering";
+    case lc::graph::ValidationPass::kAliasLifetime:
+      return "check aliasing/lifetime hazards across node inputs/outputs";
+    case lc::graph::ValidationPass::kLayoutFlow:
+      return "check tensor layout and contiguous-flow requirements";
     case lc::graph::ValidationPass::kBackendCapability:
       return "operator is unavailable on current backend; try device='cpu' or execution_mode='eager'";
     default:

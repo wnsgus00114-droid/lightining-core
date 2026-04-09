@@ -82,6 +82,16 @@ py::dict toSchemaDict(const lc::graph::OperatorSchema& schema) {
   out["supports_cpu"] = schema.supports_cpu;
   out["supports_cuda"] = schema.supports_cuda;
   out["supports_metal"] = schema.supports_metal;
+  out["input_ranks"] = schema.input_ranks;
+  out["output_ranks"] = schema.output_ranks;
+  out["allow_float32"] = schema.allow_float32;
+  out["allow_float64"] = schema.allow_float64;
+  out["require_contiguous_layout"] = schema.require_contiguous_layout;
+  py::list attrs;
+  for (const auto& key : schema.allowed_attributes) {
+    attrs.append(py::str(key));
+  }
+  out["allowed_attributes"] = attrs;
   return out;
 }
 
@@ -103,6 +113,11 @@ py::dict toNodeDict(const lc::graph::GraphNode& node) {
   out["inputs"] = node.inputs;
   out["outputs"] = node.outputs;
   out["control_deps"] = node.control_deps;
+  py::dict attrs;
+  for (const auto& kv : node.attributes) {
+    attrs[py::str(kv.first)] = py::int_(kv.second);
+  }
+  out["attributes"] = attrs;
   return out;
 }
 
@@ -112,6 +127,7 @@ py::dict toValidationIssueDict(const lc::graph::ValidationIssue& issue) {
   out["status"] = lc::runtime::getErrorString(issue.status);
   out["node_id"] = issue.node_id;
   out["tensor_id"] = issue.tensor_id;
+  out["reason_code"] = lc::graph::reasonCodeName(issue.reason);
   out["message"] = issue.message;
   return out;
 }
@@ -124,6 +140,8 @@ py::list toPlanStepsList(const std::vector<lc::graph::GraphPlanStep>& steps) {
     row["op"] = toOpString(step.op);
     row["assigned_device"] = toString(step.assigned_device);
     row["fallback"] = step.fallback;
+    row["fallback_reason_code"] = step.fallback_reason_code;
+    row["fallback_reason"] = step.fallback_reason;
     out.append(row);
   }
   return out;
@@ -136,6 +154,8 @@ py::list toExecutionGroupsList(const std::vector<lc::graph::GraphExecutionGroup>
     row["group_id"] = group.group_id;
     row["assigned_device"] = toString(group.assigned_device);
     row["fallback"] = group.fallback;
+    row["fallback_reason_code"] = group.fallback_reason_code;
+    row["fallback_reason"] = group.fallback_reason;
     row["sync_boundary_before"] = group.sync_boundary_before;
     row["sync_boundary_after"] = group.sync_boundary_after;
     row["node_ids"] = group.node_ids;
@@ -160,6 +180,11 @@ py::dict toPlanSummaryDict(const lc::graph::GraphPlanSummary& summary) {
   out["cpu_groups"] = summary.cpu_groups;
   out["cuda_groups"] = summary.cuda_groups;
   out["metal_groups"] = summary.metal_groups;
+  out["plan_cache_enabled"] = summary.plan_cache_enabled;
+  out["plan_cache_hit"] = summary.plan_cache_hit;
+  out["plan_cache_hits_total"] = summary.plan_cache_hits_total;
+  out["plan_cache_misses_total"] = summary.plan_cache_misses_total;
+  out["plan_cache_hit_rate_pct"] = summary.plan_cache_hit_rate_pct;
   return out;
 }
 
@@ -191,6 +216,7 @@ lc::graph::GraphPlannerOptions parseGraphPlannerOptions(
     bool insert_sync_on_device_change,
     bool enable_fusion_v1,
     bool enable_fusion_cost_model_v1,
+    bool enable_plan_cache,
     double fusion_cost_min_speedup) {
   lc::graph::GraphPlannerOptions options;
   options.preferred_device = parseDevice(preferred_device);
@@ -201,6 +227,7 @@ lc::graph::GraphPlannerOptions parseGraphPlannerOptions(
   options.insert_sync_on_device_change = insert_sync_on_device_change;
   options.enable_fusion_v1 = enable_fusion_v1;
   options.enable_fusion_cost_model_v1 = enable_fusion_cost_model_v1;
+  options.enable_plan_cache = enable_plan_cache;
   options.fusion_cost_min_speedup = fusion_cost_min_speedup;
   return options;
 }
@@ -232,10 +259,10 @@ py::dict toValueDict(const std::unordered_map<std::size_t, std::vector<T>>& valu
 void bindGraph(py::module_& m) {
   m.def("graph_validation_passes", [] {
     py::list out;
-    out.append(lc::graph::validationPassName(lc::graph::ValidationPass::kTensorSpec));
-    out.append(lc::graph::validationPassName(lc::graph::ValidationPass::kSchemaArity));
-    out.append(lc::graph::validationPassName(lc::graph::ValidationPass::kTensorReference));
-    out.append(lc::graph::validationPassName(lc::graph::ValidationPass::kControlDependency));
+    out.append(lc::graph::validationPassName(lc::graph::ValidationPass::kSchemaContract));
+    out.append(lc::graph::validationPassName(lc::graph::ValidationPass::kTopology));
+    out.append(lc::graph::validationPassName(lc::graph::ValidationPass::kAliasLifetime));
+    out.append(lc::graph::validationPassName(lc::graph::ValidationPass::kLayoutFlow));
     out.append(lc::graph::validationPassName(lc::graph::ValidationPass::kBackendCapability));
     return out;
   });
@@ -289,14 +316,21 @@ void bindGraph(py::module_& m) {
               const std::vector<std::size_t>& inputs,
               const std::vector<std::size_t>& outputs,
               const std::vector<std::size_t>& control_deps,
-              const std::string& name) {
-             throwIfNotSuccess(g.addNode(parseOpKind(op), inputs, outputs, control_deps, name));
+              const std::string& name,
+              const py::dict& attributes) {
+             std::unordered_map<std::string, std::int64_t> attrs;
+             attrs.reserve(attributes.size());
+             for (const auto& item : attributes) {
+               attrs.emplace(py::cast<std::string>(item.first), py::cast<std::int64_t>(item.second));
+             }
+             throwIfNotSuccess(g.addNode(parseOpKind(op), inputs, outputs, control_deps, name, attrs));
            },
            py::arg("op"),
            py::arg("inputs"),
            py::arg("outputs"),
            py::arg("control_deps") = std::vector<std::size_t>{},
-           py::arg("name") = "")
+           py::arg("name") = "",
+           py::arg("attributes") = py::dict{})
       .def("validate", [](const lc::graph::GraphIR& g) { throwIfNotSuccess(g.validate()); })
       .def("validate_report", [](const lc::graph::GraphIR& g) {
         lc::graph::ValidationReport report;
@@ -313,6 +347,15 @@ void bindGraph(py::module_& m) {
       })
       .def("num_tensors", &lc::graph::GraphIR::numTensors)
       .def("num_nodes", &lc::graph::GraphIR::numNodes)
+      .def("clear_plan_cache", &lc::graph::GraphIR::clearPlanCache)
+      .def("plan_cache_stats", [](const lc::graph::GraphIR& g) {
+        const auto stats = g.planCacheStats();
+        py::dict out;
+        out["hits"] = stats.hits;
+        out["misses"] = stats.misses;
+        out["hit_rate_pct"] = stats.hit_rate_pct;
+        return out;
+      })
       .def("tensors", [](const lc::graph::GraphIR& g) {
         py::list out;
         for (const auto& t : g.tensors()) {
@@ -338,6 +381,8 @@ void bindGraph(py::module_& m) {
                row["op"] = toOpString(step.op);
                row["assigned_device"] = toString(step.assigned_device);
                row["fallback"] = step.fallback;
+               row["fallback_reason_code"] = step.fallback_reason_code;
+               row["fallback_reason"] = step.fallback_reason;
                out.append(row);
              }
              return out;
@@ -353,6 +398,7 @@ void bindGraph(py::module_& m) {
               bool insert_sync_on_device_change,
               bool enable_fusion_v1,
               bool enable_fusion_cost_model_v1,
+              bool enable_plan_cache,
               double fusion_cost_min_speedup) {
              const lc::graph::GraphPlannerOptions options = parseGraphPlannerOptions(
                  preferred_device,
@@ -363,6 +409,7 @@ void bindGraph(py::module_& m) {
                  insert_sync_on_device_change,
                  enable_fusion_v1,
                  enable_fusion_cost_model_v1,
+                 enable_plan_cache,
                  fusion_cost_min_speedup);
 
              std::vector<lc::graph::GraphExecutionGroup> groups;
@@ -385,6 +432,7 @@ void bindGraph(py::module_& m) {
            py::arg("insert_sync_on_device_change") = true,
            py::arg("enable_fusion_v1") = true,
            py::arg("enable_fusion_cost_model_v1") = true,
+           py::arg("enable_plan_cache") = true,
            py::arg("fusion_cost_min_speedup") = 1.01)
       .def("plan_summary",
            [](const lc::graph::GraphIR& g,
@@ -396,6 +444,7 @@ void bindGraph(py::module_& m) {
               bool insert_sync_on_device_change,
               bool enable_fusion_v1,
               bool enable_fusion_cost_model_v1,
+              bool enable_plan_cache,
               double fusion_cost_min_speedup) {
              const lc::graph::GraphPlannerOptions options = parseGraphPlannerOptions(
                  preferred_device,
@@ -406,6 +455,7 @@ void bindGraph(py::module_& m) {
                  insert_sync_on_device_change,
                  enable_fusion_v1,
                  enable_fusion_cost_model_v1,
+                 enable_plan_cache,
                  fusion_cost_min_speedup);
              lc::graph::GraphPlanSummary summary{};
              std::vector<lc::graph::GraphExecutionGroup> groups;
@@ -425,6 +475,7 @@ void bindGraph(py::module_& m) {
            py::arg("insert_sync_on_device_change") = true,
            py::arg("enable_fusion_v1") = true,
            py::arg("enable_fusion_cost_model_v1") = true,
+           py::arg("enable_plan_cache") = true,
            py::arg("fusion_cost_min_speedup") = 1.01)
       .def("fusion_report",
            [](const lc::graph::GraphIR& g,
@@ -436,6 +487,7 @@ void bindGraph(py::module_& m) {
               bool insert_sync_on_device_change,
               bool enable_fusion_v1,
               bool enable_fusion_cost_model_v1,
+              bool enable_plan_cache,
               double fusion_cost_min_speedup) {
              const lc::graph::GraphPlannerOptions options = parseGraphPlannerOptions(
                  preferred_device,
@@ -446,6 +498,7 @@ void bindGraph(py::module_& m) {
                  insert_sync_on_device_change,
                  enable_fusion_v1,
                  enable_fusion_cost_model_v1,
+                 enable_plan_cache,
                  fusion_cost_min_speedup);
              std::vector<lc::graph::GraphFusionDecision> decisions;
              throwIfNotSuccess(g.fusionReport(options, &decisions));
@@ -459,6 +512,7 @@ void bindGraph(py::module_& m) {
            py::arg("insert_sync_on_device_change") = true,
            py::arg("enable_fusion_v1") = true,
            py::arg("enable_fusion_cost_model_v1") = true,
+           py::arg("enable_plan_cache") = true,
            py::arg("fusion_cost_min_speedup") = 1.01)
       .def("execute_f32",
            [](const lc::graph::GraphIR& g,
@@ -471,6 +525,7 @@ void bindGraph(py::module_& m) {
               bool insert_sync_on_device_change,
               bool enable_fusion_v1,
               bool enable_fusion_cost_model_v1,
+              bool enable_plan_cache,
               double fusion_cost_min_speedup) {
              const lc::graph::GraphPlannerOptions options = parseGraphPlannerOptions(
                  preferred_device,
@@ -481,6 +536,7 @@ void bindGraph(py::module_& m) {
                  insert_sync_on_device_change,
                  enable_fusion_v1,
                  enable_fusion_cost_model_v1,
+                 enable_plan_cache,
                  fusion_cost_min_speedup);
              std::unordered_map<std::size_t, std::vector<float>> values;
              std::vector<lc::graph::GraphExecutionGroup> groups;
@@ -506,6 +562,7 @@ void bindGraph(py::module_& m) {
            py::arg("insert_sync_on_device_change") = true,
            py::arg("enable_fusion_v1") = true,
            py::arg("enable_fusion_cost_model_v1") = true,
+           py::arg("enable_plan_cache") = true,
            py::arg("fusion_cost_min_speedup") = 1.01)
       .def("execute_f64",
            [](const lc::graph::GraphIR& g,
@@ -518,6 +575,7 @@ void bindGraph(py::module_& m) {
               bool insert_sync_on_device_change,
               bool enable_fusion_v1,
               bool enable_fusion_cost_model_v1,
+              bool enable_plan_cache,
               double fusion_cost_min_speedup) {
              const lc::graph::GraphPlannerOptions options = parseGraphPlannerOptions(
                  preferred_device,
@@ -528,6 +586,7 @@ void bindGraph(py::module_& m) {
                  insert_sync_on_device_change,
                  enable_fusion_v1,
                  enable_fusion_cost_model_v1,
+                 enable_plan_cache,
                  fusion_cost_min_speedup);
              std::unordered_map<std::size_t, std::vector<double>> values;
              std::vector<lc::graph::GraphExecutionGroup> groups;
@@ -553,5 +612,6 @@ void bindGraph(py::module_& m) {
            py::arg("insert_sync_on_device_change") = true,
            py::arg("enable_fusion_v1") = true,
            py::arg("enable_fusion_cost_model_v1") = true,
+           py::arg("enable_plan_cache") = true,
            py::arg("fusion_cost_min_speedup") = 1.01);
 }

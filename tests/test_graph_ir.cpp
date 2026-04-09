@@ -118,6 +118,95 @@ int main() {
     return 1;
   }
 
+  // Planner cache regression guard (B3): second identical planning call should hit cache.
+  {
+    lightning_core::graph::GraphPlannerOptions cache_opts = planner_options;
+    cache_opts.enable_plan_cache = true;
+    g.clearPlanCache();
+    lightning_core::graph::GraphPlanSummary cache_s1{};
+    lightning_core::graph::GraphPlanSummary cache_s2{};
+    if (g.planSummary(cache_opts, &cache_s1, nullptr, nullptr) != Status::kSuccess ||
+        g.planSummary(cache_opts, &cache_s2, nullptr, nullptr) != Status::kSuccess) {
+      std::cerr << "planSummary cache smoke failed\n";
+      return 1;
+    }
+    if (cache_s1.plan_cache_hit) {
+      std::cerr << "first planSummary call should miss plan cache\n";
+      return 1;
+    }
+    if (!cache_s2.plan_cache_hit) {
+      std::cerr << "second planSummary call should hit plan cache\n";
+      return 1;
+    }
+    const auto cache_stats = g.planCacheStats();
+    if (cache_stats.hits < 1 || cache_stats.misses < 1 || cache_stats.hit_rate_pct <= 0.0) {
+      std::cerr << "plan cache stats should expose hit/miss counters\n";
+      return 1;
+    }
+    g.clearPlanCache();
+    const auto cleared_stats = g.planCacheStats();
+    if (cleared_stats.hits != 0 || cleared_stats.misses != 0) {
+      std::cerr << "clearPlanCache should reset cache stats\n";
+      return 1;
+    }
+  }
+
+  // Validation pass pack v2 + reason code deterministic checks (B1/B2).
+  {
+    GraphIR invalid_graph;
+    std::size_t ia = 0;
+    std::size_t ib = 0;
+    std::size_t io = 0;
+    TensorSpec bad_rank;
+    bad_rank.shape = {4};
+    bad_rank.dtype = DType::kFloat32;
+    bad_rank.layout = lightning_core::Layout::kContiguous;
+    TensorSpec mat_out;
+    mat_out.shape = {2, 2};
+    mat_out.dtype = DType::kFloat32;
+    mat_out.layout = lightning_core::Layout::kContiguous;
+    if (invalid_graph.addTensorSpec(bad_rank, &ia, "ia", true) != Status::kSuccess ||
+        invalid_graph.addTensorSpec(bad_rank, &ib, "ib", true) != Status::kSuccess ||
+        invalid_graph.addTensorSpec(mat_out, &io, "io", false) != Status::kSuccess) {
+      std::cerr << "invalid_graph addTensorSpec failed\n";
+      return 1;
+    }
+    std::unordered_map<std::string, std::int64_t> bad_attrs;
+    bad_attrs["unknown_attr"] = 1;
+    if (invalid_graph.addNode(OpKind::kMatMul, {ia, ib}, {io}, {}, "bad_mm", bad_attrs) != Status::kSuccess) {
+      std::cerr << "invalid_graph addNode failed\n";
+      return 1;
+    }
+    lightning_core::graph::ValidationReport invalid_report;
+    const Status invalid_status = invalid_graph.validateWithReport(&invalid_report);
+    if (invalid_status != Status::kInvalidValue || invalid_report.ok()) {
+      std::cerr << "invalid_graph validateWithReport should fail\n";
+      return 1;
+    }
+    bool saw_schema_contract = false;
+    bool saw_layout_flow = false;
+    bool saw_reason_rank = false;
+    bool saw_reason_attr = false;
+    for (const auto& issue : invalid_report.issues) {
+      if (issue.pass == lightning_core::graph::ValidationPass::kSchemaContract) {
+        saw_schema_contract = true;
+      }
+      if (issue.pass == lightning_core::graph::ValidationPass::kLayoutFlow) {
+        saw_layout_flow = true;
+      }
+      if (issue.reason == lightning_core::graph::ReasonCode::kRankMismatch) {
+        saw_reason_rank = true;
+      }
+      if (issue.reason == lightning_core::graph::ReasonCode::kAttributeUnsupported) {
+        saw_reason_attr = true;
+      }
+    }
+    if (!saw_schema_contract || !saw_layout_flow || !saw_reason_rank || !saw_reason_attr) {
+      std::cerr << "invalid_graph should emit deterministic pass/reason coverage\n";
+      return 1;
+    }
+  }
+
   // Capability-aware planner grouping: align flexible ops to a forced backend
   // of neighboring ops when requested.
   const lightning_core::runtime::BackendCapabilities metal_caps_for_planner =

@@ -1,5 +1,50 @@
 [
   {
+    "id": "2026-04-09-graph-completed-v0-2-2-planner-v3-plan-cache-with-cache-hit-rate-telemetry-and-fixed-graph-eager-dispatch-evidence-artifacts",
+    "date": "2026-04-09",
+    "milestone": "M-B",
+    "area": "graph",
+    "title": "Completed v0.2.2 planner v3 + plan cache with cache hit-rate telemetry and fixed graph/eager dispatch evidence artifacts.",
+    "status": "completed",
+    "source": "local"
+  },
+  {
+    "id": "2026-04-09-graph-completed-v0-2-1-validation-pass-pack-v2-with-pass-scoped-topology-alias-lifetime-layout-flow-backend-capability-reports",
+    "date": "2026-04-09",
+    "milestone": "M-B",
+    "area": "graph",
+    "title": "Completed v0.2.1 validation pass pack v2 with pass-scoped topology/alias-lifetime/layout-flow/backend-capability reports.",
+    "status": "completed",
+    "source": "local"
+  },
+  {
+    "id": "2026-04-09-docs-completed-v0-2-0-rc0-b0-contract-baseline-freeze-with-docs-ci-constant-sync-and-baseline-artifact-generation",
+    "date": "2026-04-09",
+    "milestone": "M-B",
+    "area": "docs",
+    "title": "Completed v0.2.0-rc0 B0 contract baseline freeze with docs/CI constant sync and baseline artifact generation.",
+    "status": "completed",
+    "source": "local"
+  },
+  {
+    "id": "2026-04-09-graph-completed-v0-2-0-operator-registry-v2-contracts-with-rank-layout-dtype-shape-attribute-validation-and-deterministic-reason-codes",
+    "date": "2026-04-09",
+    "milestone": "M-B",
+    "area": "graph",
+    "title": "Completed v0.2.0 Operator Registry v2 contracts with rank/layout/dtype/shape/attribute validation and deterministic reason codes.",
+    "status": "completed",
+    "source": "local"
+  },
+  {
+    "id": "2026-04-09-release-bumped-public-baseline-to-v0-2-2-and-aligned-readme-roadmap-pyproject-version-metadata",
+    "date": "2026-04-09",
+    "milestone": "M-A",
+    "area": "release",
+    "title": "Bumped public baseline to v0.2.2 and aligned README/ROADMAP/pyproject version metadata.",
+    "status": "completed",
+    "source": "local"
+  },
+  {
     "id": "2026-04-08-test-completed-v0-1-32-autograd-bootstrap-v0-matmul-add-relu-backward-tiny-1-step-sgd-with-torch-gradient-parity-smoke",
     "date": "2026-04-08",
     "milestone": "M-D",

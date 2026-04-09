@@ -263,6 +263,10 @@ def _run_matmul_matrix_sub_case(
         "graph_plan_device_switches": int(plan_summary.get("device_switches", 0)),
         "graph_plan_fallback_nodes": int(plan_summary.get("total_fallback_nodes", 0)),
         "graph_plan_fallback_groups": int(plan_summary.get("total_fallback_groups", 0)),
+        "graph_plan_cache_hit": bool(plan_summary.get("plan_cache_hit", False)),
+        "graph_plan_cache_hits_total": int(plan_summary.get("plan_cache_hits_total", 0)),
+        "graph_plan_cache_misses_total": int(plan_summary.get("plan_cache_misses_total", 0)),
+        "graph_plan_cache_hit_rate_pct": float(plan_summary.get("plan_cache_hit_rate_pct", float("nan"))),
         "note": "",
     }
     detail = {
@@ -449,6 +453,10 @@ def _run_conv_attention_case(
         "graph_plan_device_switches": int(plan_summary.get("device_switches", 0)),
         "graph_plan_fallback_nodes": int(plan_summary.get("total_fallback_nodes", 0)),
         "graph_plan_fallback_groups": int(plan_summary.get("total_fallback_groups", 0)),
+        "graph_plan_cache_hit": bool(plan_summary.get("plan_cache_hit", False)),
+        "graph_plan_cache_hits_total": int(plan_summary.get("plan_cache_hits_total", 0)),
+        "graph_plan_cache_misses_total": int(plan_summary.get("plan_cache_misses_total", 0)),
+        "graph_plan_cache_hit_rate_pct": float(plan_summary.get("plan_cache_hit_rate_pct", float("nan"))),
         "note": "",
     }
     detail = {
@@ -594,6 +602,10 @@ def _run_matmul_bias_relu_case(
         "graph_plan_device_switches": int(plan_summary.get("device_switches", 0)),
         "graph_plan_fallback_nodes": int(plan_summary.get("total_fallback_nodes", 0)),
         "graph_plan_fallback_groups": int(plan_summary.get("total_fallback_groups", 0)),
+        "graph_plan_cache_hit": bool(plan_summary.get("plan_cache_hit", False)),
+        "graph_plan_cache_hits_total": int(plan_summary.get("plan_cache_hits_total", 0)),
+        "graph_plan_cache_misses_total": int(plan_summary.get("plan_cache_misses_total", 0)),
+        "graph_plan_cache_hit_rate_pct": float(plan_summary.get("plan_cache_hit_rate_pct", float("nan"))),
         "note": "",
     }
     detail = {
@@ -641,6 +653,10 @@ def _unsupported_row(bench: str, shape: str, device: str, reason: str) -> tuple[
         "graph_plan_device_switches": 0,
         "graph_plan_fallback_nodes": 0,
         "graph_plan_fallback_groups": 0,
+        "graph_plan_cache_hit": False,
+        "graph_plan_cache_hits_total": 0,
+        "graph_plan_cache_misses_total": 0,
+        "graph_plan_cache_hit_rate_pct": float("nan"),
         "note": reason,
     }
     detail = {"row": row, "trace": {"eager": {}, "graph": {}}, "error": reason}
@@ -659,6 +675,7 @@ def _summary(rows: list[dict]) -> dict:
     dispatch_reductions_pct = _finite([float(r["dispatch_reduction_pct"]) for r in ok_rows])
     dispatch_reductions_abs = _finite([float(r["dispatch_reduction_per_iter"]) for r in ok_rows])
     fallback_deltas = _finite([float(r["fallback_delta_per_iter"]) for r in ok_rows])
+    plan_cache_hit_rates = _finite([float(r["graph_plan_cache_hit_rate_pct"]) for r in ok_rows])
     graph_wins = sum(1 for r in ok_rows if math.isfinite(float(r["graph_ms"])) and math.isfinite(float(r["eager_ms"])) and float(r["graph_ms"]) < float(r["eager_ms"]))
     eager_wins = sum(1 for r in ok_rows if math.isfinite(float(r["graph_ms"])) and math.isfinite(float(r["eager_ms"])) and float(r["eager_ms"]) < float(r["graph_ms"]))
     ties = max(0, len(ok_rows) - graph_wins - eager_wins)
@@ -690,6 +707,7 @@ def _summary(rows: list[dict]) -> dict:
         "host_dispatch_reduction_cases": host_dispatch_reduction_cases,
         "host_dispatch_reduction_rate_pct": host_dispatch_reduction_rate_pct,
         "median_fallback_delta_per_iter": float(median(fallback_deltas)) if fallback_deltas else float("nan"),
+        "median_plan_cache_hit_rate_pct": float(median(plan_cache_hit_rates)) if plan_cache_hit_rates else float("nan"),
     }
 
 
@@ -728,6 +746,10 @@ def _write_csv(path: Path, rows: list[dict]) -> None:
         "graph_plan_device_switches",
         "graph_plan_fallback_nodes",
         "graph_plan_fallback_groups",
+        "graph_plan_cache_hit",
+        "graph_plan_cache_hits_total",
+        "graph_plan_cache_misses_total",
+        "graph_plan_cache_hit_rate_pct",
         "note",
     ]
     with path.open("w", newline="", encoding="utf-8") as f:
@@ -758,16 +780,17 @@ def _to_markdown(rows: list[dict], summary: dict, device: str, warmup: int, iter
         f"median reduction={_fmt_pct(summary['median_dispatch_reduction_pct'])}, "
         f"mean reduction/iter={_fmt_ms(summary['mean_dispatch_reduction_per_iter'])}"
     )
+    lines.append(f"- planner cache median hit-rate: {_fmt_pct(summary['median_plan_cache_hit_rate_pct'])}")
     lines.append("")
-    lines.append("| bench | shape | status | eager (ms) | graph (ms) | graph/eager | dispatch delta (%) | dispatch reduction (%) | fallback delta/iter | evidence | plan groups |")
-    lines.append("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |")
+    lines.append("| bench | shape | status | eager (ms) | graph (ms) | graph/eager | dispatch delta (%) | dispatch reduction (%) | fallback delta/iter | evidence | plan groups | plan cache hit-rate |")
+    lines.append("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: |")
     for r in rows:
         lines.append(
             f"| {r['bench']} | {r['shape']} | {r['status']} | {_fmt_ms(float(r['eager_ms']))} | "
             f"{_fmt_ms(float(r['graph_ms']))} | {_fmt_ratio(float(r['graph_over_eager']))} | "
             f"{_fmt_pct(float(r['dispatch_delta_pct']))} | {_fmt_pct(float(r['dispatch_reduction_pct']))} | "
             f"{_fmt_ms(float(r['fallback_delta_per_iter']))} | {r['dispatch_evidence_source']} | "
-            f"{r['graph_plan_dispatch_groups']} |"
+            f"{r['graph_plan_dispatch_groups']} | {_fmt_pct(float(r['graph_plan_cache_hit_rate_pct']))} |"
         )
     lines.append("")
     unsupported = [r for r in rows if r["status"] != "ok"]

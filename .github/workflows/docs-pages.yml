@@ -45,6 +45,7 @@ jobs:
       - name: Refresh generated docs blocks
         run: |
           python scripts/generate_capability_docs.py
+          python scripts/generate_phase_b_contract_docs.py
           python scripts/generate_roadmap_history.py
           python scripts/generate_api_reference_docs.py
 
@@ -73,7 +74,7 @@ jobs:
         run: |
           echo "## Docs Pages Build Summary" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "- generated docs blocks: capability + roadmap history + API reference" >> "$GITHUB_STEP_SUMMARY"
+          echo "- generated docs blocks: capability + phase-b-contract + roadmap history + API reference" >> "$GITHUB_STEP_SUMMARY"
           echo "- docs link check: success" >> "$GITHUB_STEP_SUMMARY"
           echo "- mkdocs build: success" >> "$GITHUB_STEP_SUMMARY"
           echo "- configure-pages outcome: ${{ steps.configure_pages.outcome }}" >> "$GITHUB_STEP_SUMMARY"

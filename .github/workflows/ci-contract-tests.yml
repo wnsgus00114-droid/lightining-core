@@ -22,6 +22,8 @@ jobs:
       - name: Verify generated docs blocks are up-to-date
         run: |
           python3 scripts/generate_capability_docs.py --check
+          python3 scripts/generate_phase_b_contract_docs.py --check
+          python3 scripts/check_phase_b_contract_sync.py
           python3 scripts/generate_roadmap_history.py --check
           python3 scripts/generate_api_reference_docs.py --check
           python3 scripts/check_docs_links.py README.md docs
@@ -60,6 +62,7 @@ jobs:
           python3 tests/test_python_checkpoint_io_smoke.py
           python3 tests/test_python_graph_fallback_numerical_stress.py
           python3 tests/test_python_autograd_bootstrap_smoke.py
+          python3 tests/test_python_graph_validation_report_smoke.py
 
       - name: Publish CTest summary
         if: always()
@@ -81,6 +84,7 @@ jobs:
           echo "- python smoke: tests/test_python_checkpoint_io_smoke.py" >> "$GITHUB_STEP_SUMMARY"
           echo "- python smoke: tests/test_python_graph_fallback_numerical_stress.py" >> "$GITHUB_STEP_SUMMARY"
           echo "- python smoke: tests/test_python_autograd_bootstrap_smoke.py" >> "$GITHUB_STEP_SUMMARY"
+          echo "- python smoke: tests/test_python_graph_validation_report_smoke.py" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload CTest artifacts
         if: always()

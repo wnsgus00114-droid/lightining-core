@@ -1,0 +1,100 @@
+{
+  "artifact_kind": "phase_b_baseline",
+  "contract_version": "phase_b_v0.2.0-rc0",
+  "generated_at_utc": "2026-04-09T07:48:23.393641+00:00",
+  "runtime": {
+    "backend_name": "cpu",
+    "metal_available": false,
+    "cuda_available": false
+  },
+  "env": {
+    "python": "3.14.3 (main, Feb  3 2026, 15:32:20) [Clang 17.0.0 (clang-1700.6.3.2)]",
+    "platform": "macOS-26.3-arm64-arm-64bit-Mach-O",
+    "machine": "arm64"
+  },
+  "graph_validation_probe": {
+    "ok": false,
+    "status": "invalid value",
+    "issues": [
+      {
+        "pass": "schema_contract",
+        "status": "invalid value",
+        "node_id": 0,
+        "tensor_id": -1,
+        "reason_code": "attribute_unsupported",
+        "message": "attribute not allowed by schema: unknown_attr"
+      },
+      {
+        "pass": "layout_flow",
+        "status": "invalid value",
+        "node_id": 0,
+        "tensor_id": 0,
+        "reason_code": "rank_mismatch",
+        "message": "input tensor rank mismatch"
+      },
+      {
+        "pass": "layout_flow",
+        "status": "invalid value",
+        "node_id": 0,
+        "tensor_id": 1,
+        "reason_code": "rank_mismatch",
+        "message": "input tensor rank mismatch"
+      }
+    ]
+  },
+  "plan_cache_probe": {
+    "first_summary": {
+      "total_nodes": 2,
+      "total_groups": 1,
+      "planned_dispatch_groups": 1,
+      "total_fallback_nodes": 0,
+      "total_fallback_groups": 0,
+      "sync_boundary_before_groups": 0,
+      "sync_boundary_after_groups": 0,
+      "device_switches": 0,
+      "cpu_nodes": 2,
+      "cuda_nodes": 0,
+      "metal_nodes": 0,
+      "cpu_groups": 1,
+      "cuda_groups": 0,
+      "metal_groups": 0,
+      "plan_cache_enabled": true,
+      "plan_cache_hit": false,
+      "plan_cache_hits_total": 0,
+      "plan_cache_misses_total": 1,
+      "plan_cache_hit_rate_pct": 0.0
+    },
+    "second_summary": {
+      "total_nodes": 2,
+      "total_groups": 1,
+      "planned_dispatch_groups": 1,
+      "total_fallback_nodes": 0,
+      "total_fallback_groups": 0,
+      "sync_boundary_before_groups": 0,
+      "sync_boundary_after_groups": 0,
+      "device_switches": 0,
+      "cpu_nodes": 2,
+      "cuda_nodes": 0,
+      "metal_nodes": 0,
+      "cpu_groups": 1,
+      "cuda_groups": 0,
+      "metal_groups": 0,
+      "plan_cache_enabled": true,
+      "plan_cache_hit": true,
+      "plan_cache_hits_total": 1,
+      "plan_cache_misses_total": 1,
+      "plan_cache_hit_rate_pct": 50.0
+    },
+    "stats": {
+      "hits": 1,
+      "misses": 1,
+      "hit_rate_pct": 50.0
+    }
+  },
+  "meta": {
+    "command": "python benchmarks/python/phase_b_baseline_artifact.py",
+    "device": "cpu",
+    "note": "one-shot baseline evidence for Phase B contract freeze",
+    "generated_ns": 1775720903405176000
+  }
+}

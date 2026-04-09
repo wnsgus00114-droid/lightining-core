@@ -13,7 +13,7 @@
 
 # 3. One-line Summary
 Lightning Core is a macOS-first, Metal-backed runtime that provides low-level control (resident IO, policy routing, fused paths) with easy Python APIs.
-Current public release: **v0.1.32** (2026-04-08).
+Current public release: **v0.2.2** (2026-04-09).
 
 # 4. Abstract
 Lightning Core targets high-iteration experimentation on Apple Silicon by combining:
@@ -4906,7 +4906,7 @@ docs/                           # quickstart/advanced/contributor docs
 ```
 
 # 35. Roadmap
-Roadmap baseline is now aligned to **v0.1.32** and tracked in detail in [ROADMAP.md](ROADMAP.md).
+Roadmap baseline is now aligned to **v0.2.2** and tracked in detail in [ROADMAP.md](ROADMAP.md).
 
 Immediate replan (2026-04-01, roadmap-aligned):
 1. [completed] Complete backend abstraction split (compute/memory/sync/profiler) and lock public docs/examples.
@@ -4930,6 +4930,10 @@ Immediate replan (2026-04-01, roadmap-aligned):
 19. [completed] v0.1.30 deterministic fallback/numerical stress hardening: randomized boundary shape/dtype/layout regression smoke + CI hard gate.
 20. [completed] v0.1.31 checkpoint IO v1.1 (model-level): `save_model_checkpoint/load_model_checkpoint` + v1 forward-compat smoke.
 21. [completed] v0.1.32 autograd bootstrap v0: `matmul/add/relu` backward + tiny 1-step SGD + Torch gradient parity smoke.
+22. [completed] v0.2.0-rc0 B0 baseline freeze: Phase-B graph support/fallback/numerical/perf contracts fixed in `docs/phase_b_graph_contract.json`, synced to CI constants, and baseline artifact generated.
+23. [completed] v0.2.0 Operator Registry v2 contract hardening: schema-level rank/layout/dtype/shape/attribute checks + standardized machine-readable fallback/validation reason codes.
+24. [completed] v0.2.1 Validation Pass Pack v2: split pass diagnostics (`schema_contract/topology/alias_lifetime/layout_flow/backend_capability`) with deterministic issue surfacing in C++/Python reports.
+25. [completed] v0.2.2 Planner v3 + Plan Cache: graph-hash/device/sync-policy keyed cache, cache hit/miss telemetry in plan summary, and fixed graph/eager artifact outputs for dispatch/cache evidence.
 
 Roadmap progress history is auto-generated from:
 - `docs/roadmap_updates.json`
@@ -4938,7 +4942,7 @@ Roadmap progress history is auto-generated from:
 
 ### Progress History (Auto-generated)
 
-- Total tracked updates: `64`
+- Total tracked updates: `69`
 - Source of truth: `docs/roadmap_updates.json`
 - Quick add command:
   `python scripts/generate_roadmap_history.py --add --date YYYY-MM-DD --milestone M-A --area runtime --title "your update"`
@@ -4947,6 +4951,7 @@ Roadmap progress history is auto-generated from:
 
 | Date | Updates | Milestones | Highlights |
 | --- | --- | --- | --- |
+| 2026-04-09 | 5 | M-B, M-A | Completed v0.2.2 planner v3 + plan cache with cache hit-rate telemetry and fixed graph/eager dispatch evidence artifacts. / Completed v0.2.1 validation pass pack v2 with pass-scoped topology/alias-lifetime/layout-flow/backend-capability reports. / ... (+3 more) |
 | 2026-04-08 | 19 | M-D, M-C, M-B, M-A | Completed v0.1.32 autograd bootstrap v0 (matmul/add/relu backward + tiny 1-step SGD) with Torch gradient parity smoke. / Completed v0.1.31 checkpoint IO v1.1 model-level save/load helpers with v1 forward-compat smoke coverage. / ... (+17 more) |
 | 2026-04-07 | 6 | M-A | Optimized tiny conv->attn integrated path using op_path timeline bottleneck guidance and tiny-chain CPU preference heuristic. / Finalized lc.api engine bridge (lightning/torch/auto) with same-surface engine switching / ... (+4 more) |
 | 2026-04-02 | 5 | M-B, M-A | Completed v0.1.15 generated API reference pipeline (Python/C++) in docs build and removed API index placeholder entries. / Expanded graph-path contract coverage: sync policy(auto/always/never), fallback/device-change boundary checks, and shape/layout/lifetime regression guards. / ... (+3 more) |
@@ -4957,6 +4962,14 @@ Roadmap progress history is auto-generated from:
 | 2026-03-28 | 1 | M-A | Initial macOS package and release workflow launch. |
 
 **Detailed Timeline**
+
+#### 2026-04-09 (5 updates)
+
+- [completed] [M-B] [graph] Completed v0.2.2 planner v3 + plan cache with cache hit-rate telemetry and fixed graph/eager dispatch evidence artifacts. (`local`)
+- [completed] [M-B] [graph] Completed v0.2.1 validation pass pack v2 with pass-scoped topology/alias-lifetime/layout-flow/backend-capability reports. (`local`)
+- [completed] [M-B] [docs] Completed v0.2.0-rc0 B0 contract baseline freeze with docs/CI constant sync and baseline artifact generation. (`local`)
+- [completed] [M-B] [graph] Completed v0.2.0 Operator Registry v2 contracts with rank/layout/dtype/shape/attribute validation and deterministic reason codes. (`local`)
+- [completed] [M-A] [release] Bumped public baseline to v0.2.2 and aligned README/ROADMAP/pyproject version metadata. (`local`)
 
 #### 2026-04-08 (19 updates)
 
@@ -5048,7 +5061,7 @@ Roadmap progress history is auto-generated from:
 
 <!-- AUTO-ROADMAP-HISTORY:END -->
 
-Phase A (2026 Q2, `v0.1.32`-`v0.2.0`): Runtime Core Hardening
+Phase A (2026 Q2, `v0.1.32`-`v0.2.0`, completed): Runtime Core Hardening
 - Finalize backend contracts (compute/memory/sync/profiler split).
 - Stabilize integrated engine selector (`lightning` / `torch` / `auto`) for macOS-first workflows.
 - Lock tensor lifetime and metadata rules across Metal/CPU parity tests.
@@ -5083,6 +5096,71 @@ Mac-First Guardrails
 - Metal fast-path remains first-class while portability grows via backend plugins.
 - No abstraction change is accepted if it regresses macOS benchmark gates.
 - KWU-1.0 license remains unchanged.
+
+## 35.1 Phase B Contract Baseline
+
+Source of truth:
+- `docs/phase_b_graph_contract.json`
+- generated docs: `docs/phase_b_contracts.md`
+
+<!-- AUTO-PHASE-B-CONTRACT:BEGIN -->
+
+### Phase B Graph Contract (Auto-generated)
+
+- Contract version: `phase_b_v0.2.0-rc0`
+- As-of date: `2026-04-09`
+- Source of truth: `docs/phase_b_graph_contract.json`
+- CI sync checker: `python scripts/check_phase_b_contract_sync.py`
+
+#### Graph Support Scope
+
+| Op | Rank | DType | Layout | Shape Constraint |
+| --- | --- | --- | --- | --- |
+| matmul | in(2,2)->out(2) | float32,float64 | contiguous | A[m,k], B[k,n], Out[m,n] |
+| vector_add | in(any,any)->out(any) | float32,float64 | contiguous | in0.shape == in1.shape == out.shape |
+| matrix_sub / matrix_div | in(2,2)->out(2) | float32,float64 | contiguous | in0.shape == in1.shape == out.shape |
+| attention_forward | in(2,2,2)->out(2) | float32 | contiguous | q.shape == k.shape == v.shape == out.shape |
+| conv2d_nchw3x3s1p1 | in(4,4[,1])->out(4) | float32 | contiguous | x[N,C,H,W], w[OC,C,3,3], out[N,OC,H,W], bias[OC] |
+| relu | in(any)->out(any) | float32,float64 | contiguous | out.shape == in.shape |
+
+#### Fallback Reason Codes
+
+| Reason Code | Description |
+| --- | --- |
+| fallback_preferred_unsupported | preferred backend is not supported by schema |
+| fallback_preferred_unavailable | preferred backend is declared but not currently available |
+| fallback_planner_optimized | planner selected non-preferred backend to reduce boundary/sync churn |
+
+#### Validation Passes
+
+- `schema_contract`
+- `topology`
+- `alias_lifetime`
+- `layout_flow`
+- `backend_capability`
+
+#### Numerical Tolerances
+
+| DType | atol | rtol |
+| --- | --- | --- |
+| float32 | 0.0001 | 0.0001 |
+| float64 | 1e-08 | 1e-08 |
+
+#### CI Constants (Phase B)
+
+| Section | Key | Value |
+| --- | --- | --- |
+| graph_eager_ab | warmup | 4 |
+| graph_eager_ab | iters | 12 |
+| graph_eager_ab | trace_iters | 6 |
+| graph_eager_ab | fusion_cost_min_speedup | 1.01 |
+| graph_eager_ab | min_host_dispatch_reduction_rate_pct | 25.0 |
+| fusion_pilot | max_fused_over_unfused_conv | 1.15 |
+| fusion_pilot | max_fused_over_unfused_matmul | 1.9 |
+| fusion_pilot | max_fused_over_unfused_attention | 2.2 |
+| planner_cache | target_min_hit_rate_pct | 50.0 |
+
+<!-- AUTO-PHASE-B-CONTRACT:END -->
 
 # 36. Citation
 If you use Lightning Core in research, please cite it as software:
@@ -5120,4 +5198,4 @@ Community feedback channels we actively monitor:
 
 Lightning Core is stable enough for experimentation and benchmarking, while APIs and internals continue to evolve quickly.
 Visibility update: repository topics and benchmark discoverability documentation are actively maintained.
-Current release train: **v0.1.32**.
+Current release train: **v0.2.2**.

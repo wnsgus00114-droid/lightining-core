@@ -1,0 +1,96 @@
+{
+  "contract_version": "phase_b_v0.2.0-rc0",
+  "as_of_date": "2026-04-09",
+  "graph_support": [
+    {
+      "op": "matmul",
+      "rank": "in(2,2)->out(2)",
+      "dtype": "float32,float64",
+      "layout": "contiguous",
+      "shape_constraint": "A[m,k], B[k,n], Out[m,n]"
+    },
+    {
+      "op": "vector_add",
+      "rank": "in(any,any)->out(any)",
+      "dtype": "float32,float64",
+      "layout": "contiguous",
+      "shape_constraint": "in0.shape == in1.shape == out.shape"
+    },
+    {
+      "op": "matrix_sub / matrix_div",
+      "rank": "in(2,2)->out(2)",
+      "dtype": "float32,float64",
+      "layout": "contiguous",
+      "shape_constraint": "in0.shape == in1.shape == out.shape"
+    },
+    {
+      "op": "attention_forward",
+      "rank": "in(2,2,2)->out(2)",
+      "dtype": "float32",
+      "layout": "contiguous",
+      "shape_constraint": "q.shape == k.shape == v.shape == out.shape"
+    },
+    {
+      "op": "conv2d_nchw3x3s1p1",
+      "rank": "in(4,4[,1])->out(4)",
+      "dtype": "float32",
+      "layout": "contiguous",
+      "shape_constraint": "x[N,C,H,W], w[OC,C,3,3], out[N,OC,H,W], bias[OC]"
+    },
+    {
+      "op": "relu",
+      "rank": "in(any)->out(any)",
+      "dtype": "float32,float64",
+      "layout": "contiguous",
+      "shape_constraint": "out.shape == in.shape"
+    }
+  ],
+  "fallback_rules": [
+    {
+      "code": "fallback_preferred_unsupported",
+      "description": "preferred backend is not supported by schema"
+    },
+    {
+      "code": "fallback_preferred_unavailable",
+      "description": "preferred backend is declared but not currently available"
+    },
+    {
+      "code": "fallback_planner_optimized",
+      "description": "planner selected non-preferred backend to reduce boundary/sync churn"
+    }
+  ],
+  "validation_passes": [
+    "schema_contract",
+    "topology",
+    "alias_lifetime",
+    "layout_flow",
+    "backend_capability"
+  ],
+  "numerical_tolerance": {
+    "float32": {
+      "atol": 0.0001,
+      "rtol": 0.0001
+    },
+    "float64": {
+      "atol": 1e-08,
+      "rtol": 1e-08
+    }
+  },
+  "ci_constants": {
+    "graph_eager_ab": {
+      "warmup": 4,
+      "iters": 12,
+      "trace_iters": 6,
+      "fusion_cost_min_speedup": 1.01,
+      "min_host_dispatch_reduction_rate_pct": 25.0
+    },
+    "fusion_pilot": {
+      "max_fused_over_unfused_conv": 1.15,
+      "max_fused_over_unfused_matmul": 1.9,
+      "max_fused_over_unfused_attention": 2.2
+    },
+    "planner_cache": {
+      "target_min_hit_rate_pct": 50.0
+    }
+  }
+}
