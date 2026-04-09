@@ -61,9 +61,13 @@ jobs:
       LC_GRAPH_AB_TRACE_ITERS: "6"
       LC_GRAPH_AB_FUSION_COST_MIN_SPEEDUP: "1.01"
       LC_GRAPH_AB_MIN_HOST_DISPATCH_REDUCTION_RATE_PCT: "25.0"
+      LC_GRAPH_AB_MIN_CHAINED_LATENCY_REDUCTION_PCT: "15.0"
+      LC_GRAPH_AB_MAX_UNSUPPORTED_RATIO_PCT: "40.0"
       LC_FUSION_MAX_CONV: "1.15"
       LC_FUSION_MAX_MATMUL: "1.90"
       LC_FUSION_MAX_ATTENTION: "2.20"
+      LC_PHASE_B_EXIT_MIN_GRAPH_PIPELINE_ADOPTION_RATE_PCT: "100.0"
+      LC_PHASE_B_EXIT_ALLOW_CHAIN_LATENCY_NOT_APPLICABLE: "true"
       QB_DEVICE: cpu
       QB_WARMUP: "10"
       QB_ITERS: "40"
@@ -107,9 +111,10 @@ jobs:
           python benchmarks/python/quick_bench.py --device ${QB_DEVICE} --warmup ${QB_WARMUP} --iters ${QB_ITERS} --seed ${QB_SEED} --out ${REPORT_DIR}/quick_bench.csv
           python benchmarks/python/quick_bench_ci_summary.py --input ${REPORT_DIR}/quick_bench.csv --json ${REPORT_DIR}/quick_bench_summary.json --md ${REPORT_DIR}/quick_bench_summary.md --regress-threshold 1.0
           python benchmarks/python/quick_bench_variance_gate.py --runs-csv ${REPORT_DIR}/quick_bench_variance_runs.csv --json ${REPORT_DIR}/quick_bench_variance_summary.json --md ${REPORT_DIR}/quick_bench_variance_summary.md --repeats ${QB_VAR_REPEATS} --variance-threshold-pct ${QB_VAR_THRESHOLD_PCT} --device ${QB_DEVICE} --warmup ${QB_VAR_WARMUP} --iters ${QB_VAR_ITERS} --seed ${QB_SEED} --trim-runs ${QB_VAR_TRIM_RUNS}
-          python benchmarks/python/graph_eager_ab_bench.py --device auto --warmup ${LC_GRAPH_AB_WARMUP} --iters ${LC_GRAPH_AB_ITERS} --trace-iters ${LC_GRAPH_AB_TRACE_ITERS} --seed ${QB_SEED} --fusion-cost-min-speedup ${LC_GRAPH_AB_FUSION_COST_MIN_SPEEDUP} --require-host-dispatch-reduction --min-host-dispatch-reduction-rate-pct ${LC_GRAPH_AB_MIN_HOST_DISPATCH_REDUCTION_RATE_PCT} --csv ${REPORT_DIR}/graph_eager_ab.csv --json ${REPORT_DIR}/graph_eager_ab.json --md ${REPORT_DIR}/graph_eager_ab.md
+          python benchmarks/python/graph_eager_ab_bench.py --device auto --warmup ${LC_GRAPH_AB_WARMUP} --iters ${LC_GRAPH_AB_ITERS} --trace-iters ${LC_GRAPH_AB_TRACE_ITERS} --seed ${QB_SEED} --fusion-cost-min-speedup ${LC_GRAPH_AB_FUSION_COST_MIN_SPEEDUP} --require-host-dispatch-reduction --min-host-dispatch-reduction-rate-pct ${LC_GRAPH_AB_MIN_HOST_DISPATCH_REDUCTION_RATE_PCT} --require-chained-latency-reduction --min-chained-latency-reduction-pct ${LC_GRAPH_AB_MIN_CHAINED_LATENCY_REDUCTION_PCT} --require-max-unsupported-ratio-pct --max-unsupported-ratio-pct ${LC_GRAPH_AB_MAX_UNSUPPORTED_RATIO_PCT} --csv ${REPORT_DIR}/graph_eager_ab.csv --json ${REPORT_DIR}/graph_eager_ab.json --md ${REPORT_DIR}/graph_eager_ab.md
           python benchmarks/python/engine_split_bench.py --device auto --warmup ${QB_WARMUP} --iters ${QB_ITERS} --trace-iters ${QB_TRACE_ITERS} --seed ${QB_SEED} --require-shared-bench-coverage --out-dir ${REPORT_DIR} --pure-csv engine_split_pure_lc.csv --pure-json engine_split_pure_lc.json --interop-csv engine_split_interop.csv --interop-json engine_split_interop.json
           python benchmarks/python/fusion_pilot_bench.py --device auto --warmup 6 --iters 24 --seed 20260408 --cost-model-min-speedup ${LC_GRAPH_AB_FUSION_COST_MIN_SPEEDUP} --max-fused-over-unfused-conv ${LC_FUSION_MAX_CONV} --max-fused-over-unfused-matmul ${LC_FUSION_MAX_MATMUL} --max-fused-over-unfused-attention ${LC_FUSION_MAX_ATTENTION} --csv ${REPORT_DIR}/fusion_pilot.csv --json ${REPORT_DIR}/fusion_pilot.json --md ${REPORT_DIR}/fusion_pilot.md
+          python benchmarks/python/phase_b_exit_audit.py --graph-json ${REPORT_DIR}/graph_eager_ab.json --contract-json docs/phase_b_graph_contract.json --out-json ${REPORT_DIR}/phase_b_exit_audit.json --out-md ${REPORT_DIR}/phase_b_exit_audit.md --bundle-json ${REPORT_DIR}/phase_b_exit_candidate_bundle.json --target-graph-pipeline-adoption-rate-pct ${LC_PHASE_B_EXIT_MIN_GRAPH_PIPELINE_ADOPTION_RATE_PCT} --allow-chain-latency-not-applicable --require-artifacts --artifact ${REPORT_DIR}/quick_bench.csv --artifact ${REPORT_DIR}/quick_bench_summary.json --artifact ${REPORT_DIR}/quick_bench_variance_summary.json --artifact ${REPORT_DIR}/graph_eager_ab.csv --artifact ${REPORT_DIR}/graph_eager_ab.json --artifact ${REPORT_DIR}/engine_split_pure_lc.csv --artifact ${REPORT_DIR}/engine_split_pure_lc.json --artifact ${REPORT_DIR}/engine_split_interop.csv --artifact ${REPORT_DIR}/engine_split_interop.json --artifact ${REPORT_DIR}/fusion_pilot.csv --artifact ${REPORT_DIR}/fusion_pilot.json --artifact ${REPORT_DIR}/release_bench_environment.json --artifact ${REPORT_DIR}/release_bench_commands.txt --readme README.md --roadmap ROADMAP.md --expected-version ${GITHUB_REF_NAME} --require-doc-sync --require-pass
           CMD
 
       - name: Capture release benchmark environment
@@ -234,6 +239,10 @@ jobs:
             --fusion-cost-min-speedup "$LC_GRAPH_AB_FUSION_COST_MIN_SPEEDUP" \
             --require-host-dispatch-reduction \
             --min-host-dispatch-reduction-rate-pct "$LC_GRAPH_AB_MIN_HOST_DISPATCH_REDUCTION_RATE_PCT" \
+            --require-chained-latency-reduction \
+            --min-chained-latency-reduction-pct "$LC_GRAPH_AB_MIN_CHAINED_LATENCY_REDUCTION_PCT" \
+            --require-max-unsupported-ratio-pct \
+            --max-unsupported-ratio-pct "$LC_GRAPH_AB_MAX_UNSUPPORTED_RATIO_PCT" \
             --csv "$REPORT_DIR/graph_eager_ab.csv" \
             --json "$REPORT_DIR/graph_eager_ab.json" \
             --md "$REPORT_DIR/graph_eager_ab.md" \
@@ -256,6 +265,44 @@ jobs:
             --md "$REPORT_DIR/fusion_pilot.md" \
             > "$REPORT_DIR/fusion_pilot.log"
           cat "$REPORT_DIR/fusion_pilot.log"
+
+      - name: Run Phase B exit audit
+        run: |
+          if [ "$LC_PHASE_B_EXIT_ALLOW_CHAIN_LATENCY_NOT_APPLICABLE" = "true" ]; then
+            CHAIN_APPLICABLE_FLAG="--allow-chain-latency-not-applicable"
+          else
+            CHAIN_APPLICABLE_FLAG="--no-allow-chain-latency-not-applicable"
+          fi
+
+          python benchmarks/python/phase_b_exit_audit.py \
+            --graph-json "$REPORT_DIR/graph_eager_ab.json" \
+            --contract-json docs/phase_b_graph_contract.json \
+            --out-json "$REPORT_DIR/phase_b_exit_audit.json" \
+            --out-md "$REPORT_DIR/phase_b_exit_audit.md" \
+            --bundle-json "$REPORT_DIR/phase_b_exit_candidate_bundle.json" \
+            --target-graph-pipeline-adoption-rate-pct "$LC_PHASE_B_EXIT_MIN_GRAPH_PIPELINE_ADOPTION_RATE_PCT" \
+            $CHAIN_APPLICABLE_FLAG \
+            --require-artifacts \
+            --artifact "$REPORT_DIR/quick_bench.csv" \
+            --artifact "$REPORT_DIR/quick_bench_summary.json" \
+            --artifact "$REPORT_DIR/quick_bench_variance_summary.json" \
+            --artifact "$REPORT_DIR/graph_eager_ab.csv" \
+            --artifact "$REPORT_DIR/graph_eager_ab.json" \
+            --artifact "$REPORT_DIR/engine_split_pure_lc.csv" \
+            --artifact "$REPORT_DIR/engine_split_pure_lc.json" \
+            --artifact "$REPORT_DIR/engine_split_interop.csv" \
+            --artifact "$REPORT_DIR/engine_split_interop.json" \
+            --artifact "$REPORT_DIR/fusion_pilot.csv" \
+            --artifact "$REPORT_DIR/fusion_pilot.json" \
+            --artifact "$REPORT_DIR/release_bench_environment.json" \
+            --artifact "$REPORT_DIR/release_bench_commands.txt" \
+            --readme README.md \
+            --roadmap ROADMAP.md \
+            --expected-version "$GITHUB_REF_NAME" \
+            --require-doc-sync \
+            --require-pass \
+            > "$REPORT_DIR/phase_b_exit_audit.log"
+          cat "$REPORT_DIR/phase_b_exit_audit.log"
 
       - name: Build release benchmark manifest
         run: |
@@ -287,6 +334,10 @@ jobs:
               "fusion_pilot.json",
               "fusion_pilot.md",
               "fusion_pilot.log",
+              "phase_b_exit_audit.json",
+              "phase_b_exit_audit.md",
+              "phase_b_exit_candidate_bundle.json",
+              "phase_b_exit_audit.log",
               "release_bench_environment.json",
               "release_bench_commands.txt",
           ]
@@ -338,6 +389,7 @@ jobs:
           echo "- engine split evidence: \`$REPORT_DIR/engine_split_pure_lc.csv\`, \`$REPORT_DIR/engine_split_interop.csv\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- graph/eager host-dispatch gate: \`$REPORT_DIR/graph_eager_ab.csv\`, \`$REPORT_DIR/graph_eager_ab.json\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- fusion pilot evidence: \`$REPORT_DIR/fusion_pilot.csv\`, \`$REPORT_DIR/fusion_pilot.json\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- phase-b exit audit: \`$REPORT_DIR/phase_b_exit_audit.json\`, \`$REPORT_DIR/phase_b_exit_candidate_bundle.json\`" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           cat "$REPORT_DIR/quick_bench_summary.md" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
@@ -349,6 +401,10 @@ jobs:
           if [ -f "$REPORT_DIR/fusion_pilot.md" ]; then
             echo "" >> "$GITHUB_STEP_SUMMARY"
             cat "$REPORT_DIR/fusion_pilot.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f "$REPORT_DIR/phase_b_exit_audit.md" ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            cat "$REPORT_DIR/phase_b_exit_audit.md" >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Upload release benchmark evidence
@@ -380,6 +436,10 @@ jobs:
             ${{ env.REPORT_DIR }}/fusion_pilot.json
             ${{ env.REPORT_DIR }}/fusion_pilot.md
             ${{ env.REPORT_DIR }}/fusion_pilot.log
+            ${{ env.REPORT_DIR }}/phase_b_exit_audit.json
+            ${{ env.REPORT_DIR }}/phase_b_exit_audit.md
+            ${{ env.REPORT_DIR }}/phase_b_exit_candidate_bundle.json
+            ${{ env.REPORT_DIR }}/phase_b_exit_audit.log
             ${{ env.REPORT_DIR }}/release_bench_environment.json
             ${{ env.REPORT_DIR }}/release_bench_commands.txt
             ${{ env.REPORT_DIR }}/release_bench_manifest.json

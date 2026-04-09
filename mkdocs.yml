@@ -18,6 +18,7 @@ nav:
   - Advanced: advanced.md
   - Capability Matrix: capability_matrix.md
   - Phase B Contracts: phase_b_contracts.md
+  - Operator Onboarding Kit: operator_onboarding_kit.md
   - API:
       - API Index: api_index.md
       - Python API (Generated): reference/python_api_generated.md

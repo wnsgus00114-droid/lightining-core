@@ -1,6 +1,6 @@
 # Lightning Core Roadmap
 
-Version context: v0.2.2 (2026-04-09)
+Version context: v0.2.7 (2026-04-09)
 
 ## 1) North Star
 
@@ -20,7 +20,7 @@ Lightning Core started as a macOS Apple-Silicon performance runtime. The long-te
 - Keep API ergonomics improvements performance-safe by default.
 - Keep deprecation policy explicit; no silent API behavior changes.
 
-## 3) Current Baseline (v0.2.2)
+## 3) Current Baseline (v0.2.7)
 
 - Public package on PyPI/TestPyPI.
 - C++ core + Python bindings for runtime/tensor/ops/attention/integrated APIs.
@@ -36,6 +36,7 @@ Lightning Core started as a macOS Apple-Silicon performance runtime. The long-te
 - Operator registry contracts now enforce rank/layout/dtype/shape/attribute validation with deterministic reason codes.
 - Validation pass pack v2 emits pass-scoped diagnostics (`schema_contract/topology/alias_lifetime/layout_flow/backend_capability`) for C++/Python graph reports.
 - Planner v3 includes graph-hash/device/sync-policy plan-cache with hit/miss telemetry and benchmark artifact exposure.
+- Phase B exit audit evidence (`phase_b_exit_audit`) is wired into CI/release artifacts with ROADMAP 11.2 metric checks and candidate-bundle manifest output.
 
 ## 4) Evolution Plan (Mac Runtime -> General Framework)
 
@@ -339,6 +340,9 @@ Each milestone tracks:
 26. [completed] v0.2.2 planner v3 + plan cache (M-B graph/benchmark/ci)
    - deliverable: graph-hash/device/sync-policy keyed cache with hit-rate telemetry in plan summary and graph/eager artifact outputs.
    - acceptance: host-dispatch evidence remains fixed in artifacts and plan-cache hit/miss fields are always present.
+27. [completed] v0.2.7 phase B exit audit + release-candidate evidence bundle (M-B benchmark/ci/docs)
+   - deliverable: release/CI runs generate `phase_b_exit_audit` (JSON/MD) and candidate-bundle manifest with fixed evidence file hashing.
+   - acceptance: ROADMAP 11.2 metrics (dispatch/chained-latency/adoption) are emitted every run and release tag gate checks README/ROADMAP version sync.
 
 Progress update history is auto-generated from:
 
@@ -348,7 +352,7 @@ Progress update history is auto-generated from:
 
 ### Progress History (Auto-generated)
 
-- Total tracked updates: `69`
+- Total tracked updates: `75`
 - Source of truth: `docs/roadmap_updates.json`
 - Quick add command:
   `python scripts/generate_roadmap_history.py --add --date YYYY-MM-DD --milestone M-A --area runtime --title "your update"`
@@ -357,7 +361,7 @@ Progress update history is auto-generated from:
 
 | Date | Updates | Milestones | Highlights |
 | --- | --- | --- | --- |
-| 2026-04-09 | 5 | M-B, M-A | Completed v0.2.2 planner v3 + plan cache with cache hit-rate telemetry and fixed graph/eager dispatch evidence artifacts. / Completed v0.2.1 validation pass pack v2 with pass-scoped topology/alias-lifetime/layout-flow/backend-capability reports. / ... (+3 more) |
+| 2026-04-09 | 11 | M-B, M-A | Completed v0.2.7 Phase B exit audit with release-candidate artifact bundle and ROADMAP 11.2 metric gate wiring. / Completed v0.2.6 docs + operator onboarding kit with copy-paste smoke gate and MkDocs navigation integration. / ... (+9 more) |
 | 2026-04-08 | 19 | M-D, M-C, M-B, M-A | Completed v0.1.32 autograd bootstrap v0 (matmul/add/relu backward + tiny 1-step SGD) with Torch gradient parity smoke. / Completed v0.1.31 checkpoint IO v1.1 model-level save/load helpers with v1 forward-compat smoke coverage. / ... (+17 more) |
 | 2026-04-07 | 6 | M-A | Optimized tiny conv->attn integrated path using op_path timeline bottleneck guidance and tiny-chain CPU preference heuristic. / Finalized lc.api engine bridge (lightning/torch/auto) with same-surface engine switching / ... (+4 more) |
 | 2026-04-02 | 5 | M-B, M-A | Completed v0.1.15 generated API reference pipeline (Python/C++) in docs build and removed API index placeholder entries. / Expanded graph-path contract coverage: sync policy(auto/always/never), fallback/device-change boundary checks, and shape/layout/lifetime regression guards. / ... (+3 more) |
@@ -369,12 +373,18 @@ Progress update history is auto-generated from:
 
 **Detailed Timeline**
 
-#### 2026-04-09 (5 updates)
+#### 2026-04-09 (11 updates)
 
+- [completed] [M-B] [benchmark] Completed v0.2.7 Phase B exit audit with release-candidate artifact bundle and ROADMAP 11.2 metric gate wiring. (`local`)
+- [completed] [M-B] [docs] Completed v0.2.6 docs + operator onboarding kit with copy-paste smoke gate and MkDocs navigation integration. (`local`)
+- [completed] [M-B] [benchmark] Completed v0.2.5 benchmark/release gate strengthening with fixed planner/fallback evidence fields plus chained latency/unsupported ratio gates. (`local`)
+- [completed] [M-B] [python] Completed v0.2.4 hybrid execution policy formalization with subgraph-level route_policy (conv/attention/graph engines) and deterministic graph fallback reason codes. (`local`)
+- [completed] [M-B] [graph] Completed v0.2.3 integrated conv->attn graph coverage expansion (conv2d_nchw3x3 attrs + qkv_pack_repeat path) with widened shape-set benchmark cases. (`local`)
 - [completed] [M-B] [graph] Completed v0.2.2 planner v3 + plan cache with cache hit-rate telemetry and fixed graph/eager dispatch evidence artifacts. (`local`)
 - [completed] [M-B] [graph] Completed v0.2.1 validation pass pack v2 with pass-scoped topology/alias-lifetime/layout-flow/backend-capability reports. (`local`)
 - [completed] [M-B] [docs] Completed v0.2.0-rc0 B0 contract baseline freeze with docs/CI constant sync and baseline artifact generation. (`local`)
 - [completed] [M-B] [graph] Completed v0.2.0 Operator Registry v2 contracts with rank/layout/dtype/shape/attribute validation and deterministic reason codes. (`local`)
+- [completed] [M-A] [release] Bumped public baseline to v0.2.7 and aligned README/ROADMAP/pyproject version metadata. (`local`)
 - [completed] [M-A] [release] Bumped public baseline to v0.2.2 and aligned README/ROADMAP/pyproject version metadata. (`local`)
 
 #### 2026-04-08 (19 updates)
@@ -467,7 +477,7 @@ Progress update history is auto-generated from:
 
 <!-- AUTO-ROADMAP-HISTORY:END -->
 
-## 11) Release-Train Detail (v0.2.2 -> v1.0)
+## 11) Release-Train Detail (v0.2.7 -> v1.0)
 
 ## 11.1 2026 Q2 (v0.1.32 ~ v0.2.0): Runtime Contracts [completed]
 

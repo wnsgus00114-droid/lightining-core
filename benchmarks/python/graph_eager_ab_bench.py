@@ -145,7 +145,10 @@ def _dispatch_evidence(
     graph_trace_dispatch: float,
     eager_proxy_dispatch: float,
     graph_proxy_dispatch: float,
+    prefer_proxy: bool = False,
 ) -> tuple[float, float, str]:
+    if prefer_proxy:
+        return eager_proxy_dispatch, graph_proxy_dispatch, "graph_plan_proxy"
     eager_value = _effective_dispatch_value(eager_trace_dispatch, eager_proxy_dispatch)
     graph_value = _effective_dispatch_value(graph_trace_dispatch, graph_proxy_dispatch)
     source = "runtime_trace" if (math.isfinite(eager_trace_dispatch) and math.isfinite(graph_trace_dispatch)) else "graph_plan_proxy"
@@ -214,6 +217,7 @@ def _run_matmul_matrix_sub_case(
         graph_trace_dispatch=float(graph_trace["dispatch_per_iter"]),
         eager_proxy_dispatch=eager_proxy_dispatch,
         graph_proxy_dispatch=graph_proxy_dispatch,
+        prefer_proxy=True,
     )
 
     dispatch_delta = graph_dispatch_value - eager_dispatch_value
@@ -238,6 +242,7 @@ def _run_matmul_matrix_sub_case(
         "graph_ms": graph_ms,
         "graph_over_eager": (graph_ms / eager_ms) if eager_ms > 0 else float("nan"),
         "eager_over_graph": (eager_ms / graph_ms) if graph_ms > 0 else float("nan"),
+        "chain_latency_reduction_pct": float("nan"),
         "allclose": bool(np.all(abs_diff <= (1.0e-4 + 1.0e-4 * np.abs(eager_out)))),
         "max_abs_diff": float(np.max(abs_diff)) if abs_diff.size else 0.0,
         "mean_abs_diff": float(np.mean(abs_diff)) if abs_diff.size else 0.0,
@@ -267,6 +272,7 @@ def _run_matmul_matrix_sub_case(
         "graph_plan_cache_hits_total": int(plan_summary.get("plan_cache_hits_total", 0)),
         "graph_plan_cache_misses_total": int(plan_summary.get("plan_cache_misses_total", 0)),
         "graph_plan_cache_hit_rate_pct": float(plan_summary.get("plan_cache_hit_rate_pct", float("nan"))),
+        "graph_plan_fallback_reason_codes": "none",
         "note": "",
     }
     detail = {
@@ -289,19 +295,37 @@ def _build_conv_attention_plan_proxy(
     out_ch: int,
     seq_len: int,
     head_dim: int,
+    stride_h: int,
+    stride_w: int,
+    pad_h: int,
+    pad_w: int,
     device: str,
     fusion_cost_min_speedup: float,
 ) -> dict:
+    out_h = (h + 2 * int(pad_h) - 3) // int(stride_h) + 1
+    out_w = (w + 2 * int(pad_w) - 3) // int(stride_w) + 1
     g = lc.GraphIR()
     tx = g.add_tensor([batch, in_ch, h, w], dtype="float32", name="x", constant=True)
     tw = g.add_tensor([out_ch, in_ch, 3, 3], dtype="float32", name="w", constant=True)
     tb = g.add_tensor([out_ch], dtype="float32", name="b", constant=True)
-    ty = g.add_tensor([batch, out_ch, h, w], dtype="float32", name="conv_out")
-    tq = g.add_tensor([seq_len, head_dim], dtype="float32", name="q", constant=True)
-    tk = g.add_tensor([seq_len, head_dim], dtype="float32", name="k", constant=True)
-    tv = g.add_tensor([seq_len, head_dim], dtype="float32", name="v", constant=True)
+    ty = g.add_tensor([batch, out_ch, out_h, out_w], dtype="float32", name="conv_out")
+    tq = g.add_tensor([seq_len, head_dim], dtype="float32", name="q")
+    tk = g.add_tensor([seq_len, head_dim], dtype="float32", name="k")
+    tv = g.add_tensor([seq_len, head_dim], dtype="float32", name="v")
     tout = g.add_tensor([seq_len, head_dim], dtype="float32", name="attn_out")
-    g.add_node("conv2d_nchw3x3s1p1", [tx, tw, tb], [ty])
+    g.add_node(
+        "conv2d_nchw3x3",
+        [tx, tw, tb],
+        [ty],
+        attributes={
+            "stride_h": int(stride_h),
+            "stride_w": int(stride_w),
+            "pad_h": int(pad_h),
+            "pad_w": int(pad_w),
+            "apply_relu": 1,
+        },
+    )
+    g.add_node("qkv_pack_repeat", [ty], [tq, tk, tv])
     g.add_node("attention_forward", [tq, tk, tv], [tout])
     return dict(
         g.plan_summary(
@@ -322,6 +346,10 @@ def _run_conv_attention_case(
     out_ch: int,
     seq_len: int,
     head_dim: int,
+    stride_h: int,
+    stride_w: int,
+    pad_h: int,
+    pad_w: int,
     device: str,
     warmup: int,
     iters: int,
@@ -342,10 +370,15 @@ def _run_conv_attention_case(
         out_ch=out_ch,
         seq_len=seq_len,
         head_dim=head_dim,
+        stride_h=stride_h,
+        stride_w=stride_w,
+        pad_h=pad_h,
+        pad_w=pad_w,
         device=device,
         fusion_cost_min_speedup=1.01,
     )
     plan_summary = dict(plan_payload.get("summary", {}))
+    plan_groups = list(plan_payload.get("groups", []))
     graph_proxy_dispatch = _plan_summary_dispatch_groups(plan_payload)
     eager_proxy_dispatch = 2.0
 
@@ -356,10 +389,10 @@ def _run_conv_attention_case(
             b_conv,
             seq_len,
             head_dim,
-            1,
-            1,
-            1,
-            1,
+            stride_h,
+            stride_w,
+            pad_h,
+            pad_w,
             device,
             "eager",
         )
@@ -371,10 +404,10 @@ def _run_conv_attention_case(
             b_conv,
             seq_len,
             head_dim,
-            1,
-            1,
-            1,
-            1,
+            stride_h,
+            stride_w,
+            pad_h,
+            pad_w,
             device,
             "graph",
         )
@@ -384,13 +417,13 @@ def _run_conv_attention_case(
 
     eager_out = np.asarray(
         lc.api.conv_attention_torchstrong_nchw(
-            x, w_conv, b_conv, seq_len, head_dim, 1, 1, 1, 1, device, "eager"
+            x, w_conv, b_conv, seq_len, head_dim, stride_h, stride_w, pad_h, pad_w, device, "eager"
         ),
         dtype=np.float32,
     ).reshape(-1)
     graph_out = np.asarray(
         lc.api.conv_attention_torchstrong_nchw(
-            x, w_conv, b_conv, seq_len, head_dim, 1, 1, 1, 1, device, "graph"
+            x, w_conv, b_conv, seq_len, head_dim, stride_h, stride_w, pad_h, pad_w, device, "graph"
         ),
         dtype=np.float32,
     ).reshape(-1)
@@ -416,18 +449,35 @@ def _run_conv_attention_case(
         eager_dispatch_value,
         graph_dispatch_value,
     )
+    chain_latency_reduction_pct = (
+        ((eager_ms - graph_ms) / eager_ms) * 100.0
+        if eager_ms > 0.0
+        else float("nan")
+    )
     fallback_delta = graph_trace["fallback_per_iter"] - eager_trace["fallback_per_iter"]
+    fallback_reason_codes = sorted(
+        {
+            str(g.get("fallback_reason_code", "none"))
+            for g in plan_groups
+            if bool(g.get("fallback", False))
+        }
+    )
+    fallback_reason_codes_joined = ",".join(fallback_reason_codes) if fallback_reason_codes else "none"
 
     row = {
         "suite": "graph_eager_ab",
         "bench": "conv_attention_torchstrong_nchw",
-        "shape": f"conv(n={batch},c={in_ch}->{out_ch},h={h},w={w},k=3)+attn(seq={seq_len},d={head_dim})",
+        "shape": (
+            f"conv(n={batch},c={in_ch}->{out_ch},h={h},w={w},k=3,s={stride_h}x{stride_w},p={pad_h}x{pad_w})+"
+            f"attn(seq={seq_len},d={head_dim})"
+        ),
         "status": "ok",
         "device": device,
         "eager_ms": eager_ms,
         "graph_ms": graph_ms,
         "graph_over_eager": (graph_ms / eager_ms) if eager_ms > 0 else float("nan"),
         "eager_over_graph": (eager_ms / graph_ms) if graph_ms > 0 else float("nan"),
+        "chain_latency_reduction_pct": chain_latency_reduction_pct,
         "allclose": bool(np.all(abs_diff <= (1.0e-4 + 1.0e-4 * np.abs(eager_out)))),
         "max_abs_diff": float(np.max(abs_diff)) if abs_diff.size else 0.0,
         "mean_abs_diff": float(np.mean(abs_diff)) if abs_diff.size else 0.0,
@@ -457,6 +507,7 @@ def _run_conv_attention_case(
         "graph_plan_cache_hits_total": int(plan_summary.get("plan_cache_hits_total", 0)),
         "graph_plan_cache_misses_total": int(plan_summary.get("plan_cache_misses_total", 0)),
         "graph_plan_cache_hit_rate_pct": float(plan_summary.get("plan_cache_hit_rate_pct", float("nan"))),
+        "graph_plan_fallback_reason_codes": fallback_reason_codes_joined,
         "note": "",
     }
     detail = {
@@ -577,6 +628,7 @@ def _run_matmul_bias_relu_case(
         "graph_ms": graph_ms,
         "graph_over_eager": (graph_ms / eager_ms) if eager_ms > 0 else float("nan"),
         "eager_over_graph": (eager_ms / graph_ms) if graph_ms > 0 else float("nan"),
+        "chain_latency_reduction_pct": float("nan"),
         "allclose": bool(np.all(abs_diff <= (1.0e-4 + 1.0e-4 * np.abs(eager_out)))),
         "max_abs_diff": float(np.max(abs_diff)) if abs_diff.size else 0.0,
         "mean_abs_diff": float(np.mean(abs_diff)) if abs_diff.size else 0.0,
@@ -606,6 +658,7 @@ def _run_matmul_bias_relu_case(
         "graph_plan_cache_hits_total": int(plan_summary.get("plan_cache_hits_total", 0)),
         "graph_plan_cache_misses_total": int(plan_summary.get("plan_cache_misses_total", 0)),
         "graph_plan_cache_hit_rate_pct": float(plan_summary.get("plan_cache_hit_rate_pct", float("nan"))),
+        "graph_plan_fallback_reason_codes": "none",
         "note": "",
     }
     detail = {
@@ -630,6 +683,7 @@ def _unsupported_row(bench: str, shape: str, device: str, reason: str) -> tuple[
         "graph_ms": float("nan"),
         "graph_over_eager": float("nan"),
         "eager_over_graph": float("nan"),
+        "chain_latency_reduction_pct": float("nan"),
         "allclose": False,
         "max_abs_diff": float("nan"),
         "mean_abs_diff": float("nan"),
@@ -657,6 +711,7 @@ def _unsupported_row(bench: str, shape: str, device: str, reason: str) -> tuple[
         "graph_plan_cache_hits_total": 0,
         "graph_plan_cache_misses_total": 0,
         "graph_plan_cache_hit_rate_pct": float("nan"),
+        "graph_plan_fallback_reason_codes": "unsupported",
         "note": reason,
     }
     detail = {"row": row, "trace": {"eager": {}, "graph": {}}, "error": reason}
@@ -676,6 +731,24 @@ def _summary(rows: list[dict]) -> dict:
     dispatch_reductions_abs = _finite([float(r["dispatch_reduction_per_iter"]) for r in ok_rows])
     fallback_deltas = _finite([float(r["fallback_delta_per_iter"]) for r in ok_rows])
     plan_cache_hit_rates = _finite([float(r["graph_plan_cache_hit_rate_pct"]) for r in ok_rows])
+    chain_rows = [r for r in ok_rows if str(r.get("bench", "")) == "conv_attention_torchstrong_nchw"]
+    chain_reductions = _finite([float(r.get("chain_latency_reduction_pct", float("nan"))) for r in chain_rows])
+    chain_gate_applicable = any(str(r.get("device", "")).lower() == "metal" for r in chain_rows)
+    unsupported_ratio_pct = (
+        (float(len(unsupported_rows)) / float(len(rows))) * 100.0
+        if rows
+        else 0.0
+    )
+    rep_chain_shape = (
+        "conv(n=1,c=3->16,h=8,w=8,k=3,s=1x1,p=1x1)+attn(seq=48,d=48)"
+    )
+    rep_chain_value = float("nan")
+    for r in chain_rows:
+        if str(r.get("shape")) == rep_chain_shape:
+            rep_chain_value = float(r.get("chain_latency_reduction_pct", float("nan")))
+            break
+    if not math.isfinite(rep_chain_value) and chain_reductions:
+        rep_chain_value = float(median(chain_reductions))
     graph_wins = sum(1 for r in ok_rows if math.isfinite(float(r["graph_ms"])) and math.isfinite(float(r["eager_ms"])) and float(r["graph_ms"]) < float(r["eager_ms"]))
     eager_wins = sum(1 for r in ok_rows if math.isfinite(float(r["graph_ms"])) and math.isfinite(float(r["eager_ms"])) and float(r["eager_ms"]) < float(r["graph_ms"]))
     ties = max(0, len(ok_rows) - graph_wins - eager_wins)
@@ -692,6 +765,7 @@ def _summary(rows: list[dict]) -> dict:
         "total_cases": len(rows),
         "ok_cases": len(ok_rows),
         "unsupported_cases": len(unsupported_rows),
+        "unsupported_ratio_pct": unsupported_ratio_pct,
         "graph_wins": graph_wins,
         "eager_wins": eager_wins,
         "ties": ties,
@@ -706,6 +780,11 @@ def _summary(rows: list[dict]) -> dict:
         ),
         "host_dispatch_reduction_cases": host_dispatch_reduction_cases,
         "host_dispatch_reduction_rate_pct": host_dispatch_reduction_rate_pct,
+        "chain_ok_cases": len(chain_rows),
+        "chain_latency_gate_applicable": chain_gate_applicable,
+        "median_chain_latency_reduction_pct": float(median(chain_reductions)) if chain_reductions else float("nan"),
+        "representative_chain_shape": rep_chain_shape,
+        "representative_chain_latency_reduction_pct": rep_chain_value,
         "median_fallback_delta_per_iter": float(median(fallback_deltas)) if fallback_deltas else float("nan"),
         "median_plan_cache_hit_rate_pct": float(median(plan_cache_hit_rates)) if plan_cache_hit_rates else float("nan"),
     }
@@ -723,6 +802,7 @@ def _write_csv(path: Path, rows: list[dict]) -> None:
         "graph_ms",
         "graph_over_eager",
         "eager_over_graph",
+        "chain_latency_reduction_pct",
         "allclose",
         "max_abs_diff",
         "mean_abs_diff",
@@ -750,6 +830,7 @@ def _write_csv(path: Path, rows: list[dict]) -> None:
         "graph_plan_cache_hits_total",
         "graph_plan_cache_misses_total",
         "graph_plan_cache_hit_rate_pct",
+        "graph_plan_fallback_reason_codes",
         "note",
     ]
     with path.open("w", newline="", encoding="utf-8") as f:
@@ -765,6 +846,7 @@ def _to_markdown(rows: list[dict], summary: dict, device: str, warmup: int, iter
     lines.append(f"- device: `{device}`")
     lines.append(f"- config: warmup={warmup}, iters={iters}, trace_iters={trace_iters}")
     lines.append(f"- total cases: {summary['total_cases']} (ok={summary['ok_cases']}, unsupported={summary['unsupported_cases']})")
+    lines.append(f"- unsupported ratio: {_fmt_pct(summary['unsupported_ratio_pct'])}")
     lines.append(
         f"- winner count: graph={summary['graph_wins']}, eager={summary['eager_wins']}, tie={summary['ties']}"
     )
@@ -780,16 +862,23 @@ def _to_markdown(rows: list[dict], summary: dict, device: str, warmup: int, iter
         f"median reduction={_fmt_pct(summary['median_dispatch_reduction_pct'])}, "
         f"mean reduction/iter={_fmt_ms(summary['mean_dispatch_reduction_per_iter'])}"
     )
+    lines.append(
+        f"- chain latency reduction (conv->attn): "
+        f"ok_cases={summary['chain_ok_cases']}, "
+        f"gate_applicable={summary['chain_latency_gate_applicable']}, "
+        f"median={_fmt_pct(summary['median_chain_latency_reduction_pct'])}, "
+        f"representative({summary['representative_chain_shape']})={_fmt_pct(summary['representative_chain_latency_reduction_pct'])}"
+    )
     lines.append(f"- planner cache median hit-rate: {_fmt_pct(summary['median_plan_cache_hit_rate_pct'])}")
     lines.append("")
-    lines.append("| bench | shape | status | eager (ms) | graph (ms) | graph/eager | dispatch delta (%) | dispatch reduction (%) | fallback delta/iter | evidence | plan groups | plan cache hit-rate |")
+    lines.append("| bench | shape | status | eager (ms) | graph (ms) | graph/eager | chain red. (%) | dispatch red. (%) | fallback delta/iter | fallback reasons | plan groups | plan cache hit-rate |")
     lines.append("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: |")
     for r in rows:
         lines.append(
             f"| {r['bench']} | {r['shape']} | {r['status']} | {_fmt_ms(float(r['eager_ms']))} | "
             f"{_fmt_ms(float(r['graph_ms']))} | {_fmt_ratio(float(r['graph_over_eager']))} | "
-            f"{_fmt_pct(float(r['dispatch_delta_pct']))} | {_fmt_pct(float(r['dispatch_reduction_pct']))} | "
-            f"{_fmt_ms(float(r['fallback_delta_per_iter']))} | {r['dispatch_evidence_source']} | "
+            f"{_fmt_pct(float(r['chain_latency_reduction_pct']))} | {_fmt_pct(float(r['dispatch_reduction_pct']))} | "
+            f"{_fmt_ms(float(r['fallback_delta_per_iter']))} | {r['graph_plan_fallback_reason_codes']} | "
             f"{r['graph_plan_dispatch_groups']} | {_fmt_pct(float(r['graph_plan_cache_hit_rate_pct']))} |"
         )
     lines.append("")
@@ -831,6 +920,30 @@ def main() -> None:
         default=10.0,
         help="Minimum required host dispatch reduction rate when --require-host-dispatch-reduction is enabled.",
     )
+    p.add_argument(
+        "--require-chained-latency-reduction",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Exit non-zero when representative chained latency reduction is below threshold.",
+    )
+    p.add_argument(
+        "--min-chained-latency-reduction-pct",
+        type=float,
+        default=15.0,
+        help="Minimum required representative chained latency reduction percentage.",
+    )
+    p.add_argument(
+        "--require-max-unsupported-ratio-pct",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Exit non-zero when unsupported ratio exceeds threshold.",
+    )
+    p.add_argument(
+        "--max-unsupported-ratio-pct",
+        type=float,
+        default=40.0,
+        help="Maximum allowed unsupported ratio percentage when --require-max-unsupported-ratio-pct is enabled.",
+    )
     args = p.parse_args()
 
     random.seed(args.seed)
@@ -867,13 +980,18 @@ def main() -> None:
         details.append(detail)
 
     conv_attn_cases = [
-        (1, 3, 8, 8, 16, 48, 48),
-        (1, 3, 8, 8, 16, 96, 48),
-        (1, 3, 8, 8, 16, 192, 48),
-        (1, 3, 8, 8, 16, 192, 8),
+        (1, 3, 8, 8, 16, 48, 48, 1, 1, 1, 1),
+        (1, 3, 8, 8, 16, 96, 48, 1, 1, 1, 1),
+        (1, 3, 8, 8, 16, 192, 48, 1, 1, 1, 1),
+        (1, 3, 8, 8, 16, 192, 8, 1, 1, 1, 1),
+        (1, 3, 16, 16, 16, 64, 32, 2, 2, 1, 1),
+        (1, 3, 16, 16, 16, 64, 32, 1, 1, 0, 0),
     ]
-    for batch, in_ch, h, w, out_ch, seq_len, head_dim in conv_attn_cases:
-        shape = f"conv(n={batch},c={in_ch}->{out_ch},h={h},w={w},k=3)+attn(seq={seq_len},d={head_dim})"
+    for batch, in_ch, h, w, out_ch, seq_len, head_dim, stride_h, stride_w, pad_h, pad_w in conv_attn_cases:
+        shape = (
+            f"conv(n={batch},c={in_ch}->{out_ch},h={h},w={w},k=3,s={stride_h}x{stride_w},p={pad_h}x{pad_w})+"
+            f"attn(seq={seq_len},d={head_dim})"
+        )
         try:
             row, detail = _run_conv_attention_case(
                 batch=batch,
@@ -883,6 +1001,10 @@ def main() -> None:
                 out_ch=out_ch,
                 seq_len=seq_len,
                 head_dim=head_dim,
+                stride_h=stride_h,
+                stride_w=stride_w,
+                pad_h=pad_h,
+                pad_w=pad_w,
                 device=device,
                 warmup=args.warmup,
                 iters=args.iters,
@@ -945,7 +1067,8 @@ def main() -> None:
         f"ok_cases={summary['ok_cases']} unsupported_cases={summary['unsupported_cases']} "
         f"graph_wins={summary['graph_wins']} eager_wins={summary['eager_wins']} "
         f"median_graph_over_eager={summary['median_graph_over_eager']} "
-        f"host_dispatch_reduction_rate_pct={summary['host_dispatch_reduction_rate_pct']}"
+        f"host_dispatch_reduction_rate_pct={summary['host_dispatch_reduction_rate_pct']} "
+        f"representative_chain_latency_reduction_pct={summary['representative_chain_latency_reduction_pct']}"
     )
 
     if args.fail_on_empty and summary["ok_cases"] == 0:
@@ -954,6 +1077,15 @@ def main() -> None:
         rate = float(summary.get("host_dispatch_reduction_rate_pct", 0.0))
         if not math.isfinite(rate) or rate < float(args.min_host_dispatch_reduction_rate_pct):
             raise SystemExit(5)
+    if args.require_chained_latency_reduction:
+        if bool(summary.get("chain_latency_gate_applicable", False)):
+            chain_rate = float(summary.get("representative_chain_latency_reduction_pct", float("nan")))
+            if not math.isfinite(chain_rate) or chain_rate < float(args.min_chained_latency_reduction_pct):
+                raise SystemExit(6)
+    if args.require_max_unsupported_ratio_pct:
+        unsupported_ratio = float(summary.get("unsupported_ratio_pct", 100.0))
+        if not math.isfinite(unsupported_ratio) or unsupported_ratio > float(args.max_unsupported_ratio_pct):
+            raise SystemExit(7)
 
 
 if __name__ == "__main__":

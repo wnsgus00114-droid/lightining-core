@@ -44,6 +44,12 @@ struct ConvAttnGraphSessionKey {
   std::size_t in_h;
   std::size_t in_w;
   std::size_t out_channels;
+  std::size_t kernel_h;
+  std::size_t kernel_w;
+  std::size_t stride_h;
+  std::size_t stride_w;
+  std::size_t pad_h;
+  std::size_t pad_w;
   std::size_t seq_len;
   std::size_t head_dim;
   bool has_bias;
@@ -55,6 +61,12 @@ struct ConvAttnGraphSessionKey {
            in_h == other.in_h &&
            in_w == other.in_w &&
            out_channels == other.out_channels &&
+           kernel_h == other.kernel_h &&
+           kernel_w == other.kernel_w &&
+           stride_h == other.stride_h &&
+           stride_w == other.stride_w &&
+           pad_h == other.pad_h &&
+           pad_w == other.pad_w &&
            seq_len == other.seq_len &&
            head_dim == other.head_dim &&
            has_bias == other.has_bias &&
@@ -69,6 +81,12 @@ struct ConvAttnGraphSessionKeyHash {
     h = (h * 1315423911u) ^ std::hash<std::size_t>{}(k.in_h);
     h = (h * 1315423911u) ^ std::hash<std::size_t>{}(k.in_w);
     h = (h * 1315423911u) ^ std::hash<std::size_t>{}(k.out_channels);
+    h = (h * 1315423911u) ^ std::hash<std::size_t>{}(k.kernel_h);
+    h = (h * 1315423911u) ^ std::hash<std::size_t>{}(k.kernel_w);
+    h = (h * 1315423911u) ^ std::hash<std::size_t>{}(k.stride_h);
+    h = (h * 1315423911u) ^ std::hash<std::size_t>{}(k.stride_w);
+    h = (h * 1315423911u) ^ std::hash<std::size_t>{}(k.pad_h);
+    h = (h * 1315423911u) ^ std::hash<std::size_t>{}(k.pad_w);
     h = (h * 1315423911u) ^ std::hash<std::size_t>{}(k.seq_len);
     h = (h * 1315423911u) ^ std::hash<std::size_t>{}(k.head_dim);
     h = (h * 1315423911u) ^ std::hash<bool>{}(k.has_bias);
@@ -78,8 +96,7 @@ struct ConvAttnGraphSessionKeyHash {
 };
 
 struct ConvAttnGraphSession {
-  lc::graph::GraphIR conv_graph;
-  lc::graph::GraphIR attn_graph;
+  lc::graph::GraphIR graph;
   lc::graph::GraphPlannerOptions options;
   std::size_t x_id{0};
   std::size_t w_id{0};
@@ -248,16 +265,6 @@ void copyArrayToVector(const py::array_t<float, py::array::c_style | py::array::
   }
 }
 
-void copySpanToVector(const float* src, std::size_t n, std::vector<float>* out) {
-  if (out == nullptr) {
-    throw std::invalid_argument("internal error: null output vector");
-  }
-  out->resize(n);
-  if (n != 0) {
-    std::memcpy(out->data(), src, n * sizeof(float));
-  }
-}
-
 std::shared_ptr<ConvAttnGraphSession> createConvAttnGraphSession(const ConvAttnGraphSessionKey& key) {
   auto session = std::make_shared<ConvAttnGraphSession>();
   session->options = defaultGraphPlannerOptions(key.device);
@@ -276,23 +283,25 @@ std::shared_ptr<ConvAttnGraphSession> createConvAttnGraphSession(const ConvAttnG
   w_spec.shape = {
       static_cast<std::int64_t>(key.out_channels),
       static_cast<std::int64_t>(key.in_channels),
-      3,
-      3};
+      static_cast<std::int64_t>(key.kernel_h),
+      static_cast<std::int64_t>(key.kernel_w)};
   w_spec.dtype = lc::graph::DType::kFloat32;
   w_spec.layout = lc::Layout::kContiguous;
 
+  const std::size_t out_h = (key.in_h + (2 * key.pad_h) - key.kernel_h) / key.stride_h + 1;
+  const std::size_t out_w = (key.in_w + (2 * key.pad_w) - key.kernel_w) / key.stride_w + 1;
   lc::graph::TensorSpec conv_out_spec;
   conv_out_spec.shape = {
       static_cast<std::int64_t>(key.batch),
       static_cast<std::int64_t>(key.out_channels),
-      static_cast<std::int64_t>(key.in_h),
-      static_cast<std::int64_t>(key.in_w)};
+      static_cast<std::int64_t>(out_h),
+      static_cast<std::int64_t>(out_w)};
   conv_out_spec.dtype = lc::graph::DType::kFloat32;
   conv_out_spec.layout = lc::Layout::kContiguous;
 
-  throwIfNotSuccess(session->conv_graph.addTensorSpec(x_spec, &session->x_id, "x", true));
-  throwIfNotSuccess(session->conv_graph.addTensorSpec(w_spec, &session->w_id, "w", true));
-  throwIfNotSuccess(session->conv_graph.addTensorSpec(conv_out_spec, &session->conv_out_id, "conv_out", false));
+  throwIfNotSuccess(session->graph.addTensorSpec(x_spec, &session->x_id, "x", true));
+  throwIfNotSuccess(session->graph.addTensorSpec(w_spec, &session->w_id, "w", true));
+  throwIfNotSuccess(session->graph.addTensorSpec(conv_out_spec, &session->conv_out_id, "conv_out", false));
 
   std::vector<std::size_t> conv_inputs = {session->x_id, session->w_id};
   if (key.has_bias) {
@@ -300,12 +309,9 @@ std::shared_ptr<ConvAttnGraphSession> createConvAttnGraphSession(const ConvAttnG
     b_spec.shape = {static_cast<std::int64_t>(key.out_channels)};
     b_spec.dtype = lc::graph::DType::kFloat32;
     b_spec.layout = lc::Layout::kContiguous;
-    throwIfNotSuccess(session->conv_graph.addTensorSpec(b_spec, &session->b_id, "b", true));
+    throwIfNotSuccess(session->graph.addTensorSpec(b_spec, &session->b_id, "b", true));
     conv_inputs.push_back(session->b_id);
   }
-  throwIfNotSuccess(session->conv_graph.addNode(
-      lc::graph::OpKind::kConv2dNchw3x3s1p1, conv_inputs, {session->conv_out_id}));
-  ensureGraphValidOrThrow(session->conv_graph, "conv2d_nchw3x3s1p1");
 
   lc::graph::TensorSpec attn_spec;
   attn_spec.shape = {
@@ -314,20 +320,35 @@ std::shared_ptr<ConvAttnGraphSession> createConvAttnGraphSession(const ConvAttnG
   attn_spec.dtype = lc::graph::DType::kFloat32;
   attn_spec.layout = lc::Layout::kContiguous;
 
-  throwIfNotSuccess(session->attn_graph.addTensorSpec(attn_spec, &session->q_id, "q", true));
-  throwIfNotSuccess(session->attn_graph.addTensorSpec(attn_spec, &session->k_id, "k", true));
-  throwIfNotSuccess(session->attn_graph.addTensorSpec(attn_spec, &session->v_id, "v", true));
-  throwIfNotSuccess(session->attn_graph.addTensorSpec(attn_spec, &session->out_id, "out", false));
-  throwIfNotSuccess(session->attn_graph.addNode(
+  throwIfNotSuccess(session->graph.addTensorSpec(attn_spec, &session->q_id, "q", false));
+  throwIfNotSuccess(session->graph.addTensorSpec(attn_spec, &session->k_id, "k", false));
+  throwIfNotSuccess(session->graph.addTensorSpec(attn_spec, &session->v_id, "v", false));
+  throwIfNotSuccess(session->graph.addTensorSpec(attn_spec, &session->out_id, "out", false));
+
+  std::unordered_map<std::string, std::int64_t> conv_attrs;
+  conv_attrs["stride_h"] = static_cast<std::int64_t>(key.stride_h);
+  conv_attrs["stride_w"] = static_cast<std::int64_t>(key.stride_w);
+  conv_attrs["pad_h"] = static_cast<std::int64_t>(key.pad_h);
+  conv_attrs["pad_w"] = static_cast<std::int64_t>(key.pad_w);
+  conv_attrs["apply_relu"] = 1;
+  throwIfNotSuccess(session->graph.addNode(
+      lc::graph::OpKind::kConv2dNchw3x3, conv_inputs, {session->conv_out_id}, {}, "conv", conv_attrs));
+  throwIfNotSuccess(session->graph.addNode(
+      lc::graph::OpKind::kQkvPackRepeat,
+      {session->conv_out_id},
+      {session->q_id, session->k_id, session->v_id},
+      {},
+      "qkv_pack"));
+  throwIfNotSuccess(session->graph.addNode(
       lc::graph::OpKind::kAttentionForward, {session->q_id, session->k_id, session->v_id}, {session->out_id}));
-  ensureGraphValidOrThrow(session->attn_graph, "attention_forward");
+  ensureGraphValidOrThrow(session->graph, "conv2d_nchw3x3->qkv_pack_repeat->attention_forward");
 
   return session;
 }
 
 std::shared_ptr<ConvAttnGraphSession> getOrCreateConvAttnGraphSession(const ConvAttnGraphSessionKey& key) {
   thread_local bool tls_valid = false;
-  thread_local ConvAttnGraphSessionKey tls_key{0, 0, 0, 0, 0, 0, 0, false, lc::Device::kCPU};
+  thread_local ConvAttnGraphSessionKey tls_key{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false, lc::Device::kCPU};
   thread_local std::shared_ptr<ConvAttnGraphSession> tls_session;
 
   if (tls_valid && tls_session && tls_key == key) {
@@ -755,14 +776,13 @@ void convAttentionTorchstrongNchwIntoGraph(
   if (in_channels != w_in_channels) {
     throw std::invalid_argument("x channels and w in_channels mismatch");
   }
-  if (stride_h != 1 || stride_w != 1 || pad_h != 1 || pad_w != 1 || kernel_h != 3 || kernel_w != 3) {
-    throw std::invalid_argument("graph mode currently supports conv2d_nchw3x3s1p1 only");
+  if (stride_h == 0 || stride_w == 0) {
+    throw std::invalid_argument("stride must be > 0");
   }
-
-  const std::size_t out_h = (in_h + (2 * pad_h) - kernel_h) / stride_h + 1;
-  const std::size_t out_w = (in_w + (2 * pad_w) - kernel_w) / stride_w + 1;
-  const std::size_t conv_size = batch * out_channels * out_h * out_w;
-  if (conv_size == 0) {
+  if (kernel_h != 3 || kernel_w != 3) {
+    throw std::invalid_argument("graph mode currently supports 3x3 conv weights");
+  }
+  if (in_h + (2 * pad_h) < kernel_h || in_w + (2 * pad_w) < kernel_w) {
     throw std::invalid_argument("invalid conv shape");
   }
 
@@ -782,65 +802,35 @@ void convAttentionTorchstrongNchwIntoGraph(
       in_h,
       in_w,
       out_channels,
+      kernel_h,
+      kernel_w,
+      stride_h,
+      stride_w,
+      pad_h,
+      pad_w,
       seq_len,
       head_dim,
       has_bias,
       device};
   auto graph_session = getOrCreateConvAttnGraphSession(graph_key);
 
-  thread_local std::unordered_map<std::size_t, std::vector<float>> conv_feeds;
-  thread_local std::unordered_map<std::size_t, std::vector<float>> conv_values;
-  conv_feeds.clear();
-  conv_values.clear();
+  thread_local std::unordered_map<std::size_t, std::vector<float>> graph_feeds;
+  thread_local std::unordered_map<std::size_t, std::vector<float>> graph_values;
+  graph_feeds.clear();
+  graph_values.clear();
 
-  copyArrayToVector(x, &conv_feeds[graph_session->x_id]);
-  copyArrayToVector(w, &conv_feeds[graph_session->w_id]);
+  copyArrayToVector(x, &graph_feeds[graph_session->x_id]);
+  copyArrayToVector(w, &graph_feeds[graph_session->w_id]);
   if (has_bias) {
-    copyArrayToVector(bias_arr, &conv_feeds[graph_session->b_id]);
+    copyArrayToVector(bias_arr, &graph_feeds[graph_session->b_id]);
   }
-  const lc::runtime::Status conv_exec_status =
-      graph_session->conv_graph.executeF32(graph_session->options, conv_feeds, &conv_values, nullptr, nullptr);
-  if (conv_exec_status != lc::runtime::Status::kSuccess) {
-    throwGraphExecuteFailure("conv2d_nchw3x3s1p1", conv_exec_status, device_name);
+  const lc::runtime::Status graph_exec_status =
+      graph_session->graph.executeF32(graph_session->options, graph_feeds, &graph_values, nullptr, nullptr);
+  if (graph_exec_status != lc::runtime::Status::kSuccess) {
+    throwGraphExecuteFailure("conv2d_nchw3x3->qkv_pack_repeat->attention_forward", graph_exec_status, device_name);
   }
-  auto conv_it = conv_values.find(graph_session->conv_out_id);
-  if (conv_it == conv_values.end()) {
-    throw std::runtime_error("graph conv output missing");
-  }
-  const std::vector<float>& conv_flat = conv_it->second;
-
-  const std::size_t total = need * 3;
-  thread_local std::vector<float> packed;
-  if (packed.size() < total) {
-    packed.resize(total);
-  }
-  std::size_t copied = std::min(conv_flat.size(), total);
-  if (copied == 0 && total != 0) {
-    throw std::runtime_error("graph conv output is empty");
-  }
-  std::memcpy(packed.data(), conv_flat.data(), copied * sizeof(float));
-  while (copied < total) {
-    const std::size_t chunk = std::min(copied, total - copied);
-    std::memcpy(packed.data() + copied, packed.data(), chunk * sizeof(float));
-    copied += chunk;
-  }
-
-  thread_local std::unordered_map<std::size_t, std::vector<float>> attn_feeds;
-  thread_local std::unordered_map<std::size_t, std::vector<float>> attn_values;
-  attn_feeds.clear();
-  attn_values.clear();
-
-  copySpanToVector(packed.data(), need, &attn_feeds[graph_session->q_id]);
-  copySpanToVector(packed.data() + need, need, &attn_feeds[graph_session->k_id]);
-  copySpanToVector(packed.data() + (2 * need), need, &attn_feeds[graph_session->v_id]);
-
-  const lc::runtime::Status attn_exec_status =
-      graph_session->attn_graph.executeF32(graph_session->options, attn_feeds, &attn_values, nullptr, nullptr);
-  if (attn_exec_status != lc::runtime::Status::kSuccess) {
-    throwGraphExecuteFailure("attention_forward", attn_exec_status, device_name);
-  }
-  auto out_it = attn_values.find(graph_session->out_id);
-  if (out_it == attn_values.end() || out_it->second.size() != need) {
+  auto out_it = graph_values.find(graph_session->out_id);
+  if (out_it == graph_values.end() || out_it->second.size() != need) {
     throw std::runtime_error("graph attention output missing or size mismatch");
   }
   std::memcpy(out.mutable_data(), out_it->second.data(), need * sizeof(float));

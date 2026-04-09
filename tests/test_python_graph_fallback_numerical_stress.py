@@ -164,6 +164,53 @@ def _fallback_contract_case(*, device: str, rng: np.random.Generator) -> None:
     )
 
 
+def _graph_supported_conv_path_case(*, device: str, rng: np.random.Generator) -> None:
+    x = rng.random((1, 3, 8, 8), dtype=np.float32)
+    w3 = rng.random((16, 3, 3, 3), dtype=np.float32)
+    b = rng.random((16,), dtype=np.float32)
+    for stride_h, stride_w, pad_h, pad_w, seq, head_dim in (
+        (1, 1, 1, 1, 48, 48),
+        (2, 2, 1, 1, 64, 32),
+        (1, 1, 0, 0, 64, 32),
+    ):
+        eager = np.asarray(
+            lc_api.lightning_conv_attention_torchstrong_nchw(
+                x,
+                w3,
+                b,
+                seq=seq,
+                head_dim=head_dim,
+                stride_h=stride_h,
+                stride_w=stride_w,
+                pad_h=pad_h,
+                pad_w=pad_w,
+                device=device,
+                execution_mode="eager",
+            ),
+            dtype=np.float32,
+        ).reshape(-1)
+        graph_req = np.asarray(
+            lc_api.lightning_conv_attention_torchstrong_nchw(
+                x,
+                w3,
+                b,
+                seq=seq,
+                head_dim=head_dim,
+                stride_h=stride_h,
+                stride_w=stride_w,
+                pad_h=pad_h,
+                pad_w=pad_w,
+                device=device,
+                execution_mode="graph",
+            ),
+            dtype=np.float32,
+        ).reshape(-1)
+        _require(
+            np.allclose(eager, graph_req, atol=1.0e-4, rtol=1.0e-4),
+            "graph-request supported 3x3 shape should match eager output",
+        )
+
+
 def main() -> None:
     seed = 20260410
     rng = np.random.default_rng(seed)
@@ -182,6 +229,7 @@ def main() -> None:
 
     for _ in range(6):
         _fallback_contract_case(device=device, rng=rng)
+        _graph_supported_conv_path_case(device=device, rng=rng)
 
     print("python graph fallback/numerical stress smoke: ok")
 

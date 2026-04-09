@@ -20,14 +20,20 @@ lc::graph::OpKind parseOpKind(const std::string& op) {
   if (op == "attention_forward") {
     return lc::graph::OpKind::kAttentionForward;
   }
+  if (op == "conv2d_nchw3x3") {
+    return lc::graph::OpKind::kConv2dNchw3x3;
+  }
   if (op == "conv2d_nchw3x3s1p1") {
     return lc::graph::OpKind::kConv2dNchw3x3s1p1;
+  }
+  if (op == "qkv_pack_repeat") {
+    return lc::graph::OpKind::kQkvPackRepeat;
   }
   if (op == "relu") {
     return lc::graph::OpKind::kRelu;
   }
   throw std::invalid_argument(
-      "op must be one of: matmul, vector_add, matrix_sub, matrix_div, attention_forward, conv2d_nchw3x3s1p1, relu");
+      "op must be one of: matmul, vector_add, matrix_sub, matrix_div, attention_forward, conv2d_nchw3x3, conv2d_nchw3x3s1p1, qkv_pack_repeat, relu");
 }
 
 const char* toOpString(lc::graph::OpKind op) {

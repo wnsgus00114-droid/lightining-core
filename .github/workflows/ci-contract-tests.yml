@@ -63,6 +63,8 @@ jobs:
           python3 tests/test_python_graph_fallback_numerical_stress.py
           python3 tests/test_python_autograd_bootstrap_smoke.py
           python3 tests/test_python_graph_validation_report_smoke.py
+          python3 tests/test_python_operator_onboarding_smoke.py
+          python3 tests/test_python_phase_b_exit_audit_smoke.py
 
       - name: Publish CTest summary
         if: always()
@@ -85,6 +87,8 @@ jobs:
           echo "- python smoke: tests/test_python_graph_fallback_numerical_stress.py" >> "$GITHUB_STEP_SUMMARY"
           echo "- python smoke: tests/test_python_autograd_bootstrap_smoke.py" >> "$GITHUB_STEP_SUMMARY"
           echo "- python smoke: tests/test_python_graph_validation_report_smoke.py" >> "$GITHUB_STEP_SUMMARY"
+          echo "- python smoke: tests/test_python_operator_onboarding_smoke.py" >> "$GITHUB_STEP_SUMMARY"
+          echo "- python smoke: tests/test_python_phase_b_exit_audit_smoke.py" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload CTest artifacts
         if: always()

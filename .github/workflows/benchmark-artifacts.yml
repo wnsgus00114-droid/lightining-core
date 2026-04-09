@@ -17,9 +17,13 @@ jobs:
       LC_GRAPH_AB_TRACE_ITERS: "6"
       LC_GRAPH_AB_FUSION_COST_MIN_SPEEDUP: "1.01"
       LC_GRAPH_AB_MIN_HOST_DISPATCH_REDUCTION_RATE_PCT: "25.0"
+      LC_GRAPH_AB_MIN_CHAINED_LATENCY_REDUCTION_PCT: "15.0"
+      LC_GRAPH_AB_MAX_UNSUPPORTED_RATIO_PCT: "40.0"
       LC_FUSION_MAX_CONV: "1.15"
       LC_FUSION_MAX_MATMUL: "1.90"
       LC_FUSION_MAX_ATTENTION: "2.20"
+      LC_PHASE_B_EXIT_MIN_GRAPH_PIPELINE_ADOPTION_RATE_PCT: "100.0"
+      LC_PHASE_B_EXIT_ALLOW_CHAIN_LATENCY_NOT_APPLICABLE: "true"
     permissions:
       contents: read
 
@@ -72,6 +76,10 @@ jobs:
             --fusion-cost-min-speedup "$LC_GRAPH_AB_FUSION_COST_MIN_SPEEDUP" \
             --require-host-dispatch-reduction \
             --min-host-dispatch-reduction-rate-pct "$LC_GRAPH_AB_MIN_HOST_DISPATCH_REDUCTION_RATE_PCT" \
+            --require-chained-latency-reduction \
+            --min-chained-latency-reduction-pct "$LC_GRAPH_AB_MIN_CHAINED_LATENCY_REDUCTION_PCT" \
+            --require-max-unsupported-ratio-pct \
+            --max-unsupported-ratio-pct "$LC_GRAPH_AB_MAX_UNSUPPORTED_RATIO_PCT" \
             --csv benchmarks/reports/ci/graph_eager_ab.csv \
             --json benchmarks/reports/ci/graph_eager_ab.json \
             --md benchmarks/reports/ci/graph_eager_ab.md \
@@ -111,6 +119,37 @@ jobs:
             > benchmarks/reports/ci/fusion_pilot.log
           cat benchmarks/reports/ci/fusion_pilot.log
 
+      - name: Run Phase B exit audit
+        run: |
+          if [ "$LC_PHASE_B_EXIT_ALLOW_CHAIN_LATENCY_NOT_APPLICABLE" = "true" ]; then
+            CHAIN_APPLICABLE_FLAG="--allow-chain-latency-not-applicable"
+          else
+            CHAIN_APPLICABLE_FLAG="--no-allow-chain-latency-not-applicable"
+          fi
+
+          python benchmarks/python/phase_b_exit_audit.py \
+            --graph-json benchmarks/reports/ci/graph_eager_ab.json \
+            --contract-json docs/phase_b_graph_contract.json \
+            --out-json benchmarks/reports/ci/phase_b_exit_audit.json \
+            --out-md benchmarks/reports/ci/phase_b_exit_audit.md \
+            --bundle-json benchmarks/reports/ci/phase_b_exit_candidate_bundle.json \
+            --target-graph-pipeline-adoption-rate-pct "$LC_PHASE_B_EXIT_MIN_GRAPH_PIPELINE_ADOPTION_RATE_PCT" \
+            $CHAIN_APPLICABLE_FLAG \
+            --require-artifacts \
+            --artifact benchmarks/reports/ci/quick_bench.csv \
+            --artifact benchmarks/reports/ci/quick_bench_summary.json \
+            --artifact benchmarks/reports/ci/graph_eager_ab.csv \
+            --artifact benchmarks/reports/ci/graph_eager_ab.json \
+            --artifact benchmarks/reports/ci/engine_split_pure_lc.csv \
+            --artifact benchmarks/reports/ci/engine_split_pure_lc.json \
+            --artifact benchmarks/reports/ci/engine_split_interop.csv \
+            --artifact benchmarks/reports/ci/engine_split_interop.json \
+            --artifact benchmarks/reports/ci/fusion_pilot.csv \
+            --artifact benchmarks/reports/ci/fusion_pilot.json \
+            --require-pass \
+            > benchmarks/reports/ci/phase_b_exit_audit.log
+          cat benchmarks/reports/ci/phase_b_exit_audit.log
+
       - name: Publish summary to workflow
         if: always()
         run: |
@@ -139,6 +178,12 @@ jobs:
           else
             echo "fusion_pilot summary not found." >> "$GITHUB_STEP_SUMMARY"
           fi
+          if [ -f benchmarks/reports/ci/phase_b_exit_audit.md ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            cat benchmarks/reports/ci/phase_b_exit_audit.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "phase_b_exit_audit summary not found." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Upload benchmark artifacts
         if: always()
@@ -165,3 +210,7 @@ jobs:
             benchmarks/reports/ci/fusion_pilot.json
             benchmarks/reports/ci/fusion_pilot.md
             benchmarks/reports/ci/fusion_pilot.log
+            benchmarks/reports/ci/phase_b_exit_audit.json
+            benchmarks/reports/ci/phase_b_exit_audit.md
+            benchmarks/reports/ci/phase_b_exit_candidate_bundle.json
+            benchmarks/reports/ci/phase_b_exit_audit.log

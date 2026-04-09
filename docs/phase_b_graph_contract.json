@@ -1,5 +1,5 @@
 {
-  "contract_version": "phase_b_v0.2.0-rc0",
+  "contract_version": "phase_b_v0.2.7",
   "as_of_date": "2026-04-09",
   "graph_support": [
     {
@@ -31,11 +31,25 @@
       "shape_constraint": "q.shape == k.shape == v.shape == out.shape"
     },
     {
+      "op": "conv2d_nchw3x3",
+      "rank": "in(4,4[,1])->out(4)",
+      "dtype": "float32",
+      "layout": "contiguous",
+      "shape_constraint": "x[N,C,H,W], w[OC,C,3,3], out_h=(H+2*pad_h-3)/stride_h+1, out_w=(W+2*pad_w-3)/stride_w+1, optional bias[OC], optional apply_relu"
+    },
+    {
       "op": "conv2d_nchw3x3s1p1",
       "rank": "in(4,4[,1])->out(4)",
       "dtype": "float32",
       "layout": "contiguous",
-      "shape_constraint": "x[N,C,H,W], w[OC,C,3,3], out[N,OC,H,W], bias[OC]"
+      "shape_constraint": "fixed stride/pad path equivalent to conv2d_nchw3x3(stride=1,pad=1)"
+    },
+    {
+      "op": "qkv_pack_repeat",
+      "rank": "in(4)->out(2,2,2)",
+      "dtype": "float32",
+      "layout": "contiguous",
+      "shape_constraint": "flatten conv output, truncate/repeat into q/k/v with identical [seq,head_dim] shapes"
     },
     {
       "op": "relu",
@@ -57,6 +71,18 @@
     {
       "code": "fallback_planner_optimized",
       "description": "planner selected non-preferred backend to reduce boundary/sync churn"
+    },
+    {
+      "code": "graph_engine_not_lightning",
+      "description": "graph execution requested but route_policy.graph resolved to non-lightning engine; deterministic eager fallback"
+    },
+    {
+      "code": "graph_shape_unsupported",
+      "description": "graph execution requested but shape/kernel contract is outside graph-supported conv->attn path; deterministic eager fallback"
+    },
+    {
+      "code": "torch_unavailable_fallback",
+      "description": "torch route requested but torch runtime unavailable; deterministic lightning fallback"
     }
   ],
   "validation_passes": [
@@ -82,7 +108,9 @@
       "iters": 12,
       "trace_iters": 6,
       "fusion_cost_min_speedup": 1.01,
-      "min_host_dispatch_reduction_rate_pct": 25.0
+      "min_host_dispatch_reduction_rate_pct": 25.0,
+      "min_chained_latency_reduction_pct": 15.0,
+      "max_unsupported_ratio_pct": 40.0
     },
     "fusion_pilot": {
       "max_fused_over_unfused_conv": 1.15,
@@ -91,6 +119,15 @@
     },
     "planner_cache": {
       "target_min_hit_rate_pct": 50.0
+    },
+    "phase_b_exit_audit": {
+      "min_graph_pipeline_adoption_rate_pct": 100.0,
+      "allow_chain_latency_not_applicable": true,
+      "required_graph_benches": [
+        "matmul_matrix_sub",
+        "conv_attention_torchstrong_nchw",
+        "matmul_bias_relu_fusion_path"
+      ]
     }
   }
 }

@@ -1,5 +1,50 @@
 [
   {
+    "id": "2026-04-09-benchmark-completed-v0-2-7-phase-b-exit-audit-with-release-candidate-artifact-bundle-and-roadmap-11-2-metric-gate-wiring",
+    "date": "2026-04-09",
+    "milestone": "M-B",
+    "area": "benchmark",
+    "title": "Completed v0.2.7 Phase B exit audit with release-candidate artifact bundle and ROADMAP 11.2 metric gate wiring.",
+    "status": "completed",
+    "source": "local"
+  },
+  {
+    "id": "2026-04-09-docs-completed-v0-2-6-docs-operator-onboarding-kit-with-copy-paste-smoke-gate-and-mkdocs-navigation-integration",
+    "date": "2026-04-09",
+    "milestone": "M-B",
+    "area": "docs",
+    "title": "Completed v0.2.6 docs + operator onboarding kit with copy-paste smoke gate and MkDocs navigation integration.",
+    "status": "completed",
+    "source": "local"
+  },
+  {
+    "id": "2026-04-09-benchmark-completed-v0-2-5-benchmark-release-gate-strengthening-with-fixed-planner-fallback-evidence-fields-plus-chained-latency-unsupported-ratio-gates",
+    "date": "2026-04-09",
+    "milestone": "M-B",
+    "area": "benchmark",
+    "title": "Completed v0.2.5 benchmark/release gate strengthening with fixed planner/fallback evidence fields plus chained latency/unsupported ratio gates.",
+    "status": "completed",
+    "source": "local"
+  },
+  {
+    "id": "2026-04-09-python-completed-v0-2-4-hybrid-execution-policy-formalization-with-subgraph-level-route-policy-conv-attention-graph-engines-and-deterministic-graph-fallback-reason-codes",
+    "date": "2026-04-09",
+    "milestone": "M-B",
+    "area": "python",
+    "title": "Completed v0.2.4 hybrid execution policy formalization with subgraph-level route_policy (conv/attention/graph engines) and deterministic graph fallback reason codes.",
+    "status": "completed",
+    "source": "local"
+  },
+  {
+    "id": "2026-04-09-graph-completed-v0-2-3-integrated-conv-attn-graph-coverage-expansion-conv2d-nchw3x3-attrs-qkv-pack-repeat-path-with-widened-shape-set-benchmark-cases",
+    "date": "2026-04-09",
+    "milestone": "M-B",
+    "area": "graph",
+    "title": "Completed v0.2.3 integrated conv->attn graph coverage expansion (conv2d_nchw3x3 attrs + qkv_pack_repeat path) with widened shape-set benchmark cases.",
+    "status": "completed",
+    "source": "local"
+  },
+  {
     "id": "2026-04-09-graph-completed-v0-2-2-planner-v3-plan-cache-with-cache-hit-rate-telemetry-and-fixed-graph-eager-dispatch-evidence-artifacts",
     "date": "2026-04-09",
     "milestone": "M-B",
@@ -32,6 +77,15 @@
     "milestone": "M-B",
     "area": "graph",
     "title": "Completed v0.2.0 Operator Registry v2 contracts with rank/layout/dtype/shape/attribute validation and deterministic reason codes.",
+    "status": "completed",
+    "source": "local"
+  },
+  {
+    "id": "2026-04-09-release-bumped-public-baseline-to-v0-2-7-and-aligned-readme-roadmap-pyproject-version-metadata",
+    "date": "2026-04-09",
+    "milestone": "M-A",
+    "area": "release",
+    "title": "Bumped public baseline to v0.2.7 and aligned README/ROADMAP/pyproject version metadata.",
     "status": "completed",
     "source": "local"
   },

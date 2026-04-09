@@ -41,7 +41,9 @@ enum class OpKind {
   kMatrixSub,
   kMatrixDiv,
   kAttentionForward,
+  kConv2dNchw3x3,
   kConv2dNchw3x3s1p1,
+  kQkvPackRepeat,
   kRelu
 };
 
@@ -57,8 +59,12 @@ inline const char* opKindName(OpKind kind) {
       return "matrix_div";
     case OpKind::kAttentionForward:
       return "attention_forward";
+    case OpKind::kConv2dNchw3x3:
+      return "conv2d_nchw3x3";
     case OpKind::kConv2dNchw3x3s1p1:
       return "conv2d_nchw3x3s1p1";
+    case OpKind::kQkvPackRepeat:
+      return "qkv_pack_repeat";
     case OpKind::kRelu:
       return "relu";
     default:
@@ -211,6 +217,25 @@ class OperatorRegistry {
     }
     {
       OperatorSchema s;
+      s.kind = OpKind::kConv2dNchw3x3;
+      s.name = "conv2d_nchw3x3";
+      s.min_inputs = 2;
+      s.max_inputs = 3;
+      s.min_outputs = 1;
+      s.max_outputs = 1;
+      s.supports_cpu = true;
+      s.supports_cuda = false;
+      s.supports_metal = metal_supported;
+      s.input_ranks = {4, 4, 1};
+      s.output_ranks = {4};
+      s.require_contiguous_layout = true;
+      s.allow_float32 = true;
+      s.allow_float64 = false;
+      s.allowed_attributes = {"stride_h", "stride_w", "pad_h", "pad_w", "apply_relu"};
+      (void)registerSchema(s);
+    }
+    {
+      OperatorSchema s;
       s.kind = OpKind::kConv2dNchw3x3s1p1;
       s.name = "conv2d_nchw3x3s1p1";
       s.min_inputs = 2;
@@ -226,6 +251,24 @@ class OperatorRegistry {
       s.allow_float32 = true;
       s.allow_float64 = false;
       s.allowed_attributes = {"stride_h", "stride_w", "pad_h", "pad_w"};
+      (void)registerSchema(s);
+    }
+    {
+      OperatorSchema s;
+      s.kind = OpKind::kQkvPackRepeat;
+      s.name = "qkv_pack_repeat";
+      s.min_inputs = 1;
+      s.max_inputs = 1;
+      s.min_outputs = 3;
+      s.max_outputs = 3;
+      s.supports_cpu = true;
+      s.supports_cuda = false;
+      s.supports_metal = metal_supported;
+      s.input_ranks = {4};
+      s.output_ranks = {2, 2, 2};
+      s.require_contiguous_layout = true;
+      s.allow_float32 = true;
+      s.allow_float64 = false;
       (void)registerSchema(s);
     }
     {
@@ -865,17 +908,44 @@ class GraphIR {
             shape_violation("attention q/k/v/output shape constraint violated");
           }
         }
-      } else if (node.op == OpKind::kConv2dNchw3x3s1p1 && (node.inputs.size() == 2 || node.inputs.size() == 3) && node.outputs.size() == 1) {
+      } else if (
+          (node.op == OpKind::kConv2dNchw3x3 || node.op == OpKind::kConv2dNchw3x3s1p1) &&
+          (node.inputs.size() == 2 || node.inputs.size() == 3) &&
+          node.outputs.size() == 1) {
         if (tensor_valid(node.inputs[0]) && tensor_valid(node.inputs[1]) && tensor_valid(node.outputs[0])) {
           const auto& x = tensors_[node.inputs[0]].spec.shape;
           const auto& w = tensors_[node.inputs[1]].spec.shape;
           const auto& y = tensors_[node.outputs[0]].spec.shape;
           if (x.size() == 4 && w.size() == 4 && y.size() == 4) {
+            const auto attr_or = [&](const char* key, std::int64_t defv) -> std::int64_t {
+              auto it = node.attributes.find(key);
+              return it == node.attributes.end() ? defv : it->second;
+            };
+            const std::int64_t stride_h =
+                (node.op == OpKind::kConv2dNchw3x3s1p1) ? 1 : attr_or("stride_h", 1);
+            const std::int64_t stride_w =
+                (node.op == OpKind::kConv2dNchw3x3s1p1) ? 1 : attr_or("stride_w", 1);
+            const std::int64_t pad_h =
+                (node.op == OpKind::kConv2dNchw3x3s1p1) ? 1 : attr_or("pad_h", 0);
+            const std::int64_t pad_w =
+                (node.op == OpKind::kConv2dNchw3x3s1p1) ? 1 : attr_or("pad_w", 0);
+            if (stride_h <= 0 || stride_w <= 0 || pad_h < 0 || pad_w < 0) {
+              shape_violation("conv2d_nchw3x3 attribute constraint violated");
+            }
             const bool kernel_ok = (w[2] == 3 && w[3] == 3);
             const bool channel_ok = (x[1] == w[1]);
-            const bool output_ok = (y[0] == x[0] && y[1] == w[0] && y[2] == x[2] && y[3] == x[3]);
+            const std::int64_t numer_h = x[2] + (2 * pad_h) - 3;
+            const std::int64_t numer_w = x[3] + (2 * pad_w) - 3;
+            const bool numer_ok = (numer_h >= 0 && numer_w >= 0);
+            const std::int64_t expect_h = numer_ok ? (numer_h / stride_h + 1) : -1;
+            const std::int64_t expect_w = numer_ok ? (numer_w / stride_w + 1) : -1;
+            const bool output_ok =
+                (y[0] == x[0] && y[1] == w[0] && y[2] == expect_h && y[3] == expect_w);
             if (!kernel_ok || !channel_ok || !output_ok) {
-              shape_violation("conv2d_nchw3x3s1p1 shape constraint violated");
+              shape_violation(
+                  node.op == OpKind::kConv2dNchw3x3
+                      ? "conv2d_nchw3x3 shape constraint violated"
+                      : "conv2d_nchw3x3s1p1 shape constraint violated");
             }
           }
           if (node.inputs.size() == 3 && tensor_valid(node.inputs[2])) {
@@ -883,6 +953,19 @@ class GraphIR {
             if (b.size() != 1 || b[0] != w[0]) {
               shape_violation("conv2d bias shape constraint violated");
             }
+          }
+        }
+      } else if (node.op == OpKind::kQkvPackRepeat && node.inputs.size() == 1 && node.outputs.size() == 3) {
+        if (tensor_valid(node.inputs[0]) &&
+            tensor_valid(node.outputs[0]) &&
+            tensor_valid(node.outputs[1]) &&
+            tensor_valid(node.outputs[2])) {
+          const auto& in = tensors_[node.inputs[0]].spec.shape;
+          const auto& q = tensors_[node.outputs[0]].spec.shape;
+          const auto& k = tensors_[node.outputs[1]].spec.shape;
+          const auto& v = tensors_[node.outputs[2]].spec.shape;
+          if (in.size() != 4 || q.size() != 2 || k.size() != 2 || v.size() != 2 || q != k || q != v) {
+            shape_violation("qkv_pack_repeat shape constraint violated");
           }
         }
       }
@@ -2211,7 +2294,11 @@ class GraphIR {
       }
     }
 
-    if (node.outputs.size() != 1) {
+    if (node.op == OpKind::kQkvPackRepeat) {
+      if (node.outputs.size() != 3) {
+        return runtime::Status::kInvalidValue;
+      }
+    } else if (node.outputs.size() != 1) {
       return runtime::Status::kInvalidValue;
     }
 
@@ -2363,6 +2450,7 @@ class GraphIR {
         }
         return set_output(out_id, std::move(out));
       }
+      case OpKind::kConv2dNchw3x3:
       case OpKind::kConv2dNchw3x3s1p1: {
         if (node.inputs.size() != 2 && node.inputs.size() != 3) {
           return runtime::Status::kInvalidValue;
@@ -2401,10 +2489,35 @@ class GraphIR {
         if (kernel_h != 3 || kernel_w != 3 || in_channels != w_in_channels) {
           return runtime::Status::kInvalidValue;
         }
+        const auto attr_or = [&](const char* key, std::int64_t defv) -> std::int64_t {
+          auto it = node.attributes.find(key);
+          return it == node.attributes.end() ? defv : it->second;
+        };
+        const std::int64_t stride_h_i64 =
+            (node.op == OpKind::kConv2dNchw3x3s1p1) ? 1 : attr_or("stride_h", 1);
+        const std::int64_t stride_w_i64 =
+            (node.op == OpKind::kConv2dNchw3x3s1p1) ? 1 : attr_or("stride_w", 1);
+        const std::int64_t pad_h_i64 =
+            (node.op == OpKind::kConv2dNchw3x3s1p1) ? 1 : attr_or("pad_h", 0);
+        const std::int64_t pad_w_i64 =
+            (node.op == OpKind::kConv2dNchw3x3s1p1) ? 1 : attr_or("pad_w", 0);
+        const bool apply_relu = (node.op == OpKind::kConv2dNchw3x3) && (attr_or("apply_relu", 0) != 0);
+        if (stride_h_i64 <= 0 || stride_w_i64 <= 0 || pad_h_i64 < 0 || pad_w_i64 < 0) {
+          return runtime::Status::kInvalidValue;
+        }
+        const std::size_t stride_h = static_cast<std::size_t>(stride_h_i64);
+        const std::size_t stride_w = static_cast<std::size_t>(stride_w_i64);
+        const std::size_t pad_h = static_cast<std::size_t>(pad_h_i64);
+        const std::size_t pad_w = static_cast<std::size_t>(pad_w_i64);
+        if (in_h + (2 * pad_h) < 3 || in_w + (2 * pad_w) < 3) {
+          return runtime::Status::kInvalidValue;
+        }
+        const std::size_t out_h = (in_h + (2 * pad_h) - 3) / stride_h + 1;
+        const std::size_t out_w = (in_w + (2 * pad_w) - 3) / stride_w + 1;
         if (out_tensor.spec.shape[0] != static_cast<std::int64_t>(batch) ||
             out_tensor.spec.shape[1] != static_cast<std::int64_t>(out_channels) ||
-            out_tensor.spec.shape[2] != static_cast<std::int64_t>(in_h) ||
-            out_tensor.spec.shape[3] != static_cast<std::int64_t>(in_w)) {
+            out_tensor.spec.shape[2] != static_cast<std::int64_t>(out_h) ||
+            out_tensor.spec.shape[3] != static_cast<std::int64_t>(out_w)) {
           return runtime::Status::kInvalidValue;
         }
         const T* bias_ptr = nullptr;
@@ -2429,16 +2542,72 @@ class GraphIR {
             out_channels,
             /*kernel_h=*/3,
             /*kernel_w=*/3,
-            /*stride_h=*/1,
-            /*stride_w=*/1,
-            /*pad_h=*/1,
-            /*pad_w=*/1,
+            stride_h,
+            stride_w,
+            pad_h,
+            pad_w,
             assigned_device,
-            /*apply_relu=*/false);
+            apply_relu);
         if (st != runtime::Status::kSuccess) {
           return st;
         }
         return set_output(out_id, std::move(out));
+      }
+      case OpKind::kQkvPackRepeat: {
+        if constexpr (!std::is_same_v<T, float>) {
+          return runtime::Status::kNotSupported;
+        }
+        if (node.inputs.size() != 1 || node.outputs.size() != 3) {
+          return runtime::Status::kInvalidValue;
+        }
+        const std::size_t in_id = node.inputs[0];
+        const std::size_t q_id = node.outputs[0];
+        const std::size_t k_id = node.outputs[1];
+        const std::size_t v_id = node.outputs[2];
+        const GraphTensorValue& in_tensor = tensors_[in_id];
+        const GraphTensorValue& q_tensor = tensors_[q_id];
+        const GraphTensorValue& k_tensor = tensors_[k_id];
+        const GraphTensorValue& v_tensor = tensors_[v_id];
+        const std::vector<T>* in = get_value(in_id);
+        if (in == nullptr) {
+          return runtime::Status::kInvalidValue;
+        }
+        if (in_tensor.spec.shape.size() != 4 ||
+            q_tensor.spec.shape.size() != 2 ||
+            k_tensor.spec.shape.size() != 2 ||
+            v_tensor.spec.shape.size() != 2) {
+          return runtime::Status::kInvalidValue;
+        }
+        if (q_tensor.spec.shape != k_tensor.spec.shape || q_tensor.spec.shape != v_tensor.spec.shape) {
+          return runtime::Status::kInvalidValue;
+        }
+        const std::size_t need = detail::numelFromShapeContract(q_tensor.spec.shape);
+        if (need == 0) {
+          return runtime::Status::kInvalidValue;
+        }
+        const std::size_t total = need * 3;
+        std::vector<T> packed(total, static_cast<T>(0));
+        const std::size_t copied0 = std::min(in->size(), total);
+        if (copied0 == 0) {
+          return runtime::Status::kInvalidValue;
+        }
+        std::copy_n(in->data(), copied0, packed.data());
+        std::size_t copied = copied0;
+        while (copied < total) {
+          const std::size_t chunk = std::min(copied, total - copied);
+          std::copy_n(packed.data(), chunk, packed.data() + copied);
+          copied += chunk;
+        }
+        std::vector<T> q(need, static_cast<T>(0));
+        std::vector<T> k(need, static_cast<T>(0));
+        std::vector<T> v(need, static_cast<T>(0));
+        std::copy_n(packed.data(), need, q.data());
+        std::copy_n(packed.data() + need, need, k.data());
+        std::copy_n(packed.data() + (2 * need), need, v.data());
+        values->insert_or_assign(q_id, std::move(q));
+        values->insert_or_assign(k_id, std::move(k));
+        values->insert_or_assign(v_id, std::move(v));
+        return runtime::Status::kSuccess;
       }
       case OpKind::kRelu: {
         if (node.inputs.size() != 1) {

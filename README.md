@@ -13,7 +13,7 @@
 
 # 3. One-line Summary
 Lightning Core is a macOS-first, Metal-backed runtime that provides low-level control (resident IO, policy routing, fused paths) with easy Python APIs.
-Current public release: **v0.2.2** (2026-04-09).
+Current public release: **v0.2.7** (2026-04-09).
 
 # 4. Abstract
 Lightning Core targets high-iteration experimentation on Apple Silicon by combining:
@@ -587,6 +587,7 @@ Primary public benchmark path:
 - `benchmarks/python/graph_eager_ab_bench.py` (graph/eager A/B + host-dispatch/fallback metrics)
 - `benchmarks/python/engine_split_bench.py` (pure-LC vs interop split report + timeline bottleneck grouping on the same API surface)
 - `benchmarks/python/fusion_pilot_bench.py` (fusion v3: conv+relu + matmul+bias+relu + attention+proj with cost-model explain report)
+- `benchmarks/python/phase_b_exit_audit.py` (ROADMAP 11.2 success-metric audit + release-candidate evidence bundle generation)
 - `benchmarks/large_gemm_auto_sweep.py` (large GEMM policy sweep)
 - `benchmarks/generate_cross_suite_summary.py` (cross-suite summary report)
 
@@ -637,6 +638,7 @@ Python benchmarks (recommended):
 python benchmarks/python/quick_bench.py --warmup 40 --iters 200 --out benchmark_results/quick_bench.csv
 python benchmarks/python/graph_eager_ab_bench.py --device auto --warmup 6 --iters 24 --trace-iters 8
 python benchmarks/python/engine_split_bench.py --device auto --warmup 20 --iters 120 --trace-iters 8 --out-dir benchmark_results
+python benchmarks/python/phase_b_exit_audit.py --graph-json benchmark_results/graph_eager_ab.json --contract-json docs/phase_b_graph_contract.json --out-json benchmark_results/phase_b_exit_audit.json --out-md benchmark_results/phase_b_exit_audit.md --bundle-json benchmark_results/phase_b_exit_candidate_bundle.json
 python benchmarks/large_gemm_auto_sweep.py
 python benchmarks/generate_cross_suite_summary.py
 ```
@@ -4906,7 +4908,7 @@ docs/                           # quickstart/advanced/contributor docs
 ```
 
 # 35. Roadmap
-Roadmap baseline is now aligned to **v0.2.2** and tracked in detail in [ROADMAP.md](ROADMAP.md).
+Roadmap baseline is now aligned to **v0.2.7** and tracked in detail in [ROADMAP.md](ROADMAP.md).
 
 Immediate replan (2026-04-01, roadmap-aligned):
 1. [completed] Complete backend abstraction split (compute/memory/sync/profiler) and lock public docs/examples.
@@ -4934,6 +4936,11 @@ Immediate replan (2026-04-01, roadmap-aligned):
 23. [completed] v0.2.0 Operator Registry v2 contract hardening: schema-level rank/layout/dtype/shape/attribute checks + standardized machine-readable fallback/validation reason codes.
 24. [completed] v0.2.1 Validation Pass Pack v2: split pass diagnostics (`schema_contract/topology/alias_lifetime/layout_flow/backend_capability`) with deterministic issue surfacing in C++/Python reports.
 25. [completed] v0.2.2 Planner v3 + Plan Cache: graph-hash/device/sync-policy keyed cache, cache hit/miss telemetry in plan summary, and fixed graph/eager artifact outputs for dispatch/cache evidence.
+26. [completed] v0.2.3 Integrated Graph Coverage expansion: connected `conv2d_nchw3x3(attrs)->qkv_pack_repeat->attention_forward` graph path with widened conv->attn shape-set coverage.
+27. [completed] v0.2.4 Hybrid Execution Policy formalization: subgraph-level `route_policy` (`conv/attention/graph`) for `lightning/torch/auto` with deterministic graph fallback reasons.
+28. [completed] v0.2.5 Benchmark/Release gate strengthening: fixed planner/fallback evidence columns + chained latency and unsupported-ratio gates in graph/eager artifacts.
+29. [completed] v0.2.6 Docs + Operator Onboarding Kit: contributor template (`schema->validation->planner->test->bench`) + copy-paste smoke gate in CI.
+30. [completed] v0.2.7 Phase B Exit Audit: release-candidate audit (`phase_b_exit_audit`) with ROADMAP 11.2 metric evidence, artifact-bundle manifest, and README/ROADMAP version sync checks.
 
 Roadmap progress history is auto-generated from:
 - `docs/roadmap_updates.json`
@@ -4942,7 +4949,7 @@ Roadmap progress history is auto-generated from:
 
 ### Progress History (Auto-generated)
 
-- Total tracked updates: `69`
+- Total tracked updates: `75`
 - Source of truth: `docs/roadmap_updates.json`
 - Quick add command:
   `python scripts/generate_roadmap_history.py --add --date YYYY-MM-DD --milestone M-A --area runtime --title "your update"`
@@ -4951,7 +4958,7 @@ Roadmap progress history is auto-generated from:
 
 | Date | Updates | Milestones | Highlights |
 | --- | --- | --- | --- |
-| 2026-04-09 | 5 | M-B, M-A | Completed v0.2.2 planner v3 + plan cache with cache hit-rate telemetry and fixed graph/eager dispatch evidence artifacts. / Completed v0.2.1 validation pass pack v2 with pass-scoped topology/alias-lifetime/layout-flow/backend-capability reports. / ... (+3 more) |
+| 2026-04-09 | 11 | M-B, M-A | Completed v0.2.7 Phase B exit audit with release-candidate artifact bundle and ROADMAP 11.2 metric gate wiring. / Completed v0.2.6 docs + operator onboarding kit with copy-paste smoke gate and MkDocs navigation integration. / ... (+9 more) |
 | 2026-04-08 | 19 | M-D, M-C, M-B, M-A | Completed v0.1.32 autograd bootstrap v0 (matmul/add/relu backward + tiny 1-step SGD) with Torch gradient parity smoke. / Completed v0.1.31 checkpoint IO v1.1 model-level save/load helpers with v1 forward-compat smoke coverage. / ... (+17 more) |
 | 2026-04-07 | 6 | M-A | Optimized tiny conv->attn integrated path using op_path timeline bottleneck guidance and tiny-chain CPU preference heuristic. / Finalized lc.api engine bridge (lightning/torch/auto) with same-surface engine switching / ... (+4 more) |
 | 2026-04-02 | 5 | M-B, M-A | Completed v0.1.15 generated API reference pipeline (Python/C++) in docs build and removed API index placeholder entries. / Expanded graph-path contract coverage: sync policy(auto/always/never), fallback/device-change boundary checks, and shape/layout/lifetime regression guards. / ... (+3 more) |
@@ -4963,12 +4970,18 @@ Roadmap progress history is auto-generated from:
 
 **Detailed Timeline**
 
-#### 2026-04-09 (5 updates)
+#### 2026-04-09 (11 updates)
 
+- [completed] [M-B] [benchmark] Completed v0.2.7 Phase B exit audit with release-candidate artifact bundle and ROADMAP 11.2 metric gate wiring. (`local`)
+- [completed] [M-B] [docs] Completed v0.2.6 docs + operator onboarding kit with copy-paste smoke gate and MkDocs navigation integration. (`local`)
+- [completed] [M-B] [benchmark] Completed v0.2.5 benchmark/release gate strengthening with fixed planner/fallback evidence fields plus chained latency/unsupported ratio gates. (`local`)
+- [completed] [M-B] [python] Completed v0.2.4 hybrid execution policy formalization with subgraph-level route_policy (conv/attention/graph engines) and deterministic graph fallback reason codes. (`local`)
+- [completed] [M-B] [graph] Completed v0.2.3 integrated conv->attn graph coverage expansion (conv2d_nchw3x3 attrs + qkv_pack_repeat path) with widened shape-set benchmark cases. (`local`)
 - [completed] [M-B] [graph] Completed v0.2.2 planner v3 + plan cache with cache hit-rate telemetry and fixed graph/eager dispatch evidence artifacts. (`local`)
 - [completed] [M-B] [graph] Completed v0.2.1 validation pass pack v2 with pass-scoped topology/alias-lifetime/layout-flow/backend-capability reports. (`local`)
 - [completed] [M-B] [docs] Completed v0.2.0-rc0 B0 contract baseline freeze with docs/CI constant sync and baseline artifact generation. (`local`)
 - [completed] [M-B] [graph] Completed v0.2.0 Operator Registry v2 contracts with rank/layout/dtype/shape/attribute validation and deterministic reason codes. (`local`)
+- [completed] [M-A] [release] Bumped public baseline to v0.2.7 and aligned README/ROADMAP/pyproject version metadata. (`local`)
 - [completed] [M-A] [release] Bumped public baseline to v0.2.2 and aligned README/ROADMAP/pyproject version metadata. (`local`)
 
 #### 2026-04-08 (19 updates)
@@ -5107,7 +5120,7 @@ Source of truth:
 
 ### Phase B Graph Contract (Auto-generated)
 
-- Contract version: `phase_b_v0.2.0-rc0`
+- Contract version: `phase_b_v0.2.7`
 - As-of date: `2026-04-09`
 - Source of truth: `docs/phase_b_graph_contract.json`
 - CI sync checker: `python scripts/check_phase_b_contract_sync.py`
@@ -5120,7 +5133,9 @@ Source of truth:
 | vector_add | in(any,any)->out(any) | float32,float64 | contiguous | in0.shape == in1.shape == out.shape |
 | matrix_sub / matrix_div | in(2,2)->out(2) | float32,float64 | contiguous | in0.shape == in1.shape == out.shape |
 | attention_forward | in(2,2,2)->out(2) | float32 | contiguous | q.shape == k.shape == v.shape == out.shape |
-| conv2d_nchw3x3s1p1 | in(4,4[,1])->out(4) | float32 | contiguous | x[N,C,H,W], w[OC,C,3,3], out[N,OC,H,W], bias[OC] |
+| conv2d_nchw3x3 | in(4,4[,1])->out(4) | float32 | contiguous | x[N,C,H,W], w[OC,C,3,3], out_h=(H+2*pad_h-3)/stride_h+1, out_w=(W+2*pad_w-3)/stride_w+1, optional bias[OC], optional apply_relu |
+| conv2d_nchw3x3s1p1 | in(4,4[,1])->out(4) | float32 | contiguous | fixed stride/pad path equivalent to conv2d_nchw3x3(stride=1,pad=1) |
+| qkv_pack_repeat | in(4)->out(2,2,2) | float32 | contiguous | flatten conv output, truncate/repeat into q/k/v with identical [seq,head_dim] shapes |
 | relu | in(any)->out(any) | float32,float64 | contiguous | out.shape == in.shape |
 
 #### Fallback Reason Codes
@@ -5130,6 +5145,9 @@ Source of truth:
 | fallback_preferred_unsupported | preferred backend is not supported by schema |
 | fallback_preferred_unavailable | preferred backend is declared but not currently available |
 | fallback_planner_optimized | planner selected non-preferred backend to reduce boundary/sync churn |
+| graph_engine_not_lightning | graph execution requested but route_policy.graph resolved to non-lightning engine; deterministic eager fallback |
+| graph_shape_unsupported | graph execution requested but shape/kernel contract is outside graph-supported conv->attn path; deterministic eager fallback |
+| torch_unavailable_fallback | torch route requested but torch runtime unavailable; deterministic lightning fallback |
 
 #### Validation Passes
 
@@ -5155,10 +5173,15 @@ Source of truth:
 | graph_eager_ab | trace_iters | 6 |
 | graph_eager_ab | fusion_cost_min_speedup | 1.01 |
 | graph_eager_ab | min_host_dispatch_reduction_rate_pct | 25.0 |
+| graph_eager_ab | min_chained_latency_reduction_pct | 15.0 |
+| graph_eager_ab | max_unsupported_ratio_pct | 40.0 |
 | fusion_pilot | max_fused_over_unfused_conv | 1.15 |
 | fusion_pilot | max_fused_over_unfused_matmul | 1.9 |
 | fusion_pilot | max_fused_over_unfused_attention | 2.2 |
 | planner_cache | target_min_hit_rate_pct | 50.0 |
+| phase_b_exit_audit | min_graph_pipeline_adoption_rate_pct | 100.0 |
+| phase_b_exit_audit | allow_chain_latency_not_applicable | True |
+| phase_b_exit_audit | required_graph_benches | ['matmul_matrix_sub', 'conv_attention_torchstrong_nchw', 'matmul_bias_relu_fusion_path'] |
 
 <!-- AUTO-PHASE-B-CONTRACT:END -->
 
@@ -5182,6 +5205,7 @@ See [LICENSE](LICENSE).
 # 38. Contributing
 Please read:
 - [docs/contributor.md](docs/contributor.md)
+- [docs/operator_onboarding_kit.md](docs/operator_onboarding_kit.md)
 
 General flow:
 1. Open an issue/discussion for major changes.
@@ -5198,4 +5222,4 @@ Community feedback channels we actively monitor:
 
 Lightning Core is stable enough for experimentation and benchmarking, while APIs and internals continue to evolve quickly.
 Visibility update: repository topics and benchmark discoverability documentation are actively maintained.
-Current release train: **v0.2.2**.
+Current release train: **v0.2.7**.

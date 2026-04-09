@@ -18,6 +18,8 @@ _CACHE_LOCK = Lock()
 _BACKEND_LOCK = Lock()
 _BACKEND_ENGINE = "lightning"
 _VALID_ENGINES = {"lightning", "torch", "auto"}
+_VALID_ROUTE_ENGINES = {"lightning", "torch", "auto"}
+_VALID_ROUTE_POLICY_KEYS = {"conv", "attention", "graph"}
 _LC_API_BRIDGE_LOCK = Lock()
 _LC_API_BRIDGE_INSTALLED = False
 _LC_API_DIRECT_EXPORTS: dict[str, Any] = {}
@@ -65,6 +67,62 @@ def _resolve_engine(device: str) -> str:
 
     torch, _ = _import_torch()
     return "torch" if torch is not None else "lightning"
+
+
+def _normalize_route_engine(value: Any, *, field: str) -> str:
+    token = str(value).strip().lower()
+    if token not in _VALID_ROUTE_ENGINES:
+        options = ", ".join(sorted(_VALID_ROUTE_ENGINES))
+        raise ValueError(f"{field} route must be one of: {options}")
+    return token
+
+
+def _normalize_route_policy(route_policy: dict[str, Any] | None) -> dict[str, str]:
+    normalized = {"conv": "auto", "attention": "auto", "graph": "auto"}
+    if route_policy is None:
+        return normalized
+    if not isinstance(route_policy, dict):
+        raise TypeError("route_policy must be a dict with optional keys: conv, attention, graph")
+    for key, value in route_policy.items():
+        key_s = str(key).strip().lower()
+        if key_s not in _VALID_ROUTE_POLICY_KEYS:
+            allowed = ", ".join(sorted(_VALID_ROUTE_POLICY_KEYS))
+            raise ValueError(f"unsupported route_policy key '{key}'; allowed keys: {allowed}")
+        normalized[key_s] = _normalize_route_engine(value, field=f"route_policy.{key_s}")
+    return normalized
+
+
+def _resolve_engine_preference(device: str, preference: str) -> tuple[str, str]:
+    pref = _normalize_route_engine(preference, field="route preference")
+    if pref == "auto":
+        return _resolve_engine(device), "auto"
+    if pref == "torch":
+        torch, _ = _import_torch()
+        if torch is None:
+            return "lightning", "torch_unavailable_fallback"
+    return pref, "requested"
+
+
+def _graph_conv_attention_shape_supported(
+    *,
+    x_arr: np.ndarray,
+    w_arr: np.ndarray,
+    stride_h: int,
+    stride_w: int,
+    pad_h: int,
+    pad_w: int,
+) -> bool:
+    if stride_h <= 0 or stride_w <= 0:
+        return False
+    if pad_h < 0 or pad_w < 0:
+        return False
+    if x_arr.ndim != 4 or w_arr.ndim != 4:
+        return False
+    if w_arr.shape[2] != 3 or w_arr.shape[3] != 3:
+        return False
+    in_h = int(x_arr.shape[2])
+    in_w = int(x_arr.shape[3])
+    return (in_h + (2 * int(pad_h)) >= 3) and (in_w + (2 * int(pad_w)) >= 3)
 
 
 def _env_flag_enabled(name: str) -> bool:
@@ -736,6 +794,330 @@ def clear_attention_session_cache() -> None:
         _ATTN_SESSION_CACHE.clear()
 
 
+def _pack_qkv_repeat_from_conv(conv_out: Any, *, seq: int, head_dim: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    need = int(seq) * int(head_dim)
+    total = need * 3
+    flat = np.asarray(conv_out, dtype=np.float32).reshape(-1)
+    if flat.size == 0:
+        raise ValueError("conv output must be non-empty")
+    if flat.size >= total:
+        packed = np.ascontiguousarray(flat[:total], dtype=np.float32)
+    else:
+        packed = np.empty((total,), dtype=np.float32)
+        copied = min(flat.size, total)
+        np.copyto(packed[0:copied], flat[0:copied], casting="no")
+        while copied < total:
+            chunk = min(copied, total - copied)
+            np.copyto(packed[copied : copied + chunk], packed[0:chunk], casting="no")
+            copied += chunk
+    q = packed[0:need].reshape(int(seq), int(head_dim))
+    k = packed[need : 2 * need].reshape(int(seq), int(head_dim))
+    v = packed[2 * need : 3 * need].reshape(int(seq), int(head_dim))
+    return q, k, v
+
+
+def _torch_conv_relu_direct(
+    x_arr: np.ndarray,
+    w_arr: np.ndarray,
+    b_arr: np.ndarray | None,
+    *,
+    stride_h: int,
+    stride_w: int,
+    pad_h: int,
+    pad_w: int,
+    device: str,
+) -> np.ndarray:
+    torch, F = _import_torch()
+    if torch is None or F is None:
+        raise RuntimeError("torch backend selected but torch is unavailable")
+    torch_device = _torch_device_for(device)
+    tx = torch.as_tensor(x_arr, dtype=torch.float32, device=torch_device)
+    tw = torch.as_tensor(w_arr, dtype=torch.float32, device=torch_device)
+    tb = None if b_arr is None else torch.as_tensor(b_arr, dtype=torch.float32, device=torch_device)
+    ty = F.conv2d(tx, tw, tb, stride=(int(stride_h), int(stride_w)), padding=(int(pad_h), int(pad_w)))
+    ty = F.relu(ty)
+    return ty.detach().to("cpu").contiguous().numpy()
+
+
+def _lc_conv_relu_direct(
+    x_arr: np.ndarray,
+    w_arr: np.ndarray,
+    b_arr: np.ndarray | None,
+    *,
+    stride_h: int,
+    stride_w: int,
+    pad_h: int,
+    pad_w: int,
+    device: str,
+) -> np.ndarray:
+    if hasattr(lc, "lightning_conv_relu_nchw"):
+        return np.asarray(
+            lc.lightning_conv_relu_nchw(
+                x_arr, w_arr, b_arr, int(stride_h), int(stride_w), int(pad_h), int(pad_w), device
+            ),
+            dtype=np.float32,
+        )
+    y = np.asarray(
+        lc.conv2d_nchw(
+            x_arr, w_arr, b_arr, int(stride_h), int(stride_w), int(pad_h), int(pad_w), device
+        ),
+        dtype=np.float32,
+    )
+    np.maximum(y, 0.0, out=y)
+    return y
+
+
+def _torch_attention_direct(
+    q: np.ndarray,
+    k: np.ndarray,
+    v: np.ndarray,
+    *,
+    seq: int,
+    head_dim: int,
+    device: str,
+    causal: bool = False,
+) -> np.ndarray:
+    torch, F = _import_torch()
+    if torch is None or F is None:
+        raise RuntimeError("torch backend selected but torch is unavailable")
+    torch_device = _torch_device_for(device)
+    tq = torch.as_tensor(np.asarray(q, dtype=np.float32), dtype=torch.float32, device=torch_device).reshape(
+        1, 1, int(seq), int(head_dim)
+    )
+    tk = torch.as_tensor(np.asarray(k, dtype=np.float32), dtype=torch.float32, device=torch_device).reshape(
+        1, 1, int(seq), int(head_dim)
+    )
+    tv = torch.as_tensor(np.asarray(v, dtype=np.float32), dtype=torch.float32, device=torch_device).reshape(
+        1, 1, int(seq), int(head_dim)
+    )
+    if hasattr(F, "scaled_dot_product_attention"):
+        out = F.scaled_dot_product_attention(tq, tk, tv, is_causal=bool(causal))
+    else:
+        scale = float(head_dim) ** -0.5
+        scores = torch.matmul(tq, tk.transpose(-2, -1)) * scale
+        probs = torch.softmax(scores, dim=-1)
+        out = torch.matmul(probs, tv)
+    return out.reshape(int(seq), int(head_dim)).detach().to("cpu").contiguous().numpy()
+
+
+def _lc_attention_direct(
+    q: np.ndarray,
+    k: np.ndarray,
+    v: np.ndarray,
+    *,
+    seq: int,
+    head_dim: int,
+    device: str,
+    causal: bool = False,
+) -> np.ndarray:
+    q_flat = np.asarray(q, dtype=np.float32).reshape(-1)
+    k_flat = np.asarray(k, dtype=np.float32).reshape(-1)
+    v_flat = np.asarray(v, dtype=np.float32).reshape(-1)
+    expected = int(seq) * int(head_dim)
+    if q_flat.size != expected or k_flat.size != expected or v_flat.size != expected:
+        raise ValueError("q/k/v shape mismatch")
+    if hasattr(lc, "lightning_attention"):
+        out_flat = np.asarray(
+            lc.lightning_attention(q_flat, k_flat, v_flat, int(seq), int(head_dim), bool(causal), device),
+            dtype=np.float32,
+        ).reshape(-1)
+        return out_flat.reshape(int(seq), int(head_dim))
+
+    out_flat = np.empty((expected,), dtype=np.float32)
+    sess = _get_or_create_attention_session(int(seq), int(head_dim), bool(causal), device)
+    sess.forward_into(q_flat, k_flat, v_flat, out_flat)
+    return out_flat.reshape(int(seq), int(head_dim))
+
+
+def _conv_attention_route_context(
+    *,
+    x_arr: np.ndarray,
+    w_arr: np.ndarray,
+    seq: int,
+    head_dim: int,
+    stride_h: int,
+    stride_w: int,
+    pad_h: int,
+    pad_w: int,
+    requested_device: str,
+    effective_device: str,
+    execution_mode: str,
+    route_policy: dict[str, Any] | None,
+) -> dict[str, Any]:
+    policy = _normalize_route_policy(route_policy)
+    conv_engine, conv_note = _resolve_engine_preference(effective_device, policy["conv"])
+    attention_engine, attention_note = _resolve_engine_preference(effective_device, policy["attention"])
+    graph_engine, graph_note = _resolve_engine_preference(effective_device, policy["graph"])
+
+    requested_mode = str(execution_mode).strip().lower()
+    if requested_mode not in {"eager", "graph"}:
+        raise ValueError("execution_mode must be 'eager' or 'graph'")
+
+    resolved_mode = requested_mode
+    fallback_reason = "none"
+    graph_shape_supported = _graph_conv_attention_shape_supported(
+        x_arr=x_arr,
+        w_arr=w_arr,
+        stride_h=int(stride_h),
+        stride_w=int(stride_w),
+        pad_h=int(pad_h),
+        pad_w=int(pad_w),
+    )
+    if requested_mode == "graph":
+        if graph_engine != "lightning":
+            resolved_mode = "eager"
+            fallback_reason = "graph_engine_not_lightning"
+        elif not graph_shape_supported:
+            resolved_mode = "eager"
+            fallback_reason = "graph_shape_unsupported"
+
+    return {
+        "requested_mode": requested_mode,
+        "resolved_mode": resolved_mode,
+        "requested_device": str(requested_device),
+        "effective_device": str(effective_device),
+        "requested_conv_engine": policy["conv"],
+        "requested_attention_engine": policy["attention"],
+        "requested_graph_engine": policy["graph"],
+        "resolved_conv_engine": conv_engine,
+        "resolved_attention_engine": attention_engine,
+        "resolved_graph_engine": graph_engine,
+        "conv_engine_resolution": conv_note,
+        "attention_engine_resolution": attention_note,
+        "graph_engine_resolution": graph_note,
+        "graph_shape_supported": bool(graph_shape_supported),
+        "graph_fallback_reason_code": fallback_reason,
+        "seq": int(seq),
+        "head_dim": int(head_dim),
+        "kernel_h": int(w_arr.shape[2]) if w_arr.ndim == 4 else -1,
+        "kernel_w": int(w_arr.shape[3]) if w_arr.ndim == 4 else -1,
+        "stride_h": int(stride_h),
+        "stride_w": int(stride_w),
+        "pad_h": int(pad_h),
+        "pad_w": int(pad_w),
+    }
+
+
+def _graph_conv_attention_python(
+    *,
+    x_arr: np.ndarray,
+    w_arr: np.ndarray,
+    b_arr: np.ndarray | None,
+    seq: int,
+    head_dim: int,
+    stride_h: int,
+    stride_w: int,
+    pad_h: int,
+    pad_w: int,
+    device: str,
+) -> np.ndarray | None:
+    if not hasattr(lc, "GraphIR") or not hasattr(lc.GraphIR, "execute_f32"):
+        return None
+    if not _graph_conv_attention_shape_supported(
+        x_arr=x_arr,
+        w_arr=w_arr,
+        stride_h=int(stride_h),
+        stride_w=int(stride_w),
+        pad_h=int(pad_h),
+        pad_w=int(pad_w),
+    ):
+        return None
+
+    out_h = (int(x_arr.shape[2]) + 2 * int(pad_h) - 3) // int(stride_h) + 1
+    out_w = (int(x_arr.shape[3]) + 2 * int(pad_w) - 3) // int(stride_w) + 1
+    g = lc.GraphIR()
+    tx = g.add_tensor(list(x_arr.shape), dtype="float32", name="x", constant=True)
+    tw = g.add_tensor(list(w_arr.shape), dtype="float32", name="w", constant=True)
+    tconv = g.add_tensor([int(x_arr.shape[0]), int(w_arr.shape[0]), int(out_h), int(out_w)], dtype="float32", name="conv")
+    tq = g.add_tensor([int(seq), int(head_dim)], dtype="float32", name="q")
+    tk = g.add_tensor([int(seq), int(head_dim)], dtype="float32", name="k")
+    tv = g.add_tensor([int(seq), int(head_dim)], dtype="float32", name="v")
+    to = g.add_tensor([int(seq), int(head_dim)], dtype="float32", name="out")
+
+    conv_inputs = [tx, tw]
+    feeds = {tx: x_arr, tw: w_arr}
+    if b_arr is not None:
+        tb = g.add_tensor(list(b_arr.shape), dtype="float32", name="b", constant=True)
+        conv_inputs.append(tb)
+        feeds[tb] = b_arr
+
+    g.add_node(
+        "conv2d_nchw3x3",
+        conv_inputs,
+        [tconv],
+        attributes={
+            "stride_h": int(stride_h),
+            "stride_w": int(stride_w),
+            "pad_h": int(pad_h),
+            "pad_w": int(pad_w),
+            "apply_relu": 1,
+        },
+    )
+    g.add_node("qkv_pack_repeat", [tconv], [tq, tk, tv])
+    g.add_node("attention_forward", [tq, tk, tv], [to])
+    try:
+        out = g.execute_f32(feeds, preferred_device=device)
+    except RuntimeError:
+        return None
+    values = dict(out.get("values", {}))
+    if to not in values:
+        return None
+    return np.asarray(values[to], dtype=np.float32)
+
+
+def lightning_conv_attention_torchstrong_nchw_route_report(
+    x: Any,
+    conv_weight: Any,
+    conv_bias: Any | None,
+    seq: int,
+    head_dim: int,
+    stride_h: int = 1,
+    stride_w: int = 1,
+    pad_h: int = 0,
+    pad_w: int = 0,
+    device: str = "metal",
+    execution_mode: str = "eager",
+    route_policy: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    x_arr = _as_f32_c(x)
+    w_arr = _as_f32_c(conv_weight)
+    _ = None if conv_bias is None else np.asarray(conv_bias, dtype=np.float32)
+    effective_device = (
+        "cpu"
+        if _should_prefer_tiny_cpu_conv_attn_chain(
+            device=device,
+            batch=int(x_arr.shape[0]),
+            in_channels=int(x_arr.shape[1]),
+            in_h=int(x_arr.shape[2]),
+            in_w=int(x_arr.shape[3]),
+            out_channels=int(w_arr.shape[0]),
+            kernel_h=int(w_arr.shape[2]),
+            kernel_w=int(w_arr.shape[3]),
+            stride_h=int(stride_h),
+            stride_w=int(stride_w),
+            pad_h=int(pad_h),
+            pad_w=int(pad_w),
+            seq_len=int(seq),
+            head_dim=int(head_dim),
+        )
+        else device
+    )
+    return _conv_attention_route_context(
+        x_arr=x_arr,
+        w_arr=w_arr,
+        seq=int(seq),
+        head_dim=int(head_dim),
+        stride_h=int(stride_h),
+        stride_w=int(stride_w),
+        pad_h=int(pad_h),
+        pad_w=int(pad_w),
+        requested_device=str(device),
+        effective_device=str(effective_device),
+        execution_mode=str(execution_mode),
+        route_policy=route_policy,
+    )
+
+
 def _torch_conv_attention_torchstrong(
     x_arr: np.ndarray,
     w_arr: np.ndarray,
@@ -1347,8 +1729,9 @@ def lightning_conv_attention_torchstrong_nchw(
     *,
     pipeline_cache: dict | None = None,
     cache_key: str | None = None,
+    route_policy: dict[str, Any] | None = None,
 ) -> np.ndarray:
-    mode = str(execution_mode)
+    mode = str(execution_mode).strip().lower()
     if mode not in {"eager", "graph"}:
         raise ValueError("execution_mode must be 'eager' or 'graph'")
 
@@ -1376,138 +1759,102 @@ def lightning_conv_attention_torchstrong_nchw(
         else device
     )
 
-    # Hybrid execution policy:
-    # - graph mode is currently lightning-core GraphIR only.
-    # - torch backend always executes eager conv->attn path (graph request falls back deterministically).
-    engine = _resolve_engine(effective_device)
-    if engine == "torch":
-        return _torch_conv_attention_torchstrong(
-            x_arr,
-            w_arr,
-            b_arr,
-            seq=int(seq),
-            head_dim=int(head_dim),
-            stride_h=int(stride_h),
-            stride_w=int(stride_w),
-            pad_h=int(pad_h),
-            pad_w=int(pad_w),
-            device=effective_device,
-        )
-
-    if hasattr(lc, "lightning_conv_attention_torchstrong_nchw"):
-        try:
-            return np.asarray(
-                lc.lightning_conv_attention_torchstrong_nchw(
-                    x_arr,
-                    w_arr,
-                    b_arr,
-                    int(seq),
-                    int(head_dim),
-                    int(stride_h),
-                    int(stride_w),
-                    int(pad_h),
-                    int(pad_w),
-                    effective_device,
-                    mode,
-                ),
-                dtype=np.float32,
-            )
-        except TypeError:
-            if mode != "eager":
-                raise RuntimeError("graph execution_mode requires a newer lightning_core build") from None
-            return np.asarray(
-                lc.lightning_conv_attention_torchstrong_nchw(
-                    x_arr,
-                    w_arr,
-                    b_arr,
-                    int(seq),
-                    int(head_dim),
-                    int(stride_h),
-                    int(stride_w),
-                    int(pad_h),
-                    int(pad_w),
-                    effective_device,
-                ),
-                dtype=np.float32,
-            )
-        except RuntimeError:
-            # Some builds expose the fused entrypoint but reject graph mode on specific
-            # device/shape combinations at runtime. Fall through to Python graph/eager
-            # implementation so execution policy remains deterministic.
-            pass
+    route = _conv_attention_route_context(
+        x_arr=x_arr,
+        w_arr=w_arr,
+        seq=int(seq),
+        head_dim=int(head_dim),
+        stride_h=int(stride_h),
+        stride_w=int(stride_w),
+        pad_h=int(pad_h),
+        pad_w=int(pad_w),
+        requested_device=str(device),
+        effective_device=str(effective_device),
+        execution_mode=mode,
+        route_policy=route_policy,
+    )
 
     key = cache_key or (
         f"conv_attn/{x_arr.shape[1]}_{w_arr.shape[0]}_{w_arr.shape[2]}_{w_arr.shape[3]}_"
-        f"{seq}_{head_dim}_{stride_h}_{stride_w}_{pad_h}_{pad_w}_{conv_policy}_{effective_device}_{mode}"
+        f"{seq}_{head_dim}_{stride_h}_{stride_w}_{pad_h}_{pad_w}_{conv_policy}_{effective_device}_"
+        f"{route['resolved_mode']}_{route['resolved_conv_engine']}_{route['resolved_attention_engine']}"
     )
 
-    if mode == "graph":
-        if not hasattr(lc, "GraphIR") or not hasattr(lc.GraphIR, "execute_f32"):
-            raise RuntimeError("graph execution_mode requires GraphIR.execute_f32 support")
-        if stride_h != 1 or stride_w != 1 or pad_h != 1 or pad_w != 1:
-            raise ValueError("graph execution_mode currently supports stride=1,pad=1")
-        if w_arr.ndim != 4 or w_arr.shape[2] != 3 or w_arr.shape[3] != 3:
-            raise ValueError("graph execution_mode currently supports 3x3 conv weights")
+    def _run_eager_hybrid() -> np.ndarray:
+        conv_engine = str(route["resolved_conv_engine"])
+        attn_engine = str(route["resolved_attention_engine"])
 
-        conv_g = lc.GraphIR()
-        tx = conv_g.add_tensor(list(x_arr.shape), dtype="float32", name="x", constant=True)
-        tw = conv_g.add_tensor(list(w_arr.shape), dtype="float32", name="w", constant=True)
-        out_h = (x_arr.shape[2] + 2 * int(pad_h) - 3) // int(stride_h) + 1
-        out_w = (x_arr.shape[3] + 2 * int(pad_w) - 3) // int(stride_w) + 1
-        tconv = conv_g.add_tensor([int(x_arr.shape[0]), int(w_arr.shape[0]), int(out_h), int(out_w)], dtype="float32", name="conv")
-        if b_arr is not None:
-            tb = conv_g.add_tensor(list(b_arr.shape), dtype="float32", name="b", constant=True)
-            conv_g.add_node("conv2d_nchw3x3s1p1", [tx, tw, tb], [tconv])
-            try:
-                conv_res = conv_g.execute_f32({tx: x_arr, tw: w_arr, tb: b_arr}, preferred_device=effective_device)
-            except RuntimeError:
-                conv_res = None
-        else:
-            conv_g.add_node("conv2d_nchw3x3s1p1", [tx, tw], [tconv])
-            try:
-                conv_res = conv_g.execute_f32({tx: x_arr, tw: w_arr}, preferred_device=effective_device)
-            except RuntimeError:
-                conv_res = None
+        if conv_engine == "torch" and attn_engine == "torch":
+            return _torch_conv_attention_torchstrong(
+                x_arr,
+                w_arr,
+                b_arr,
+                seq=int(seq),
+                head_dim=int(head_dim),
+                stride_h=int(stride_h),
+                stride_w=int(stride_w),
+                pad_h=int(pad_h),
+                pad_w=int(pad_w),
+                device=str(effective_device),
+            )
 
-        if conv_res is None:
-            mode = "eager"
-        else:
-            conv_flat = np.asarray(conv_res["values"][tconv], dtype=np.float32).reshape(-1)
-            need = int(seq) * int(head_dim)
-            total = need * 3
-            if conv_flat.size >= total:
-                packed = conv_flat[:total].copy()
-            else:
-                if conv_flat.size == 0:
-                    raise ValueError("conv output must be non-empty")
-                packed = np.empty((total,), dtype=np.float32)
-                copied = min(conv_flat.size, total)
-                np.copyto(packed[0:copied], conv_flat[0:copied], casting="no")
-                while copied < total:
-                    chunk = min(copied, total - copied)
-                    np.copyto(packed[copied : copied + chunk], packed[0:chunk], casting="no")
-                    copied += chunk
-            q = packed[0:need]
-            k = packed[need : 2 * need]
-            v = packed[2 * need : 3 * need]
+        if conv_engine == "lightning" and attn_engine == "lightning":
+            if hasattr(lc, "lightning_conv_attention_torchstrong_nchw"):
+                try:
+                    return np.asarray(
+                        lc.lightning_conv_attention_torchstrong_nchw(
+                            x_arr,
+                            w_arr,
+                            b_arr,
+                            int(seq),
+                            int(head_dim),
+                            int(stride_h),
+                            int(stride_w),
+                            int(pad_h),
+                            int(pad_w),
+                            str(effective_device),
+                            "eager",
+                        ),
+                        dtype=np.float32,
+                    )
+                except TypeError:
+                    return np.asarray(
+                        lc.lightning_conv_attention_torchstrong_nchw(
+                            x_arr,
+                            w_arr,
+                            b_arr,
+                            int(seq),
+                            int(head_dim),
+                            int(stride_h),
+                            int(stride_w),
+                            int(pad_h),
+                            int(pad_w),
+                            str(effective_device),
+                        ),
+                        dtype=np.float32,
+                    )
+                except RuntimeError:
+                    pass
 
-            attn_g = lc.GraphIR()
-            tq = attn_g.add_tensor([int(seq), int(head_dim)], dtype="float32", name="q", constant=True)
-            tk = attn_g.add_tensor([int(seq), int(head_dim)], dtype="float32", name="k", constant=True)
-            tv = attn_g.add_tensor([int(seq), int(head_dim)], dtype="float32", name="v", constant=True)
-            to = attn_g.add_tensor([int(seq), int(head_dim)], dtype="float32", name="out")
-            attn_g.add_node("attention_forward", [tq, tk, tv], [to])
-            try:
-                out_dict = attn_g.execute_f32({tq: q, tk: k, tv: v}, preferred_device=effective_device)
-            except RuntimeError:
-                out_dict = None
-            if out_dict is not None:
-                return np.asarray(out_dict["values"][to], dtype=np.float32)
-            mode = "eager"
+            if pipeline_cache is not None:
+                pipe = pipeline_cache.get(key)
+                if pipe is None:
+                    pipe = ConvAttentionResidentPipeline(
+                        w_arr,
+                        b_arr,
+                        seq=seq,
+                        head_dim=head_dim,
+                        conv_stride_h=stride_h,
+                        conv_stride_w=stride_w,
+                        conv_pad_h=pad_h,
+                        conv_pad_w=pad_w,
+                        device=str(effective_device),
+                        conv_policy=conv_policy,
+                        cache_key_prefix=key,
+                    )
+                    pipeline_cache[key] = pipe
+                return pipe.run(x_arr)
 
-    if pipeline_cache is not None:
-        pipe = pipeline_cache.get(key)
-        if pipe is None:
             pipe = ConvAttentionResidentPipeline(
                 w_arr,
                 b_arr,
@@ -1517,27 +1864,98 @@ def lightning_conv_attention_torchstrong_nchw(
                 conv_stride_w=stride_w,
                 conv_pad_h=pad_h,
                 conv_pad_w=pad_w,
-                device=effective_device,
+                device=str(effective_device),
                 conv_policy=conv_policy,
                 cache_key_prefix=key,
             )
-            pipeline_cache[key] = pipe
-        return pipe.run(x_arr)
+            return pipe.run(x_arr)
 
-    pipe = ConvAttentionResidentPipeline(
-        w_arr,
-        b_arr,
-        seq=seq,
-        head_dim=head_dim,
-        conv_stride_h=stride_h,
-        conv_stride_w=stride_w,
-        conv_pad_h=pad_h,
-        conv_pad_w=pad_w,
-        device=effective_device,
-        conv_policy=conv_policy,
-        cache_key_prefix=key,
-    )
-    return pipe.run(x_arr)
+        conv_out = (
+            _torch_conv_relu_direct(
+                x_arr,
+                w_arr,
+                b_arr,
+                stride_h=int(stride_h),
+                stride_w=int(stride_w),
+                pad_h=int(pad_h),
+                pad_w=int(pad_w),
+                device=str(effective_device),
+            )
+            if conv_engine == "torch"
+            else _lc_conv_relu_direct(
+                x_arr,
+                w_arr,
+                b_arr,
+                stride_h=int(stride_h),
+                stride_w=int(stride_w),
+                pad_h=int(pad_h),
+                pad_w=int(pad_w),
+                device=str(effective_device),
+            )
+        )
+        q, k, v = _pack_qkv_repeat_from_conv(conv_out, seq=int(seq), head_dim=int(head_dim))
+        if attn_engine == "torch":
+            return _torch_attention_direct(
+                q,
+                k,
+                v,
+                seq=int(seq),
+                head_dim=int(head_dim),
+                device=str(effective_device),
+                causal=False,
+            )
+        return _lc_attention_direct(
+            q,
+            k,
+            v,
+            seq=int(seq),
+            head_dim=int(head_dim),
+            device=str(effective_device),
+            causal=False,
+        )
+
+    if str(route["resolved_mode"]) == "graph":
+        if hasattr(lc, "lightning_conv_attention_torchstrong_nchw"):
+            try:
+                return np.asarray(
+                    lc.lightning_conv_attention_torchstrong_nchw(
+                        x_arr,
+                        w_arr,
+                        b_arr,
+                        int(seq),
+                        int(head_dim),
+                        int(stride_h),
+                        int(stride_w),
+                        int(pad_h),
+                        int(pad_w),
+                        str(effective_device),
+                        "graph",
+                    ),
+                    dtype=np.float32,
+                )
+            except TypeError:
+                # Old build with eager-only signature: continue with Python graph path.
+                pass
+            except RuntimeError:
+                # Runtime graph rejection: deterministic eager fallback.
+                pass
+
+        graph_out = _graph_conv_attention_python(
+            x_arr=x_arr,
+            w_arr=w_arr,
+            b_arr=b_arr,
+            seq=int(seq),
+            head_dim=int(head_dim),
+            stride_h=int(stride_h),
+            stride_w=int(stride_w),
+            pad_h=int(pad_h),
+            pad_w=int(pad_w),
+            device=str(effective_device),
+        )
+        if graph_out is not None:
+            return np.asarray(graph_out, dtype=np.float32)
+
+    return _run_eager_hybrid()
 
 
 def lightning_conv_attention_torchstrong_nchw_ab_report(
@@ -1552,6 +1970,7 @@ def lightning_conv_attention_torchstrong_nchw_ab_report(
     pad_w: int = 0,
     device: str = "metal",
     conv_policy: str = "auto",
+    route_policy: dict[str, Any] | None = None,
     warmup: int = 1,
     repeat: int = 5,
     atol: float = 1e-4,
@@ -1569,7 +1988,7 @@ def lightning_conv_attention_torchstrong_nchw_ab_report(
         raise ValueError("atol/rtol must be >= 0")
 
     engine = _resolve_engine(device)
-    if engine == "lightning" and hasattr(lc, "lightning_conv_attention_torchstrong_nchw_ab_report"):
+    if route_policy is None and engine == "lightning" and hasattr(lc, "lightning_conv_attention_torchstrong_nchw_ab_report"):
         out = lc.lightning_conv_attention_torchstrong_nchw_ab_report(
             x,
             conv_weight,
@@ -1607,6 +2026,7 @@ def lightning_conv_attention_torchstrong_nchw_ab_report(
                 device=device,
                 conv_policy=conv_policy,
                 execution_mode=mode,
+                route_policy=route_policy,
             )
         t0 = time.perf_counter()
         out_arr = None
@@ -1624,10 +2044,40 @@ def lightning_conv_attention_torchstrong_nchw_ab_report(
                 device=device,
                 conv_policy=conv_policy,
                 execution_mode=mode,
+                route_policy=route_policy,
             )
         t1 = time.perf_counter()
         assert out_arr is not None
         return np.asarray(out_arr, dtype=np.float32).reshape(-1), ((t1 - t0) * 1000.0) / float(repeat_i)
+
+    eager_route = lightning_conv_attention_torchstrong_nchw_route_report(
+        x_arr,
+        w_arr,
+        b_arr,
+        seq=int(seq),
+        head_dim=int(head_dim),
+        stride_h=int(stride_h),
+        stride_w=int(stride_w),
+        pad_h=int(pad_h),
+        pad_w=int(pad_w),
+        device=device,
+        execution_mode="eager",
+        route_policy=route_policy,
+    )
+    graph_route = lightning_conv_attention_torchstrong_nchw_route_report(
+        x_arr,
+        w_arr,
+        b_arr,
+        seq=int(seq),
+        head_dim=int(head_dim),
+        stride_h=int(stride_h),
+        stride_w=int(stride_w),
+        pad_h=int(pad_h),
+        pad_w=int(pad_w),
+        device=device,
+        execution_mode="graph",
+        route_policy=route_policy,
+    )
 
     eager_out, eager_ms = _run("eager")
     graph_out, graph_ms = _run("graph")
@@ -1662,6 +2112,9 @@ def lightning_conv_attention_torchstrong_nchw_ab_report(
         "graph_over_eager": float(graph_ms / eager_ms) if eager_ms > 0.0 else 0.0,
         "eager_over_graph": float(eager_ms / graph_ms) if graph_ms > 0.0 else 0.0,
         "winner": winner,
+        "eager_route": eager_route,
+        "graph_route": graph_route,
+        "graph_fallback_reason_code": str(graph_route.get("graph_fallback_reason_code", "none")),
     }
 
 
@@ -1685,6 +2138,7 @@ def _install_lc_api_engine_bridge() -> bool:
             "conv_attention_torchstrong_nchw",
             "conv_attention_torchstrong_nchw_into",
             "conv_attention_torchstrong_nchw_ab_report",
+            "conv_attention_torchstrong_nchw_route_report",
         )
         for name in direct_names:
             fn = getattr(api, name, None)
@@ -1819,6 +2273,7 @@ def _install_lc_api_engine_bridge() -> bool:
             pad_w: int = 0,
             device: str = "metal",
             execution_mode: str = "eager",
+            route_policy: dict[str, Any] | None = None,
         ) -> np.ndarray:
             return lightning_conv_attention_torchstrong_nchw(
                 x,
@@ -1832,6 +2287,7 @@ def _install_lc_api_engine_bridge() -> bool:
                 pad_w=int(pad_w),
                 device=device,
                 execution_mode=execution_mode,
+                route_policy=route_policy,
             )
 
         def _api_conv_attention_torchstrong_nchw_into(
@@ -1847,6 +2303,7 @@ def _install_lc_api_engine_bridge() -> bool:
             pad_w: int = 0,
             device: str = "metal",
             execution_mode: str = "eager",
+            route_policy: dict[str, Any] | None = None,
         ) -> None:
             out_arr = _as_out_f32_c_no_copy(out).reshape(-1)
             result = np.asarray(
@@ -1862,6 +2319,7 @@ def _install_lc_api_engine_bridge() -> bool:
                     pad_w=int(pad_w),
                     device=device,
                     execution_mode=execution_mode,
+                    route_policy=route_policy,
                 ),
                 dtype=np.float32,
             ).reshape(-1)
@@ -1880,6 +2338,7 @@ def _install_lc_api_engine_bridge() -> bool:
             pad_h: int = 0,
             pad_w: int = 0,
             device: str = "metal",
+            route_policy: dict[str, Any] | None = None,
             warmup: int = 1,
             repeat: int = 5,
             atol: float = 1e-4,
@@ -1896,10 +2355,40 @@ def _install_lc_api_engine_bridge() -> bool:
                 pad_h=int(pad_h),
                 pad_w=int(pad_w),
                 device=device,
+                route_policy=route_policy,
                 warmup=int(warmup),
                 repeat=int(repeat),
                 atol=float(atol),
                 rtol=float(rtol),
+            )
+
+        def _api_conv_attention_torchstrong_nchw_route_report(
+            x: Any,
+            w: Any,
+            bias: Any | None,
+            seq_len: int,
+            head_dim: int,
+            stride_h: int = 1,
+            stride_w: int = 1,
+            pad_h: int = 0,
+            pad_w: int = 0,
+            device: str = "metal",
+            execution_mode: str = "eager",
+            route_policy: dict[str, Any] | None = None,
+        ) -> dict[str, Any]:
+            return lightning_conv_attention_torchstrong_nchw_route_report(
+                x,
+                w,
+                bias,
+                seq=int(seq_len),
+                head_dim=int(head_dim),
+                stride_h=int(stride_h),
+                stride_w=int(stride_w),
+                pad_h=int(pad_h),
+                pad_w=int(pad_w),
+                device=device,
+                execution_mode=execution_mode,
+                route_policy=route_policy,
             )
 
         api.conv_relu_nchw = _api_conv_relu_nchw
@@ -1909,6 +2398,7 @@ def _install_lc_api_engine_bridge() -> bool:
         api.conv_attention_torchstrong_nchw = _api_conv_attention_torchstrong_nchw
         api.conv_attention_torchstrong_nchw_into = _api_conv_attention_torchstrong_nchw_into
         api.conv_attention_torchstrong_nchw_ab_report = _api_conv_attention_torchstrong_nchw_ab_report
+        api.conv_attention_torchstrong_nchw_route_report = _api_conv_attention_torchstrong_nchw_route_report
 
         _LC_API_BRIDGE_INSTALLED = True
     return True

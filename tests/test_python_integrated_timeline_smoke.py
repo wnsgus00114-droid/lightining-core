@@ -104,8 +104,92 @@ def main() -> None:
         "lightning backend graph-request should deterministically match eager path output",
     )
 
+    # B4 coverage: graph path should also support 3x3 conv with non-default stride/pad.
+    out_lc_eager_s2 = lc_api.lightning_conv_attention_torchstrong_nchw(
+        x,
+        w,
+        bias,
+        seq=64,
+        head_dim=32,
+        stride_h=2,
+        stride_w=2,
+        pad_h=1,
+        pad_w=1,
+        device="metal",
+        execution_mode="eager",
+    )
+    out_lc_graph_req_s2 = lc_api.lightning_conv_attention_torchstrong_nchw(
+        x,
+        w,
+        bias,
+        seq=64,
+        head_dim=32,
+        stride_h=2,
+        stride_w=2,
+        pad_h=1,
+        pad_w=1,
+        device="metal",
+        execution_mode="graph",
+    )
+    _require(
+        np.allclose(np.asarray(out_lc_eager_s2).reshape(-1), np.asarray(out_lc_graph_req_s2).reshape(-1), atol=1e-4, rtol=1e-4),
+        "graph-request stride2/pad1 path should deterministically match eager output",
+    )
+
+    out_lc_eager_p0 = lc_api.lightning_conv_attention_torchstrong_nchw(
+        x,
+        w,
+        bias,
+        seq=64,
+        head_dim=32,
+        stride_h=1,
+        stride_w=1,
+        pad_h=0,
+        pad_w=0,
+        device="metal",
+        execution_mode="eager",
+    )
+    out_lc_graph_req_p0 = lc_api.lightning_conv_attention_torchstrong_nchw(
+        x,
+        w,
+        bias,
+        seq=64,
+        head_dim=32,
+        stride_h=1,
+        stride_w=1,
+        pad_h=0,
+        pad_w=0,
+        device="metal",
+        execution_mode="graph",
+    )
+    _require(
+        np.allclose(np.asarray(out_lc_eager_p0).reshape(-1), np.asarray(out_lc_graph_req_p0).reshape(-1), atol=1e-4, rtol=1e-4),
+        "graph-request stride1/pad0 path should deterministically match eager output",
+    )
+
+    route_report = lc_api.lightning_conv_attention_torchstrong_nchw_route_report(
+        x,
+        w,
+        bias,
+        seq=48,
+        head_dim=48,
+        stride_h=1,
+        stride_w=1,
+        pad_h=1,
+        pad_w=1,
+        device="metal",
+        execution_mode="graph",
+        route_policy={"graph": "torch"},
+    )
+    _require(str(route_report.get("requested_mode", "")) == "graph", "route report requested_mode mismatch")
+    _require(str(route_report.get("resolved_mode", "")) == "eager", "graph->eager fallback mode mismatch")
+    _require(
+        str(route_report.get("graph_fallback_reason_code", "")) == "graph_engine_not_lightning",
+        "graph fallback reason code mismatch for graph_engine=torch",
+    )
+
     # Deterministic eager fallback contract:
-    # graph mode only supports conv3x3 in graph path; conv5x5 should fallback to eager deterministically.
+    # graph mode supports conv3x3 path; conv5x5 should fallback to eager deterministically.
     w5 = np.random.rand(16, 3, 5, 5).astype(np.float32)
     out_lc_eager_5x5 = lc_api.lightning_conv_attention_torchstrong_nchw(
         x,
@@ -204,6 +288,92 @@ def main() -> None:
                 rtol=1e-4,
             ),
             "lc.api torch engine graph-request should deterministically match eager path output",
+        )
+
+        mixed_conv_torch_attn_lc = lc_api.lightning_conv_attention_torchstrong_nchw(
+            x,
+            w,
+            bias,
+            seq=48,
+            head_dim=48,
+            stride_h=1,
+            stride_w=1,
+            pad_h=1,
+            pad_w=1,
+            device="metal",
+            execution_mode="eager",
+            route_policy={"conv": "torch", "attention": "lightning"},
+        )
+        mixed_conv_lc_attn_torch = lc_api.lightning_conv_attention_torchstrong_nchw(
+            x,
+            w,
+            bias,
+            seq=48,
+            head_dim=48,
+            stride_h=1,
+            stride_w=1,
+            pad_h=1,
+            pad_w=1,
+            device="metal",
+            execution_mode="eager",
+            route_policy={"conv": "lightning", "attention": "torch"},
+        )
+        _require(
+            np.allclose(
+                np.asarray(mixed_conv_torch_attn_lc).reshape(-1),
+                np.asarray(out_lc_eager).reshape(-1),
+                atol=2e-3,
+                rtol=2e-3,
+            ),
+            "mixed route conv=torch/attn=lightning should match eager lightning numerics",
+        )
+        _require(
+            np.allclose(
+                np.asarray(mixed_conv_lc_attn_torch).reshape(-1),
+                np.asarray(out_lc_eager).reshape(-1),
+                atol=2e-3,
+                rtol=2e-3,
+            ),
+            "mixed route conv=lightning/attn=torch should match eager lightning numerics",
+        )
+
+        fallback_route_policy = {"graph": "torch", "conv": "torch", "attention": "lightning"}
+        mixed_eager = lc_api.lightning_conv_attention_torchstrong_nchw(
+            x,
+            w,
+            bias,
+            seq=48,
+            head_dim=48,
+            stride_h=1,
+            stride_w=1,
+            pad_h=1,
+            pad_w=1,
+            device="metal",
+            execution_mode="eager",
+            route_policy=fallback_route_policy,
+        )
+        mixed_graph_req = lc_api.lightning_conv_attention_torchstrong_nchw(
+            x,
+            w,
+            bias,
+            seq=48,
+            head_dim=48,
+            stride_h=1,
+            stride_w=1,
+            pad_h=1,
+            pad_w=1,
+            device="metal",
+            execution_mode="graph",
+            route_policy=fallback_route_policy,
+        )
+        _require(
+            np.allclose(
+                np.asarray(mixed_eager).reshape(-1),
+                np.asarray(mixed_graph_req).reshape(-1),
+                atol=2e-3,
+                rtol=2e-3,
+            ),
+            "route_policy(graph=torch) graph-request should deterministically match eager hybrid output",
         )
 
     lc.api.set_engine("lightning")

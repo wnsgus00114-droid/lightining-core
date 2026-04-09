@@ -775,6 +775,144 @@ int main() {
       }
     }
 
+    {
+      // B4 coverage: connected graph chain with conv2d_nchw3x3(stride/pad attr)
+      // -> qkv_pack_repeat -> attention_forward should match eager reference.
+      const std::size_t fused_seq = 64;
+      const std::size_t fused_dim = 32;
+      const std::size_t fused_need = fused_seq * fused_dim;
+      const std::size_t fused_total = fused_need * 3;
+      const std::size_t fused_stride_h = 2;
+      const std::size_t fused_stride_w = 2;
+      const std::size_t fused_pad_h = 1;
+      const std::size_t fused_pad_w = 1;
+      const std::size_t fused_out_h = (8 + (2 * fused_pad_h) - 3) / fused_stride_h + 1;
+      const std::size_t fused_out_w = (8 + (2 * fused_pad_w) - 3) / fused_stride_w + 1;
+
+      GraphIR fused_chain_graph;
+      std::size_t fx = 0;
+      std::size_t fw = 0;
+      std::size_t fb = 0;
+      std::size_t fconv = 0;
+      std::size_t fq = 0;
+      std::size_t fk = 0;
+      std::size_t fv = 0;
+      std::size_t fout = 0;
+
+      TensorSpec fx_spec;
+      fx_spec.shape = {1, 3, 8, 8};
+      fx_spec.dtype = DType::kFloat32;
+      fx_spec.layout = lightning_core::Layout::kContiguous;
+      TensorSpec fw_spec;
+      fw_spec.shape = {16, 3, 3, 3};
+      fw_spec.dtype = DType::kFloat32;
+      fw_spec.layout = lightning_core::Layout::kContiguous;
+      TensorSpec fb_spec;
+      fb_spec.shape = {16};
+      fb_spec.dtype = DType::kFloat32;
+      fb_spec.layout = lightning_core::Layout::kContiguous;
+      TensorSpec fconv_spec;
+      fconv_spec.shape = {1, 16, static_cast<std::int64_t>(fused_out_h), static_cast<std::int64_t>(fused_out_w)};
+      fconv_spec.dtype = DType::kFloat32;
+      fconv_spec.layout = lightning_core::Layout::kContiguous;
+      TensorSpec fattn_spec;
+      fattn_spec.shape = {static_cast<std::int64_t>(fused_seq), static_cast<std::int64_t>(fused_dim)};
+      fattn_spec.dtype = DType::kFloat32;
+      fattn_spec.layout = lightning_core::Layout::kContiguous;
+
+      if (fused_chain_graph.addTensorSpec(fx_spec, &fx, "fx", true) != Status::kSuccess ||
+          fused_chain_graph.addTensorSpec(fw_spec, &fw, "fw", true) != Status::kSuccess ||
+          fused_chain_graph.addTensorSpec(fb_spec, &fb, "fb", true) != Status::kSuccess ||
+          fused_chain_graph.addTensorSpec(fconv_spec, &fconv, "fconv", false) != Status::kSuccess ||
+          fused_chain_graph.addTensorSpec(fattn_spec, &fq, "fq", false) != Status::kSuccess ||
+          fused_chain_graph.addTensorSpec(fattn_spec, &fk, "fk", false) != Status::kSuccess ||
+          fused_chain_graph.addTensorSpec(fattn_spec, &fv, "fv", false) != Status::kSuccess ||
+          fused_chain_graph.addTensorSpec(fattn_spec, &fout, "fout", false) != Status::kSuccess) {
+        std::cerr << "fused_chain_graph addTensorSpec failed\n";
+        return 1;
+      }
+
+      std::unordered_map<std::string, std::int64_t> conv_attrs;
+      conv_attrs["stride_h"] = static_cast<std::int64_t>(fused_stride_h);
+      conv_attrs["stride_w"] = static_cast<std::int64_t>(fused_stride_w);
+      conv_attrs["pad_h"] = static_cast<std::int64_t>(fused_pad_h);
+      conv_attrs["pad_w"] = static_cast<std::int64_t>(fused_pad_w);
+      conv_attrs["apply_relu"] = 1;
+      if (fused_chain_graph.addNode(OpKind::kConv2dNchw3x3, {fx, fw, fb}, {fconv}, {}, "fused_conv", conv_attrs) !=
+              Status::kSuccess ||
+          fused_chain_graph.addNode(OpKind::kQkvPackRepeat, {fconv}, {fq, fk, fv}) != Status::kSuccess ||
+          fused_chain_graph.addNode(OpKind::kAttentionForward, {fq, fk, fv}, {fout}) != Status::kSuccess) {
+        std::cerr << "fused_chain_graph addNode failed\n";
+        return 1;
+      }
+
+      std::unordered_map<std::size_t, std::vector<float>> fused_feeds;
+      fused_feeds[fx] = xv;
+      fused_feeds[fw] = wv;
+      fused_feeds[fb] = bv;
+      std::unordered_map<std::size_t, std::vector<float>> fused_values;
+      if (fused_chain_graph.executeF32(exec_options, fused_feeds, &fused_values, nullptr, nullptr) != Status::kSuccess) {
+        std::cerr << "fused_chain_graph executeF32 failed\n";
+        return 1;
+      }
+      const auto fused_out_it = fused_values.find(fout);
+      if (fused_out_it == fused_values.end() || fused_out_it->second.size() != fused_need) {
+        std::cerr << "fused_chain_graph output missing or size mismatch\n";
+        return 1;
+      }
+
+      std::vector<float> fused_conv_expected(1 * 16 * fused_out_h * fused_out_w, 0.0f);
+      if (lightning_core::ops::conv2dNchw<float>(
+              xv.data(),
+              wv.data(),
+              bv.data(),
+              fused_conv_expected.data(),
+              1,
+              3,
+              8,
+              8,
+              16,
+              3,
+              3,
+              fused_stride_h,
+              fused_stride_w,
+              fused_pad_h,
+              fused_pad_w,
+              Device::kMetal,
+              true) != Status::kSuccess) {
+        std::cerr << "direct fused conv2dNchw failed\n";
+        return 1;
+      }
+
+      std::vector<float> fused_qkv(fused_total, 0.0f);
+      std::size_t fused_copied = std::min(fused_conv_expected.size(), fused_total);
+      std::memcpy(fused_qkv.data(), fused_conv_expected.data(), fused_copied * sizeof(float));
+      while (fused_copied < fused_total) {
+        const std::size_t chunk = std::min(fused_copied, fused_total - fused_copied);
+        std::memcpy(fused_qkv.data() + fused_copied, fused_qkv.data(), chunk * sizeof(float));
+        fused_copied += chunk;
+      }
+      std::vector<float> fused_eager_out(fused_need, 0.0f);
+      lightning_core::AttentionConfig fused_cfg{fused_seq, fused_dim, false};
+      if (lightning_core::attentionForward(
+              fused_qkv.data(),
+              fused_qkv.data() + fused_need,
+              fused_qkv.data() + (2 * fused_need),
+              fused_eager_out.data(),
+              fused_cfg,
+              Device::kMetal) != Status::kSuccess) {
+        std::cerr << "fused eager attentionForward failed\n";
+        return 1;
+      }
+      for (std::size_t i = 0; i < fused_need; ++i) {
+        const float diff = fused_out_it->second[i] - fused_eager_out[i];
+        if (diff > 1e-3f || diff < -1e-3f) {
+          std::cerr << "fused chain eager-vs-graph mismatch at index " << i << "\n";
+          return 1;
+        }
+      }
+    }
+
     // fallback/device-change boundary contract:
     // preferred CPU + metal-only conv should fallback to Metal, while matmul stays on CPU.
     GraphIR mixed_graph;
