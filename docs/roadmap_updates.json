@@ -1,5 +1,23 @@
 [
   {
+    "id": "2026-04-09-docs-published-detailed-phase-c-kickoff-roadmap-queue-v0-2-8-v0-2-17-with-deliverables-and-acceptance-gates",
+    "date": "2026-04-09",
+    "milestone": "M-C",
+    "area": "docs",
+    "title": "Published detailed Phase C kickoff roadmap queue (v0.2.8-v0.2.17) with deliverables and acceptance gates.",
+    "status": "completed",
+    "source": "local"
+  },
+  {
+    "id": "2026-04-09-benchmark-completed-v0-2-8-release-gate-stabilization-by-applying-chained-latency-applicability-only-to-chain-dispatch-reduced-cases",
+    "date": "2026-04-09",
+    "milestone": "M-B",
+    "area": "benchmark",
+    "title": "Completed v0.2.8 release-gate stabilization by applying chained-latency applicability only to chain-dispatch-reduced cases.",
+    "status": "completed",
+    "source": "local"
+  },
+  {
     "id": "2026-04-09-benchmark-completed-v0-2-7-phase-b-exit-audit-with-release-candidate-artifact-bundle-and-roadmap-11-2-metric-gate-wiring",
     "date": "2026-04-09",
     "milestone": "M-B",
@@ -77,6 +95,15 @@
     "milestone": "M-B",
     "area": "graph",
     "title": "Completed v0.2.0 Operator Registry v2 contracts with rank/layout/dtype/shape/attribute validation and deterministic reason codes.",
+    "status": "completed",
+    "source": "local"
+  },
+  {
+    "id": "2026-04-09-release-bumped-public-baseline-to-v0-2-8-post-gate-fix-and-aligned-readme-roadmap-pyproject-version-metadata",
+    "date": "2026-04-09",
+    "milestone": "M-A",
+    "area": "release",
+    "title": "Bumped public baseline to v0.2.8 (post-gate-fix) and aligned README/ROADMAP/pyproject version metadata.",
     "status": "completed",
     "source": "local"
   },
