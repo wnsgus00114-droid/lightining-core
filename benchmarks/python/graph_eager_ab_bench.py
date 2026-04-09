@@ -733,7 +733,24 @@ def _summary(rows: list[dict]) -> dict:
     plan_cache_hit_rates = _finite([float(r["graph_plan_cache_hit_rate_pct"]) for r in ok_rows])
     chain_rows = [r for r in ok_rows if str(r.get("bench", "")) == "conv_attention_torchstrong_nchw"]
     chain_reductions = _finite([float(r.get("chain_latency_reduction_pct", float("nan"))) for r in chain_rows])
-    chain_gate_applicable = any(str(r.get("device", "")).lower() == "metal" for r in chain_rows)
+    chain_dispatch_reduction_cases = sum(
+        1
+        for r in chain_rows
+        if math.isfinite(float(r.get("dispatch_reduction_per_iter", float("nan"))))
+        and float(r.get("dispatch_reduction_per_iter", float("nan"))) > 0.0
+    )
+    chain_dispatch_reduction_rate_pct = (
+        (float(chain_dispatch_reduction_cases) / float(len(chain_rows))) * 100.0
+        if chain_rows
+        else 0.0
+    )
+    # Chained latency gate is only meaningful when:
+    # 1) we are on metal path, and
+    # 2) chain rows actually show host-dispatch reduction signal.
+    chain_gate_applicable = (
+        any(str(r.get("device", "")).lower() == "metal" for r in chain_rows)
+        and chain_dispatch_reduction_cases > 0
+    )
     unsupported_ratio_pct = (
         (float(len(unsupported_rows)) / float(len(rows))) * 100.0
         if rows
@@ -781,6 +798,8 @@ def _summary(rows: list[dict]) -> dict:
         "host_dispatch_reduction_cases": host_dispatch_reduction_cases,
         "host_dispatch_reduction_rate_pct": host_dispatch_reduction_rate_pct,
         "chain_ok_cases": len(chain_rows),
+        "chain_dispatch_reduction_cases": chain_dispatch_reduction_cases,
+        "chain_dispatch_reduction_rate_pct": chain_dispatch_reduction_rate_pct,
         "chain_latency_gate_applicable": chain_gate_applicable,
         "median_chain_latency_reduction_pct": float(median(chain_reductions)) if chain_reductions else float("nan"),
         "representative_chain_shape": rep_chain_shape,
@@ -865,6 +884,8 @@ def _to_markdown(rows: list[dict], summary: dict, device: str, warmup: int, iter
     lines.append(
         f"- chain latency reduction (conv->attn): "
         f"ok_cases={summary['chain_ok_cases']}, "
+        f"dispatch_reduced_cases={summary.get('chain_dispatch_reduction_cases', 0)}, "
+        f"dispatch_reduction_rate={_fmt_pct(float(summary.get('chain_dispatch_reduction_rate_pct', 0.0)))}, "
         f"gate_applicable={summary['chain_latency_gate_applicable']}, "
         f"median={_fmt_pct(summary['median_chain_latency_reduction_pct'])}, "
         f"representative({summary['representative_chain_shape']})={_fmt_pct(summary['representative_chain_latency_reduction_pct'])}"
