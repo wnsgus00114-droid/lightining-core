@@ -12,6 +12,7 @@ jobs:
     timeout-minutes: 45
     env:
       LC_PHASE_B_CONTRACT_JSON: docs/phase_b_graph_contract.json
+      LC_PHASE_C_CONTRACT_JSON: docs/phase_c_engine_contract.json
       LC_GRAPH_AB_WARMUP: "4"
       LC_GRAPH_AB_ITERS: "12"
       LC_GRAPH_AB_TRACE_ITERS: "6"
@@ -24,6 +25,7 @@ jobs:
       LC_FUSION_MAX_ATTENTION: "2.20"
       LC_PHASE_B_EXIT_MIN_GRAPH_PIPELINE_ADOPTION_RATE_PCT: "100.0"
       LC_PHASE_B_EXIT_ALLOW_CHAIN_LATENCY_NOT_APPLICABLE: "true"
+      LC_INTEROP_BOUNDARY_MAX_OVERHEAD_MS: "0.35"
     permissions:
       contents: read
 
@@ -46,6 +48,7 @@ jobs:
         run: |
           python scripts/generate_phase_b_contract_docs.py --check
           python scripts/check_phase_b_contract_sync.py
+          python scripts/check_phase_c_contract_sync.py
 
       - name: Run quick benchmark
         run: |
@@ -94,6 +97,8 @@ jobs:
             --iters 40 \
             --trace-iters 6 \
             --require-shared-bench-coverage \
+            --require-max-boundary-overhead-ms \
+            --max-boundary-overhead-ms "$LC_INTEROP_BOUNDARY_MAX_OVERHEAD_MS" \
             --out-dir benchmarks/reports/ci \
             --pure-csv engine_split_pure_lc.csv \
             --pure-json engine_split_pure_lc.json \
@@ -101,6 +106,29 @@ jobs:
             --interop-json engine_split_interop.json \
             > benchmarks/reports/ci/engine_split_bench.log
           cat benchmarks/reports/ci/engine_split_bench.log
+
+      - name: Run cost model v2 calibration
+        run: |
+          python benchmarks/python/cost_model_v2_calibration.py \
+            --device auto \
+            --warmup 4 \
+            --iters 12 \
+            --json benchmarks/reports/ci/cost_model_v2_calibration.json \
+            --md benchmarks/reports/ci/cost_model_v2_calibration.md \
+            > benchmarks/reports/ci/cost_model_v2_calibration.log
+          cat benchmarks/reports/ci/cost_model_v2_calibration.log
+
+      - name: Run model runner alpha benchmark
+        run: |
+          python benchmarks/python/model_runner_alpha_bench.py \
+            --device auto \
+            --warmup 4 \
+            --iters 20 \
+            --csv benchmarks/reports/ci/model_runner_alpha.csv \
+            --json benchmarks/reports/ci/model_runner_alpha.json \
+            --md benchmarks/reports/ci/model_runner_alpha.md \
+            > benchmarks/reports/ci/model_runner_alpha.log
+          cat benchmarks/reports/ci/model_runner_alpha.log
 
       - name: Run fusion pilot benchmark (v2 patterns)
         run: |
@@ -150,6 +178,28 @@ jobs:
             > benchmarks/reports/ci/phase_b_exit_audit.log
           cat benchmarks/reports/ci/phase_b_exit_audit.log
 
+      - name: Run Phase C exit audit
+        run: |
+          python benchmarks/python/phase_c_exit_audit.py \
+            --graph-json benchmarks/reports/ci/graph_eager_ab.json \
+            --fusion-json benchmarks/reports/ci/fusion_pilot.json \
+            --engine-interop-json benchmarks/reports/ci/engine_split_interop.json \
+            --model-runner-json benchmarks/reports/ci/model_runner_alpha.json \
+            --cost-calibration-json benchmarks/reports/ci/cost_model_v2_calibration.json \
+            --contract-json "$LC_PHASE_C_CONTRACT_JSON" \
+            --out-json benchmarks/reports/ci/phase_c_exit_audit.json \
+            --out-md benchmarks/reports/ci/phase_c_exit_audit.md \
+            --bundle-json benchmarks/reports/ci/phase_c_exit_candidate_bundle.json \
+            --require-artifacts \
+            --artifact benchmarks/reports/ci/graph_eager_ab.json \
+            --artifact benchmarks/reports/ci/fusion_pilot.json \
+            --artifact benchmarks/reports/ci/engine_split_interop.json \
+            --artifact benchmarks/reports/ci/model_runner_alpha.json \
+            --artifact benchmarks/reports/ci/cost_model_v2_calibration.json \
+            --require-pass \
+            > benchmarks/reports/ci/phase_c_exit_audit.log
+          cat benchmarks/reports/ci/phase_c_exit_audit.log
+
       - name: Publish summary to workflow
         if: always()
         run: |
@@ -184,6 +234,16 @@ jobs:
           else
             echo "phase_b_exit_audit summary not found." >> "$GITHUB_STEP_SUMMARY"
           fi
+          if [ -f benchmarks/reports/ci/model_runner_alpha.md ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            cat benchmarks/reports/ci/model_runner_alpha.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f benchmarks/reports/ci/phase_c_exit_audit.md ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            cat benchmarks/reports/ci/phase_c_exit_audit.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "phase_c_exit_audit summary not found." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Upload benchmark artifacts
         if: always()
@@ -206,6 +266,13 @@ jobs:
             benchmarks/reports/ci/engine_split_interop.csv
             benchmarks/reports/ci/engine_split_interop.json
             benchmarks/reports/ci/engine_split_bench.log
+            benchmarks/reports/ci/cost_model_v2_calibration.json
+            benchmarks/reports/ci/cost_model_v2_calibration.md
+            benchmarks/reports/ci/cost_model_v2_calibration.log
+            benchmarks/reports/ci/model_runner_alpha.csv
+            benchmarks/reports/ci/model_runner_alpha.json
+            benchmarks/reports/ci/model_runner_alpha.md
+            benchmarks/reports/ci/model_runner_alpha.log
             benchmarks/reports/ci/fusion_pilot.csv
             benchmarks/reports/ci/fusion_pilot.json
             benchmarks/reports/ci/fusion_pilot.md
@@ -214,3 +281,7 @@ jobs:
             benchmarks/reports/ci/phase_b_exit_audit.md
             benchmarks/reports/ci/phase_b_exit_candidate_bundle.json
             benchmarks/reports/ci/phase_b_exit_audit.log
+            benchmarks/reports/ci/phase_c_exit_audit.json
+            benchmarks/reports/ci/phase_c_exit_audit.md
+            benchmarks/reports/ci/phase_c_exit_candidate_bundle.json
+            benchmarks/reports/ci/phase_c_exit_audit.log

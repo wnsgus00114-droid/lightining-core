@@ -349,33 +349,33 @@ Each milestone tracks:
 28. [completed] v0.2.8 release gate stabilization pass (M-B benchmark/ci)
    - deliverable: chained-latency gate applicability is tied to chain-level dispatch-reduction evidence to prevent false failures on non-applicable paths.
    - acceptance: benchmark artifact workflow publishes fixed applicability metrics in CSV/JSON/MD without false chained-latency gate failures.
-29. [planned] v0.2.9 fusion pass manager v1 (M-C graph/docs/test)
+29. [completed] v0.2.9 fusion pass manager v1 (M-C graph/docs/test)
    - deliverable: explicit fusion pass manager ordering (`conv`, `matmul`, `attention`) with per-pass enable flags and deterministic explain output.
    - acceptance: pass-order regression tests and explain-report snapshots are stable across repeated runs.
-30. [planned] v0.2.10 attention fusion pass-4 subset (M-C graph/benchmark)
+30. [completed] v0.2.10 attention fusion pass-4 subset (M-C graph/benchmark)
    - deliverable: rule-based subset for `qk^T -> softmax -> v` (or equivalent safe decomposition) with deterministic fallback reason taxonomy.
    - acceptance: correctness parity within tolerance + dedicated perf gate row + fallback reason coverage in fusion artifacts.
-31. [planned] v0.2.11 cost model v2 calibration (M-C benchmark/runtime)
+31. [completed] v0.2.11 cost model v2 calibration (M-C benchmark/runtime)
    - deliverable: backend/device-calibrated launch/transfer coefficients, persisted by runtime profile signature.
    - acceptance: cost-model decisions are reproducible and beat/unmatch baseline within documented confidence bounds.
-32. [planned] v0.2.12 planner-cost co-optimization (M-B/M-C graph)
+32. [completed] v0.2.12 planner-cost co-optimization (M-B/M-C graph)
    - deliverable: planner integrates cost-model signals when selecting backend/sync/fusion boundaries for chain workloads.
    - acceptance: host-dispatch reduction and chained-latency gates improve or remain within regression budget on representative shape sets.
-33. [planned] v0.2.13 checkpoint IO v1.2 integrity hardening (M-D python/test)
-   - deliverable: checkpoint metadata hash/signature fields and compatibility validator API for deterministic load-time diagnostics.
-   - acceptance: corrupted/mismatched checkpoint cases fail with structured reason codes in CI smoke tests.
-34. [planned] v0.2.14 autograd bootstrap v1 expansion (M-D python/ops/test)
-   - deliverable: backward support extension for selected `conv` and attention-adjacent primitives with tiny training-loop parity tests.
-   - acceptance: Torch gradient parity tests pass for supported op subset and deterministic fallback remains intact.
-35. [planned] v0.2.15 model runner alpha (M-D model/docs)
-   - deliverable: tiny-transformer inference runner with graph/eager/interop mode switch and reproducible benchmark script.
-   - acceptance: one-command demo and artifactized latency/dispatch profile published in CI.
-36. [planned] v0.2.16 interop boundary hardening (M-E python/benchmark)
-   - deliverable: strict route-policy boundary checks and pure-LC vs interop overhead budget reporting by subgraph class.
-   - acceptance: release artifacts expose boundary-switch counts and overhead deltas with deterministic contract checks.
-37. [planned] v0.2.17 phase C exit audit + v0.3.0-rc0 criteria lock (M-C/M-F docs/ci)
-   - deliverable: Phase C audit bundle (fusion coverage, cost-model explain coverage, perf trend) and `v0.3.0-rc0` gate constants.
-   - acceptance: docs/CI/release metadata are synchronized and audit bundle passes all hard gates.
+33. [completed] v0.2.13 checkpoint IO v1.2 integrity hardening (M-D python/test)
+   - deliverable: checkpoint metadata now includes tensor hash/manifest hash/format version/signature with `validate_checkpoint` and conversion diagnostics APIs.
+   - acceptance: corrupted/mismatched checkpoints fail with structured reason codes (`checkpoint_*`) and CI smoke asserts hard failures.
+34. [completed] v0.2.14 autograd bootstrap v1 expansion (M-D python/ops/test)
+   - deliverable: backward coverage extended with `ag_conv2d` and `ag_attention`, plus tiny multi-step conv->attention training helper.
+   - acceptance: Torch gradient parity smoke covers conv and attention-adjacent primitives for supported subsets.
+35. [completed] v0.2.15 model runner alpha (M-D model/docs)
+   - deliverable: `TinyTransformerRunner` with `eager/graph/interop` mode switch and one-command benchmark (`model_runner_alpha_bench.py`).
+   - acceptance: reproducible CSV/JSON/MD artifacts are emitted for runner modes.
+36. [completed] v0.2.16 interop boundary hardening (M-E python/benchmark)
+   - deliverable: strict route-policy validator + boundary switch/copy/overhead telemetry and standardized interop boundary reason codes.
+   - acceptance: interop benchmark now emits boundary metrics and supports max-overhead budget gate.
+37. [completed] v0.2.17 phase C exit audit + v0.3.0-rc0 criteria lock (M-C/M-F docs/ci)
+   - deliverable: `phase_c_exit_audit.py` + `docs/phase_c_engine_contract.json` with CI/release wiring for Phase C audit bundles.
+   - acceptance: docs/CI/release metadata sync checks include Phase C contract lock paths and hard-gate audit flow.
 
 Progress update history is auto-generated from:
 

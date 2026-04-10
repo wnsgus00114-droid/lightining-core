@@ -64,6 +64,46 @@ def main() -> None:
     stats = dict(pg.plan_cache_stats())
     _require(int(stats.get("hits", 0)) >= 1, "plan cache stats hits missing")
     _require(int(stats.get("misses", 0)) >= 1, "plan cache stats misses missing")
+    for key in (
+        "planner_score_model",
+        "cost_profile_signature",
+        "estimated_total_cost_ns",
+        "estimated_compute_cost_ns",
+        "estimated_launch_cost_ns",
+        "estimated_boundary_cost_ns",
+    ):
+        _require(key in s2, f"{key} missing in plan summary")
+
+    # Fusion pass-manager fields should be deterministic and exposed.
+    fg = lc.GraphIR()
+    a = fg.add_tensor([8, 8], dtype="float32", name="a", constant=True)
+    b = fg.add_tensor([8, 8], dtype="float32", name="b", constant=True)
+    bias = fg.add_tensor([8, 8], dtype="float32", name="bias", constant=True)
+    mm = fg.add_tensor([8, 8], dtype="float32", name="mm")
+    add = fg.add_tensor([8, 8], dtype="float32", name="add")
+    out = fg.add_tensor([8, 8], dtype="float32", name="out")
+    fg.add_node("matmul", [a, b], [mm])
+    fg.add_node("vector_add", [mm, bias], [add])
+    fg.add_node("relu", [add], [out])
+    d1 = list(
+        fg.fusion_report(
+            preferred_device="cpu",
+            fusion_pass_order="matmul,conv,attention,attention_qkv",
+            fusion_cost_min_speedup=1.0,
+        )
+    )
+    d2 = list(
+        fg.fusion_report(
+            preferred_device="cpu",
+            fusion_pass_order="matmul,conv,attention,attention_qkv",
+            fusion_cost_min_speedup=1.0,
+        )
+    )
+    _require(len(d1) == len(d2), "fusion_report length should be deterministic")
+    for x, y in zip(d1, d2):
+        _require(x.get("pass_id") == y.get("pass_id"), "fusion_report pass_id mismatch")
+        _require(x.get("pass_order") == y.get("pass_order"), "fusion_report pass_order mismatch")
+        _require(x.get("reason") == y.get("reason"), "fusion_report reason mismatch")
 
     print("python graph validation report smoke: ok")
 

@@ -61,7 +61,10 @@ def main() -> None:
         load_out = lc_api.load_checkpoint(ckpt_path, into=linear, strict=True)
         _require(isinstance(load_out, dict), "load_checkpoint should return dict payload")
         _require(isinstance(load_out.get("meta", {}), dict), "checkpoint meta must be dict")
-        _require(load_out.get("meta", {}).get("format") == "lc_checkpoint_v1", "checkpoint format mismatch")
+        _require(
+            load_out.get("meta", {}).get("format") in {"lc_checkpoint_v1", "lc_checkpoint_v1_1", "lc_checkpoint_v1_2"},
+            "checkpoint format mismatch",
+        )
 
         restored = linear(x)
         _require(_allclose(ref, restored), "restored linear output must match reference")
@@ -81,7 +84,7 @@ def main() -> None:
         _require(block_src.b is not None and block_dst.b is not None, "conv block bias must exist")
         _require(_allclose(block_src.b, block_dst.b), "conv block bias restore mismatch")
 
-        # Model-level checkpoint v1.1 + forward-compat with v1.
+        # Model-level checkpoint v1.2 + forward-compat with v1/v1.1.
         model = lc_api.TinyMLPModel(8, 16, 4)
         x_model = np.linspace(-0.75, 0.75, num=24, dtype=np.float32).reshape(3, 8)
         model_ref = model(x_model)
@@ -100,7 +103,7 @@ def main() -> None:
 
         loaded_model = lc_api.load_model_checkpoint(model_ckpt, into=model, strict=True)
         _require(
-            loaded_model.get("meta", {}).get("format") == "lc_checkpoint_v1_1",
+            loaded_model.get("meta", {}).get("format") == "lc_checkpoint_v1_2",
             "model checkpoint format mismatch",
         )
         restored_model = model(x_model)
@@ -112,7 +115,7 @@ def main() -> None:
         compat_linear = lc_api.Linear(8, 4, bias=True)
         compat_loaded = lc_api.load_model_checkpoint(linear_v1_ckpt, into=compat_linear, strict=True)
         _require(
-            compat_loaded.get("meta", {}).get("format") in {"lc_checkpoint_v1", "lc_checkpoint_v1_1"},
+            compat_loaded.get("meta", {}).get("format") in {"lc_checkpoint_v1", "lc_checkpoint_v1_1", "lc_checkpoint_v1_2"},
             "forward-compat load should accept v1 format",
         )
         compat_out = compat_linear(x)

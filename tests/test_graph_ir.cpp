@@ -117,6 +117,14 @@ int main() {
     std::cerr << "planSummary should expose node/group/dispatch totals\n";
     return 1;
   }
+  if (!std::isfinite(base_summary.estimated_total_cost_ns) ||
+      !std::isfinite(base_summary.estimated_compute_cost_ns) ||
+      base_summary.estimated_total_cost_ns <= 0.0 ||
+      base_summary.cost_profile_signature.empty() ||
+      base_summary.planner_score_model.empty()) {
+    std::cerr << "planSummary should expose cost-model telemetry fields\n";
+    return 1;
+  }
 
   // Planner cache regression guard (B3): second identical planning call should hit cache.
   {
@@ -1586,6 +1594,132 @@ int main() {
     }
     if (!saw_multi_consumer_reason) {
       std::cerr << "attn_no_fuse_graph should report attention_output_multi_consumer reason\n";
+      return 1;
+    }
+  }
+
+  // fusion pass manager v1 + attention pass-4 subset:
+  // qkv_pack_repeat -> attention_forward -> matmul(proj).
+  {
+    GraphIR qkv_attn_graph;
+    std::size_t in_id = 0;
+    std::size_t q_id = 0;
+    std::size_t k_id = 0;
+    std::size_t v_id = 0;
+    std::size_t attn_mid_id = 0;
+    std::size_t proj_w_id = 0;
+    std::size_t proj_out_id = 0;
+
+    TensorSpec in_spec;
+    in_spec.shape = {1, 3, 4, 4};
+    in_spec.dtype = DType::kFloat32;
+    in_spec.layout = lightning_core::Layout::kContiguous;
+    TensorSpec qkv_spec;
+    qkv_spec.shape = {16, 8};
+    qkv_spec.dtype = DType::kFloat32;
+    qkv_spec.layout = lightning_core::Layout::kContiguous;
+    TensorSpec proj_w_spec;
+    proj_w_spec.shape = {8, 16};
+    proj_w_spec.dtype = DType::kFloat32;
+    proj_w_spec.layout = lightning_core::Layout::kContiguous;
+    TensorSpec proj_out_spec;
+    proj_out_spec.shape = {16, 16};
+    proj_out_spec.dtype = DType::kFloat32;
+    proj_out_spec.layout = lightning_core::Layout::kContiguous;
+
+    if (qkv_attn_graph.addTensorSpec(in_spec, &in_id, "in", true) != Status::kSuccess ||
+        qkv_attn_graph.addTensorSpec(qkv_spec, &q_id, "q", false) != Status::kSuccess ||
+        qkv_attn_graph.addTensorSpec(qkv_spec, &k_id, "k", false) != Status::kSuccess ||
+        qkv_attn_graph.addTensorSpec(qkv_spec, &v_id, "v", false) != Status::kSuccess ||
+        qkv_attn_graph.addTensorSpec(qkv_spec, &attn_mid_id, "attn_mid", false) != Status::kSuccess ||
+        qkv_attn_graph.addTensorSpec(proj_w_spec, &proj_w_id, "proj_w", true) != Status::kSuccess ||
+        qkv_attn_graph.addTensorSpec(proj_out_spec, &proj_out_id, "proj_out", false) != Status::kSuccess) {
+      std::cerr << "qkv_attn_graph addTensorSpec failed\n";
+      return 1;
+    }
+    if (qkv_attn_graph.addNode(OpKind::kQkvPackRepeat, {in_id}, {q_id, k_id, v_id}) != Status::kSuccess ||
+        qkv_attn_graph.addNode(OpKind::kAttentionForward, {q_id, k_id, v_id}, {attn_mid_id}) != Status::kSuccess ||
+        qkv_attn_graph.addNode(OpKind::kMatMul, {attn_mid_id, proj_w_id}, {proj_out_id}) != Status::kSuccess) {
+      std::cerr << "qkv_attn_graph addNode failed\n";
+      return 1;
+    }
+
+    std::unordered_map<std::size_t, std::vector<float>> feeds;
+    std::vector<float> xv(lightning_core::detail::numelFromShapeContract(in_spec.shape), 0.0f);
+    std::vector<float> wv(lightning_core::detail::numelFromShapeContract(proj_w_spec.shape), 0.0f);
+    for (std::size_t i = 0; i < xv.size(); ++i) {
+      xv[i] = static_cast<float>((static_cast<double>(i % 13) - 6.0) * 0.071);
+    }
+    for (std::size_t i = 0; i < wv.size(); ++i) {
+      wv[i] = static_cast<float>(std::sin(static_cast<double>(i) * 0.037));
+    }
+    feeds[in_id] = xv;
+    feeds[proj_w_id] = wv;
+
+    lightning_core::graph::GraphPlannerOptions opts_qkv_on;
+    opts_qkv_on.preferred_device = Device::kCPU;
+    opts_qkv_on.enable_fusion_v1 = true;
+    opts_qkv_on.enable_fusion_cost_model_v1 = true;
+    opts_qkv_on.enable_fusion_pass_attention_qkv = true;
+    opts_qkv_on.enable_fusion_pass_attention = true;
+    opts_qkv_on.fusion_pass_order = "attention_qkv,attention,matmul,conv";
+    opts_qkv_on.fusion_cost_min_speedup = 1.0;
+
+    lightning_core::graph::GraphPlannerOptions opts_qkv_off = opts_qkv_on;
+    opts_qkv_off.enable_fusion_pass_attention_qkv = false;
+
+    std::unordered_map<std::size_t, std::vector<float>> out_on;
+    std::unordered_map<std::size_t, std::vector<float>> out_off;
+    if (qkv_attn_graph.executeF32(opts_qkv_on, feeds, &out_on, nullptr, nullptr) != Status::kSuccess ||
+        qkv_attn_graph.executeF32(opts_qkv_off, feeds, &out_off, nullptr, nullptr) != Status::kSuccess) {
+      std::cerr << "qkv_attn_graph executeF32 failed\n";
+      return 1;
+    }
+    const auto on_it = out_on.find(proj_out_id);
+    const auto off_it = out_off.find(proj_out_id);
+    if (on_it == out_on.end() || off_it == out_off.end() || on_it->second.size() != off_it->second.size()) {
+      std::cerr << "qkv_attn_graph output missing or size mismatch\n";
+      return 1;
+    }
+    for (std::size_t i = 0; i < on_it->second.size(); ++i) {
+      if (std::fabs(on_it->second[i] - off_it->second[i]) > 1.0e-4f) {
+        std::cerr << "qkv_attn_graph fused/unfused mismatch at index " << i << "\n";
+        return 1;
+      }
+    }
+
+    std::vector<lightning_core::graph::GraphFusionDecision> qkv_decisions_1;
+    std::vector<lightning_core::graph::GraphFusionDecision> qkv_decisions_2;
+    if (qkv_attn_graph.fusionReport(opts_qkv_on, &qkv_decisions_1) != Status::kSuccess ||
+        qkv_attn_graph.fusionReport(opts_qkv_on, &qkv_decisions_2) != Status::kSuccess) {
+      std::cerr << "qkv_attn_graph fusionReport failed\n";
+      return 1;
+    }
+    if (qkv_decisions_1.size() != qkv_decisions_2.size()) {
+      std::cerr << "qkv_attn_graph fusionReport size unstable\n";
+      return 1;
+    }
+    for (std::size_t i = 0; i < qkv_decisions_1.size(); ++i) {
+      if (qkv_decisions_1[i].pass_id != qkv_decisions_2[i].pass_id ||
+          qkv_decisions_1[i].pass_order != qkv_decisions_2[i].pass_order ||
+          qkv_decisions_1[i].reason != qkv_decisions_2[i].reason) {
+        std::cerr << "qkv_attn_graph fusionReport ordering/reason should be deterministic\n";
+        return 1;
+      }
+    }
+
+    bool saw_qkv_pattern = false;
+    for (const auto& d : qkv_decisions_1) {
+      if (d.pattern == lightning_core::graph::FusionPattern::kAttentionQkvProjV1) {
+        if (!d.fused || d.pass_id != "attention_qkv" || d.pass_order != 0) {
+          std::cerr << "qkv_attn_graph should fuse via attention_qkv pass at order 0\n";
+          return 1;
+        }
+        saw_qkv_pattern = true;
+      }
+    }
+    if (!saw_qkv_pattern) {
+      std::cerr << "qkv_attn_graph should report attention_qkv_proj_v1 pattern\n";
       return 1;
     }
   }

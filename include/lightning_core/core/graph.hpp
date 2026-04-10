@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cctype>
 #include <cstddef>
 #include <cstdint>
 #include <cmath>
@@ -467,17 +468,34 @@ struct GraphPlannerOptions {
   bool separate_fallback_segments{true};
   bool insert_sync_on_device_change{true};
   bool enable_fusion_v1{true};
+  bool enable_fusion_pass_conv{true};
+  bool enable_fusion_pass_matmul{true};
+  bool enable_fusion_pass_attention{true};
+  bool enable_fusion_pass_attention_qkv{true};
+  // Deterministic pass-manager ordering. Token list syntax:
+  // "conv,matmul,attention,attention_qkv".
+  std::string fusion_pass_order{"conv,matmul,attention,attention_qkv"};
   bool enable_fusion_cost_model_v1{true};
+  bool enable_fusion_cost_model_v2{true};
   bool enable_plan_cache{true};
+  // Runtime profile signature used to calibrate cost coefficients.
+  // Common values: auto, default, metal_apple_silicon, cpu_generic, cuda_generic.
+  std::string cost_profile_signature{"auto"};
   // Predicted unfused/fused ratio threshold. Fusing is allowed when:
   // estimated_speedup = unfused_cost / fused_cost >= fusion_cost_min_speedup.
   double fusion_cost_min_speedup{1.01};
-  // Simple cost model v1 coefficients (nanoseconds).
+  // Base cost coefficients (nanoseconds). Cost model v2 may calibrate them
+  // by profile signature unless explicitly overridden by caller.
   double cost_launch_overhead_ns{12000.0};
   double cost_transfer_overhead_ns{4000.0};
+  double cost_sync_boundary_ns{2500.0};
   double cost_elementwise_per_element_ns{0.50};
   double cost_matmul_per_mac_ns{0.0035};
   double cost_conv_per_mac_ns{0.0022};
+  // Planner-cost co-optimization weights.
+  double planner_cost_weight_compute{1.0};
+  double planner_cost_weight_boundary{1.0};
+  double planner_cost_weight_preference{1.0};
 };
 
 struct GraphExecutionGroup {
@@ -511,6 +529,14 @@ struct GraphPlanSummary {
   std::size_t plan_cache_hits_total{0};
   std::size_t plan_cache_misses_total{0};
   double plan_cache_hit_rate_pct{0.0};
+  std::string planner_score_model{"v3_heuristic"};
+  std::string cost_profile_signature{"default"};
+  double estimated_total_cost_ns{std::numeric_limits<double>::quiet_NaN()};
+  double estimated_compute_cost_ns{std::numeric_limits<double>::quiet_NaN()};
+  double estimated_launch_cost_ns{std::numeric_limits<double>::quiet_NaN()};
+  double estimated_transfer_cost_ns{std::numeric_limits<double>::quiet_NaN()};
+  double estimated_sync_cost_ns{std::numeric_limits<double>::quiet_NaN()};
+  double estimated_boundary_cost_ns{std::numeric_limits<double>::quiet_NaN()};
 };
 
 struct GraphPlanCacheStats {
@@ -522,7 +548,8 @@ struct GraphPlanCacheStats {
 enum class FusionPattern {
   kConvReluV1 = 0,
   kMatMulBiasReluV1,
-  kAttentionProjV1
+  kAttentionProjV1,
+  kAttentionQkvProjV1
 };
 
 inline const char* fusionPatternName(FusionPattern pattern) {
@@ -533,6 +560,30 @@ inline const char* fusionPatternName(FusionPattern pattern) {
       return "matmul_bias_relu_v1";
     case FusionPattern::kAttentionProjV1:
       return "attention_proj_v1";
+    case FusionPattern::kAttentionQkvProjV1:
+      return "attention_qkv_proj_v1";
+    default:
+      return "unknown";
+  }
+}
+
+enum class FusionPassKind {
+  kConv = 0,
+  kMatMul,
+  kAttention,
+  kAttentionQkv
+};
+
+inline const char* fusionPassName(FusionPassKind pass) {
+  switch (pass) {
+    case FusionPassKind::kConv:
+      return "conv";
+    case FusionPassKind::kMatMul:
+      return "matmul";
+    case FusionPassKind::kAttention:
+      return "attention";
+    case FusionPassKind::kAttentionQkv:
+      return "attention_qkv";
     default:
       return "unknown";
   }
@@ -540,6 +591,8 @@ inline const char* fusionPatternName(FusionPattern pattern) {
 
 struct GraphFusionDecision {
   FusionPattern pattern{FusionPattern::kConvReluV1};
+  std::string pass_id{"unknown"};
+  std::size_t pass_order{0};
   std::size_t start_node_id{0};
   std::size_t end_node_id{0};
   runtime::Device assigned_device{runtime::Device::kCPU};
@@ -548,6 +601,7 @@ struct GraphFusionDecision {
   double estimated_unfused_cost_ns{std::numeric_limits<double>::quiet_NaN()};
   double estimated_fused_cost_ns{std::numeric_limits<double>::quiet_NaN()};
   double estimated_speedup{std::numeric_limits<double>::quiet_NaN()};
+  std::string cost_profile_signature{"default"};
   std::string reason;
 };
 
@@ -1038,6 +1092,7 @@ class GraphIR {
     }
 
     last_plan_cache_hit_ = false;
+    last_plan_cost_ = PlanCostTelemetry{};
     out_groups->clear();
     if (out_steps != nullptr) {
       out_steps->clear();
@@ -1053,12 +1108,26 @@ class GraphIR {
         if (out_steps != nullptr) {
           *out_steps = plan_cache_.steps;
         }
+        last_plan_cost_ = plan_cache_.cost;
         plan_cache_stats_hits_ += 1;
         last_plan_cache_hit_ = true;
         return runtime::Status::kSuccess;
       }
       plan_cache_stats_misses_ += 1;
     }
+
+    const CostProfileCoefficients coeffs = resolveCostProfile(options);
+    PlanCostTelemetry cost;
+    cost.planner_score_model = options.group_by_backend_capability
+        ? (options.enable_fusion_cost_model_v2 ? "v3_cost_v2" : "v3_heuristic")
+        : "v3_fixed";
+    cost.cost_profile_signature = coeffs.signature;
+    cost.estimated_total_cost_ns = 0.0;
+    cost.estimated_compute_cost_ns = 0.0;
+    cost.estimated_launch_cost_ns = 0.0;
+    cost.estimated_transfer_cost_ns = 0.0;
+    cost.estimated_sync_cost_ns = 0.0;
+    cost.estimated_boundary_cost_ns = 0.0;
 
     for (std::size_t node_index = 0; node_index < nodes_.size(); ++node_index) {
       const GraphNode& node = nodes_[node_index];
@@ -1076,8 +1145,8 @@ class GraphIR {
       }
 
       if (options.group_by_backend_capability) {
-        // Capability-aware grouping heuristic (pass-2):
-        // choose the lowest boundary/sync/fallback score among candidate backends.
+        // Capability-aware grouping heuristic (pass-3):
+        // choose the minimum planner score using calibrated compute + boundary cost.
         const bool has_prev_group = !out_groups->empty();
         const runtime::Device prev_device = has_prev_group ? out_groups->back().assigned_device : assigned;
         const bool prev_fallback = has_prev_group ? out_groups->back().fallback : false;
@@ -1109,44 +1178,33 @@ class GraphIR {
 
         for (runtime::Device candidate : candidates) {
           const bool candidate_fallback = (candidate != options.preferred_device);
-          double score = 0.0;
-
-          // Soft penalty for fallback to keep preferred backend when trade-off is small.
-          if (candidate_fallback) {
-            score += 1.25;
-          } else {
-            score -= 0.10;
-          }
-
-          // Previous-group continuity and sync-boundary penalty.
+          double boundary_ns = 0.0;
           if (has_prev_group && candidate != prev_device) {
-            score += 2.0;
+            boundary_ns += coeffs.sync_boundary_ns;
             if (options.insert_sync_on_device_change) {
-              score += 4.0;
+              boundary_ns += coeffs.sync_boundary_ns;
             }
           }
           if (has_prev_group && options.separate_fallback_segments && candidate_fallback != prev_fallback) {
-            score += 2.0;
+            boundary_ns += coeffs.sync_boundary_ns * 0.50;
           }
-
-          // Lookahead to forced backend of next op.
           if (has_next_forced_device && candidate != next_forced_device) {
-            score += 3.0;
+            boundary_ns += coeffs.sync_boundary_ns * 0.75;
+          }
+          if (candidate_fallback) {
+            boundary_ns += coeffs.transfer_overhead_ns * 0.35;
+          }
+          if (next_schema != nullptr && schemaSupportsAvailableDevice(*next_schema, candidate)) {
+            boundary_ns -= coeffs.sync_boundary_ns * 0.15;
           }
 
-          // If next node can run on this candidate backend, reward continuity.
-          if (next_schema != nullptr) {
-            if (schemaSupportsAvailableDevice(*next_schema, candidate)) {
-              score -= 0.75;
-            } else {
-              score += 0.50;
-            }
-          }
-
-          // Tiny tie-breaker to reduce plan churn when scores are almost equal.
-          if (candidate == assigned) {
-            score -= 0.05;
-          }
+          const double compute_ns = estimateNodeCoreCostNs(node, tensors_, coeffs);
+          const double preference_penalty_ns =
+              (candidate == options.preferred_device) ? 0.0 : (coeffs.transfer_overhead_ns * 0.10);
+          double score =
+              (options.planner_cost_weight_compute * compute_ns) +
+              (options.planner_cost_weight_boundary * boundary_ns) +
+              (options.planner_cost_weight_preference * preference_penalty_ns);
 
           if (score < best_score) {
             best_score = score;
@@ -1167,6 +1225,8 @@ class GraphIR {
           fallback_reason = ReasonCode::kNone;
         }
       }
+
+      cost.estimated_compute_cost_ns += estimateNodeCoreCostNs(node, tensors_, coeffs);
 
       if (out_steps != nullptr) {
         GraphPlanStep step;
@@ -1210,8 +1270,15 @@ class GraphIR {
 
         if (!out_groups->empty() && group.sync_boundary_before) {
           out_groups->back().sync_boundary_after = true;
+          cost.estimated_sync_cost_ns += coeffs.sync_boundary_ns;
+          cost.estimated_boundary_cost_ns += coeffs.sync_boundary_ns;
         }
         out_groups->push_back(std::move(group));
+        cost.estimated_launch_cost_ns += coeffs.launch_overhead_ns;
+        if (fallback) {
+          cost.estimated_transfer_cost_ns += coeffs.transfer_overhead_ns;
+          cost.estimated_boundary_cost_ns += coeffs.transfer_overhead_ns;
+        }
       } else {
         out_groups->back().node_ids.push_back(node.id);
       }
@@ -1228,7 +1295,16 @@ class GraphIR {
       }
     } else if (options.sync_policy.trace_sync_boundary && !out_groups->empty()) {
       out_groups->back().sync_boundary_after = true;
+      cost.estimated_sync_cost_ns += coeffs.sync_boundary_ns;
+      cost.estimated_boundary_cost_ns += coeffs.sync_boundary_ns;
     }
+
+    cost.estimated_total_cost_ns =
+        cost.estimated_compute_cost_ns +
+        cost.estimated_launch_cost_ns +
+        cost.estimated_transfer_cost_ns +
+        cost.estimated_sync_cost_ns;
+    last_plan_cost_ = cost;
 
     if (options.enable_plan_cache) {
       plan_cache_.valid = true;
@@ -1240,6 +1316,7 @@ class GraphIR {
       } else {
         plan_cache_.steps.clear();
       }
+      plan_cache_.cost = cost;
     }
 
     return runtime::Status::kSuccess;
@@ -1267,6 +1344,14 @@ class GraphIR {
     const double denom = static_cast<double>(plan_cache_stats_hits_ + plan_cache_stats_misses_);
     out_summary->plan_cache_hit_rate_pct =
         (denom > 0.0) ? (static_cast<double>(plan_cache_stats_hits_) * 100.0 / denom) : 0.0;
+    out_summary->planner_score_model = last_plan_cost_.planner_score_model;
+    out_summary->cost_profile_signature = last_plan_cost_.cost_profile_signature;
+    out_summary->estimated_total_cost_ns = last_plan_cost_.estimated_total_cost_ns;
+    out_summary->estimated_compute_cost_ns = last_plan_cost_.estimated_compute_cost_ns;
+    out_summary->estimated_launch_cost_ns = last_plan_cost_.estimated_launch_cost_ns;
+    out_summary->estimated_transfer_cost_ns = last_plan_cost_.estimated_transfer_cost_ns;
+    out_summary->estimated_sync_cost_ns = last_plan_cost_.estimated_sync_cost_ns;
+    out_summary->estimated_boundary_cost_ns = last_plan_cost_.estimated_boundary_cost_ns;
     if (out_groups != nullptr) {
       *out_groups = std::move(local_groups);
     }
@@ -1321,230 +1406,300 @@ class GraphIR {
       }
     }
     const std::vector<std::size_t> consumer_counts = buildTensorConsumerCounts();
+    const std::vector<FusionPassKind> pass_order = buildFusionPassOrder(options);
+    const std::string profile_signature = resolveCostProfile(options).signature;
 
-    for (std::size_t i = 0; i < nodes_.size(); ++i) {
-      const GraphNode& node = nodes_[i];
+    auto init_decision = [&](GraphFusionDecision* decision,
+                             FusionPattern pattern,
+                             FusionPassKind pass,
+                             std::size_t pass_index,
+                             const GraphNode& node) {
+      decision->pattern = pattern;
+      decision->pass_id = fusionPassName(pass);
+      decision->pass_order = pass_index;
+      decision->start_node_id = node.id;
+      decision->end_node_id = node.id;
+      auto it = step_device.find(node.id);
+      decision->assigned_device = (it != step_device.end()) ? it->second : runtime::Device::kCPU;
+      decision->cost_profile_signature = profile_signature;
+    };
 
-      if (node.op == OpKind::kConv2dNchw3x3s1p1) {
+    for (std::size_t pass_index = 0; pass_index < pass_order.size(); ++pass_index) {
+      const FusionPassKind pass = pass_order[pass_index];
+      for (std::size_t i = 0; i < nodes_.size(); ++i) {
+        const GraphNode& node = nodes_[i];
         GraphFusionDecision decision;
-        decision.pattern = FusionPattern::kConvReluV1;
-        decision.start_node_id = node.id;
-        decision.end_node_id = node.id;
-        auto step_it = step_device.find(node.id);
-        decision.assigned_device = (step_it != step_device.end()) ? step_it->second : runtime::Device::kCPU;
 
-        if (i + 1 >= nodes_.size()) {
-          decision.reason = "next_op_missing";
+        if (pass == FusionPassKind::kConv && node.op == OpKind::kConv2dNchw3x3s1p1) {
+          init_decision(&decision, FusionPattern::kConvReluV1, pass, pass_index, node);
+          if (i + 1 >= nodes_.size()) {
+            decision.reason = "next_op_missing";
+            out_decisions->push_back(std::move(decision));
+            continue;
+          }
+          const GraphNode& next = nodes_[i + 1];
+          decision.end_node_id = next.id;
+          if (next.op != OpKind::kRelu) {
+            decision.reason = "next_op_not_relu";
+            out_decisions->push_back(std::move(decision));
+            continue;
+          }
+          std::string eligibility_reason;
+          if (!canFuseConvReluPair(node, next, consumer_counts, &eligibility_reason)) {
+            decision.reason = eligibility_reason;
+            out_decisions->push_back(std::move(decision));
+            continue;
+          }
+          const auto g0_it = node_group.find(node.id);
+          const auto g1_it = node_group.find(next.id);
+          if (g0_it == node_group.end() || g1_it == node_group.end() || g0_it->second != g1_it->second) {
+            decision.reason = "planner_group_boundary";
+            out_decisions->push_back(std::move(decision));
+            continue;
+          }
+          const auto d1_it = step_device.find(next.id);
+          const runtime::Device next_device = (d1_it != step_device.end()) ? d1_it->second : decision.assigned_device;
+          if (next_device != decision.assigned_device) {
+            decision.reason = "device_boundary";
+            out_decisions->push_back(std::move(decision));
+            continue;
+          }
+          if (!options.enable_fusion_v1) {
+            decision.reason = "fusion_disabled";
+            out_decisions->push_back(std::move(decision));
+            continue;
+          }
+          const FusionCostEstimate estimate =
+              estimateConvReluCost(options, tensors_[node.inputs[0]], tensors_[node.inputs[1]], tensors_[node.outputs[0]]);
+          if (!applyCostModelDecision(options, estimate, &decision)) {
+            out_decisions->push_back(std::move(decision));
+            continue;
+          }
+          decision.fused = true;
+          decision.reason = options.enable_fusion_cost_model_v1
+              ? formatCostModelPassReason(estimate.speedup)
+              : "fused_conv_relu_v1";
           out_decisions->push_back(std::move(decision));
           continue;
         }
 
-        const GraphNode& next = nodes_[i + 1];
-        decision.end_node_id = next.id;
-        if (next.op != OpKind::kRelu) {
-          decision.reason = "next_op_not_relu";
+        if (pass == FusionPassKind::kMatMul && node.op == OpKind::kMatMul) {
+          init_decision(&decision, FusionPattern::kMatMulBiasReluV1, pass, pass_index, node);
+          if (i + 2 >= nodes_.size()) {
+            decision.reason = "next_ops_missing";
+            out_decisions->push_back(std::move(decision));
+            continue;
+          }
+          const GraphNode& next = nodes_[i + 1];
+          const GraphNode& next2 = nodes_[i + 2];
+          decision.end_node_id = next2.id;
+          if (next.op != OpKind::kVectorAdd) {
+            decision.reason = "middle_op_not_vector_add";
+            out_decisions->push_back(std::move(decision));
+            continue;
+          }
+          if (next2.op != OpKind::kRelu) {
+            decision.reason = "final_op_not_relu";
+            out_decisions->push_back(std::move(decision));
+            continue;
+          }
+          std::string eligibility_reason;
+          if (!canFuseMatMulBiasReluTriplet(node, next, next2, consumer_counts, &eligibility_reason)) {
+            decision.reason = eligibility_reason;
+            out_decisions->push_back(std::move(decision));
+            continue;
+          }
+          const auto g0_it = node_group.find(node.id);
+          const auto g1_it = node_group.find(next.id);
+          const auto g2_it = node_group.find(next2.id);
+          if (g0_it == node_group.end() ||
+              g1_it == node_group.end() ||
+              g2_it == node_group.end() ||
+              g0_it->second != g1_it->second ||
+              g1_it->second != g2_it->second) {
+            decision.reason = "planner_group_boundary";
+            out_decisions->push_back(std::move(decision));
+            continue;
+          }
+          const auto d1_it = step_device.find(next.id);
+          const auto d2_it = step_device.find(next2.id);
+          const runtime::Device d1 = (d1_it != step_device.end()) ? d1_it->second : decision.assigned_device;
+          const runtime::Device d2 = (d2_it != step_device.end()) ? d2_it->second : decision.assigned_device;
+          if (d1 != decision.assigned_device || d2 != decision.assigned_device) {
+            decision.reason = "device_boundary";
+            out_decisions->push_back(std::move(decision));
+            continue;
+          }
+          if (!options.enable_fusion_v1) {
+            decision.reason = "fusion_disabled";
+            out_decisions->push_back(std::move(decision));
+            continue;
+          }
+          const FusionCostEstimate estimate = estimateMatMulBiasReluCost(
+              options,
+              tensors_[node.inputs[0]],
+              tensors_[node.inputs[1]],
+              tensors_[next.outputs[0]],
+              tensors_[next2.outputs[0]]);
+          if (!applyCostModelDecision(options, estimate, &decision)) {
+            out_decisions->push_back(std::move(decision));
+            continue;
+          }
+          decision.fused = true;
+          decision.reason = options.enable_fusion_cost_model_v1
+              ? formatCostModelPassReason(estimate.speedup)
+              : "fused_matmul_bias_relu_v1";
           out_decisions->push_back(std::move(decision));
           continue;
         }
 
-        std::string eligibility_reason;
-        if (!canFuseConvReluPair(node, next, consumer_counts, &eligibility_reason)) {
-          decision.reason = eligibility_reason;
+        if (pass == FusionPassKind::kAttention && node.op == OpKind::kAttentionForward) {
+          init_decision(&decision, FusionPattern::kAttentionProjV1, pass, pass_index, node);
+          if (i + 1 >= nodes_.size()) {
+            decision.reason = "next_op_missing";
+            out_decisions->push_back(std::move(decision));
+            continue;
+          }
+          const GraphNode& next = nodes_[i + 1];
+          decision.end_node_id = next.id;
+          if (next.op != OpKind::kMatMul) {
+            decision.reason = "next_op_not_matmul";
+            out_decisions->push_back(std::move(decision));
+            continue;
+          }
+          std::string eligibility_reason;
+          if (!canFuseAttentionProjPair(node, next, consumer_counts, &eligibility_reason)) {
+            decision.reason = eligibility_reason;
+            out_decisions->push_back(std::move(decision));
+            continue;
+          }
+          const auto g0_it = node_group.find(node.id);
+          const auto g1_it = node_group.find(next.id);
+          if (g0_it == node_group.end() || g1_it == node_group.end() || g0_it->second != g1_it->second) {
+            decision.reason = "planner_group_boundary";
+            out_decisions->push_back(std::move(decision));
+            continue;
+          }
+          const auto d1_it = step_device.find(next.id);
+          const runtime::Device d1 = (d1_it != step_device.end()) ? d1_it->second : decision.assigned_device;
+          if (d1 != decision.assigned_device) {
+            decision.reason = "device_boundary";
+            out_decisions->push_back(std::move(decision));
+            continue;
+          }
+          if (!options.enable_fusion_v1) {
+            decision.reason = "fusion_disabled";
+            out_decisions->push_back(std::move(decision));
+            continue;
+          }
+          const FusionCostEstimate estimate = estimateAttentionProjCost(
+              options,
+              tensors_[node.inputs[0]],
+              tensors_[node.outputs[0]],
+              tensors_[next.inputs[1]],
+              tensors_[next.outputs[0]]);
+          if (!applyCostModelDecision(options, estimate, &decision)) {
+            out_decisions->push_back(std::move(decision));
+            continue;
+          }
+          decision.fused = true;
+          decision.reason = options.enable_fusion_cost_model_v1
+              ? formatCostModelPassReason(estimate.speedup)
+              : "fused_attention_proj_v1";
           out_decisions->push_back(std::move(decision));
           continue;
         }
 
-        const auto g0_it = node_group.find(node.id);
-        const auto g1_it = node_group.find(next.id);
-        if (g0_it == node_group.end() || g1_it == node_group.end() || g0_it->second != g1_it->second) {
-          decision.reason = "planner_group_boundary";
+        if (pass == FusionPassKind::kAttentionQkv && node.op == OpKind::kQkvPackRepeat) {
+          init_decision(&decision, FusionPattern::kAttentionQkvProjV1, pass, pass_index, node);
+          if (i + 2 >= nodes_.size()) {
+            decision.reason = "next_ops_missing";
+            out_decisions->push_back(std::move(decision));
+            continue;
+          }
+          const GraphNode& mid = nodes_[i + 1];
+          const GraphNode& next = nodes_[i + 2];
+          decision.end_node_id = next.id;
+          if (mid.op != OpKind::kAttentionForward) {
+            decision.reason = "middle_op_not_attention";
+            out_decisions->push_back(std::move(decision));
+            continue;
+          }
+          if (next.op != OpKind::kMatMul) {
+            decision.reason = "final_op_not_matmul";
+            out_decisions->push_back(std::move(decision));
+            continue;
+          }
+          std::string eligibility_reason;
+          if (!canFuseAttentionQkvProjTriplet(node, mid, next, consumer_counts, &eligibility_reason)) {
+            decision.reason = eligibility_reason;
+            out_decisions->push_back(std::move(decision));
+            continue;
+          }
+          const auto g0_it = node_group.find(node.id);
+          const auto g1_it = node_group.find(mid.id);
+          const auto g2_it = node_group.find(next.id);
+          if (g0_it == node_group.end() ||
+              g1_it == node_group.end() ||
+              g2_it == node_group.end() ||
+              g0_it->second != g1_it->second ||
+              g1_it->second != g2_it->second) {
+            decision.reason = "planner_group_boundary";
+            out_decisions->push_back(std::move(decision));
+            continue;
+          }
+          const auto d1_it = step_device.find(mid.id);
+          const auto d2_it = step_device.find(next.id);
+          const runtime::Device d1 = (d1_it != step_device.end()) ? d1_it->second : decision.assigned_device;
+          const runtime::Device d2 = (d2_it != step_device.end()) ? d2_it->second : decision.assigned_device;
+          if (d1 != decision.assigned_device || d2 != decision.assigned_device) {
+            decision.reason = "device_boundary";
+            out_decisions->push_back(std::move(decision));
+            continue;
+          }
+          if (!options.enable_fusion_v1) {
+            decision.reason = "fusion_disabled";
+            out_decisions->push_back(std::move(decision));
+            continue;
+          }
+          const FusionCostEstimate estimate = estimateAttentionQkvProjCost(
+              options,
+              tensors_[node.inputs[0]],
+              tensors_[node.outputs[0]],
+              tensors_[mid.outputs[0]],
+              tensors_[next.inputs[1]],
+              tensors_[next.outputs[0]]);
+          if (!applyCostModelDecision(options, estimate, &decision)) {
+            out_decisions->push_back(std::move(decision));
+            continue;
+          }
+          decision.fused = true;
+          decision.reason = options.enable_fusion_cost_model_v1
+              ? formatCostModelPassReason(estimate.speedup)
+              : "fused_attention_qkv_proj_v1";
           out_decisions->push_back(std::move(decision));
           continue;
         }
-
-        const auto d1_it = step_device.find(next.id);
-        const runtime::Device next_device = (d1_it != step_device.end()) ? d1_it->second : decision.assigned_device;
-        if (next_device != decision.assigned_device) {
-          decision.reason = "device_boundary";
-          out_decisions->push_back(std::move(decision));
-          continue;
-        }
-
-        if (!options.enable_fusion_v1) {
-          decision.reason = "fusion_disabled";
-          out_decisions->push_back(std::move(decision));
-          continue;
-        }
-
-        const GraphTensorValue& x_tensor = tensors_[node.inputs[0]];
-        const GraphTensorValue& w_tensor = tensors_[node.inputs[1]];
-        const GraphTensorValue& conv_mid_tensor = tensors_[node.outputs[0]];
-        const FusionCostEstimate estimate = estimateConvReluCost(options, x_tensor, w_tensor, conv_mid_tensor);
-        if (!applyCostModelDecision(options, estimate, &decision)) {
-          out_decisions->push_back(std::move(decision));
-          continue;
-        }
-
-        decision.fused = true;
-        decision.reason = options.enable_fusion_cost_model_v1
-            ? formatCostModelPassReason(estimate.speedup)
-            : "fused_conv_relu_v1";
-        out_decisions->push_back(std::move(decision));
-        continue;
-      }
-
-      if (node.op == OpKind::kMatMul) {
-        GraphFusionDecision decision;
-        decision.pattern = FusionPattern::kMatMulBiasReluV1;
-        decision.start_node_id = node.id;
-        decision.end_node_id = node.id;
-        auto step_it = step_device.find(node.id);
-        decision.assigned_device = (step_it != step_device.end()) ? step_it->second : runtime::Device::kCPU;
-
-        if (i + 2 >= nodes_.size()) {
-          decision.reason = "next_ops_missing";
-          out_decisions->push_back(std::move(decision));
-          continue;
-        }
-
-        const GraphNode& next = nodes_[i + 1];
-        const GraphNode& next2 = nodes_[i + 2];
-        decision.end_node_id = next2.id;
-        if (next.op != OpKind::kVectorAdd) {
-          decision.reason = "middle_op_not_vector_add";
-          out_decisions->push_back(std::move(decision));
-          continue;
-        }
-        if (next2.op != OpKind::kRelu) {
-          decision.reason = "final_op_not_relu";
-          out_decisions->push_back(std::move(decision));
-          continue;
-        }
-
-        std::string eligibility_reason;
-        if (!canFuseMatMulBiasReluTriplet(node, next, next2, consumer_counts, &eligibility_reason)) {
-          decision.reason = eligibility_reason;
-          out_decisions->push_back(std::move(decision));
-          continue;
-        }
-
-        const auto g0_it = node_group.find(node.id);
-        const auto g1_it = node_group.find(next.id);
-        const auto g2_it = node_group.find(next2.id);
-        if (g0_it == node_group.end() ||
-            g1_it == node_group.end() ||
-            g2_it == node_group.end() ||
-            g0_it->second != g1_it->second ||
-            g1_it->second != g2_it->second) {
-          decision.reason = "planner_group_boundary";
-          out_decisions->push_back(std::move(decision));
-          continue;
-        }
-
-        const auto d1_it = step_device.find(next.id);
-        const auto d2_it = step_device.find(next2.id);
-        const runtime::Device d1 = (d1_it != step_device.end()) ? d1_it->second : decision.assigned_device;
-        const runtime::Device d2 = (d2_it != step_device.end()) ? d2_it->second : decision.assigned_device;
-        if (d1 != decision.assigned_device || d2 != decision.assigned_device) {
-          decision.reason = "device_boundary";
-          out_decisions->push_back(std::move(decision));
-          continue;
-        }
-
-        if (!options.enable_fusion_v1) {
-          decision.reason = "fusion_disabled";
-          out_decisions->push_back(std::move(decision));
-          continue;
-        }
-
-        const GraphTensorValue& lhs_tensor = tensors_[node.inputs[0]];
-        const GraphTensorValue& rhs_tensor = tensors_[node.inputs[1]];
-        const GraphTensorValue& vec_out_tensor = tensors_[next.outputs[0]];
-        const GraphTensorValue& relu_out_tensor = tensors_[next2.outputs[0]];
-        const FusionCostEstimate estimate =
-            estimateMatMulBiasReluCost(options, lhs_tensor, rhs_tensor, vec_out_tensor, relu_out_tensor);
-        if (!applyCostModelDecision(options, estimate, &decision)) {
-          out_decisions->push_back(std::move(decision));
-          continue;
-        }
-
-        decision.fused = true;
-        decision.reason = options.enable_fusion_cost_model_v1
-            ? formatCostModelPassReason(estimate.speedup)
-            : "fused_matmul_bias_relu_v1";
-        out_decisions->push_back(std::move(decision));
-        continue;
-      }
-
-      if (node.op == OpKind::kAttentionForward) {
-        GraphFusionDecision decision;
-        decision.pattern = FusionPattern::kAttentionProjV1;
-        decision.start_node_id = node.id;
-        decision.end_node_id = node.id;
-        auto step_it = step_device.find(node.id);
-        decision.assigned_device = (step_it != step_device.end()) ? step_it->second : runtime::Device::kCPU;
-
-        if (i + 1 >= nodes_.size()) {
-          decision.reason = "next_op_missing";
-          out_decisions->push_back(std::move(decision));
-          continue;
-        }
-
-        const GraphNode& next = nodes_[i + 1];
-        decision.end_node_id = next.id;
-        if (next.op != OpKind::kMatMul) {
-          decision.reason = "next_op_not_matmul";
-          out_decisions->push_back(std::move(decision));
-          continue;
-        }
-
-        std::string eligibility_reason;
-        if (!canFuseAttentionProjPair(node, next, consumer_counts, &eligibility_reason)) {
-          decision.reason = eligibility_reason;
-          out_decisions->push_back(std::move(decision));
-          continue;
-        }
-
-        const auto g0_it = node_group.find(node.id);
-        const auto g1_it = node_group.find(next.id);
-        if (g0_it == node_group.end() || g1_it == node_group.end() || g0_it->second != g1_it->second) {
-          decision.reason = "planner_group_boundary";
-          out_decisions->push_back(std::move(decision));
-          continue;
-        }
-
-        const auto d1_it = step_device.find(next.id);
-        const runtime::Device d1 = (d1_it != step_device.end()) ? d1_it->second : decision.assigned_device;
-        if (d1 != decision.assigned_device) {
-          decision.reason = "device_boundary";
-          out_decisions->push_back(std::move(decision));
-          continue;
-        }
-
-        if (!options.enable_fusion_v1) {
-          decision.reason = "fusion_disabled";
-          out_decisions->push_back(std::move(decision));
-          continue;
-        }
-
-        const GraphTensorValue& q_tensor = tensors_[node.inputs[0]];
-        const GraphTensorValue& attn_out_tensor = tensors_[node.outputs[0]];
-        const GraphTensorValue& proj_weight_tensor = tensors_[next.inputs[1]];
-        const GraphTensorValue& proj_out_tensor = tensors_[next.outputs[0]];
-        const FusionCostEstimate estimate =
-            estimateAttentionProjCost(options, q_tensor, attn_out_tensor, proj_weight_tensor, proj_out_tensor);
-        if (!applyCostModelDecision(options, estimate, &decision)) {
-          out_decisions->push_back(std::move(decision));
-          continue;
-        }
-
-        decision.fused = true;
-        decision.reason = options.enable_fusion_cost_model_v1
-            ? formatCostModelPassReason(estimate.speedup)
-            : "fused_attention_proj_v1";
-        out_decisions->push_back(std::move(decision));
       }
     }
+
+    std::stable_sort(out_decisions->begin(), out_decisions->end(), [](const GraphFusionDecision& a, const GraphFusionDecision& b) {
+      if (a.pass_order != b.pass_order) {
+        return a.pass_order < b.pass_order;
+      }
+      if (a.start_node_id != b.start_node_id) {
+        return a.start_node_id < b.start_node_id;
+      }
+      if (a.end_node_id != b.end_node_id) {
+        return a.end_node_id < b.end_node_id;
+      }
+      const std::string ap = fusionPatternName(a.pattern);
+      const std::string bp = fusionPatternName(b.pattern);
+      if (ap != bp) {
+        return ap < bp;
+      }
+      return a.reason < b.reason;
+    });
     return runtime::Status::kSuccess;
   }
 
@@ -1569,6 +1724,7 @@ class GraphIR {
     last_plan_cache_hit_ = false;
     plan_cache_stats_hits_ = 0;
     plan_cache_stats_misses_ = 0;
+    last_plan_cost_ = PlanCostTelemetry{};
   }
 
   GraphPlanCacheStats planCacheStats() const {
@@ -1581,12 +1737,34 @@ class GraphIR {
   }
 
  private:
+  struct PlanCostTelemetry {
+    std::string planner_score_model{"v3_heuristic"};
+    std::string cost_profile_signature{"default"};
+    double estimated_total_cost_ns{std::numeric_limits<double>::quiet_NaN()};
+    double estimated_compute_cost_ns{std::numeric_limits<double>::quiet_NaN()};
+    double estimated_launch_cost_ns{std::numeric_limits<double>::quiet_NaN()};
+    double estimated_transfer_cost_ns{std::numeric_limits<double>::quiet_NaN()};
+    double estimated_sync_cost_ns{std::numeric_limits<double>::quiet_NaN()};
+    double estimated_boundary_cost_ns{std::numeric_limits<double>::quiet_NaN()};
+  };
+
+  struct CostProfileCoefficients {
+    std::string signature{"default"};
+    double launch_overhead_ns{12000.0};
+    double transfer_overhead_ns{4000.0};
+    double sync_boundary_ns{2500.0};
+    double elementwise_per_element_ns{0.50};
+    double matmul_per_mac_ns{0.0035};
+    double conv_per_mac_ns{0.0022};
+  };
+
   struct PlanCacheEntry {
     bool valid{false};
     std::size_t graph_revision{0};
     std::uint64_t key{0};
     std::vector<GraphExecutionGroup> groups;
     std::vector<GraphPlanStep> steps;
+    PlanCostTelemetry cost{};
   };
 
   static std::uint64_t hashCombine(std::uint64_t seed, std::uint64_t v) {
@@ -1603,6 +1781,237 @@ class GraphIR {
     return bits.u;
   }
 
+  static std::uint64_t hashString(const std::string& text) {
+    std::uint64_t seed = 1469598103934665603ULL;
+    for (unsigned char ch : text) {
+      seed ^= static_cast<std::uint64_t>(ch);
+      seed *= 1099511628211ULL;
+    }
+    return seed;
+  }
+
+  static std::string trimLower(std::string token) {
+    while (!token.empty() && std::isspace(static_cast<unsigned char>(token.front()))) {
+      token.erase(token.begin());
+    }
+    while (!token.empty() && std::isspace(static_cast<unsigned char>(token.back()))) {
+      token.pop_back();
+    }
+    for (char& ch : token) {
+      ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    return token;
+  }
+
+  static bool parseFusionPassToken(const std::string& token, FusionPassKind* out_kind) {
+    if (out_kind == nullptr) {
+      return false;
+    }
+    if (token == "conv") {
+      *out_kind = FusionPassKind::kConv;
+      return true;
+    }
+    if (token == "matmul") {
+      *out_kind = FusionPassKind::kMatMul;
+      return true;
+    }
+    if (token == "attention") {
+      *out_kind = FusionPassKind::kAttention;
+      return true;
+    }
+    if (token == "attention_qkv") {
+      *out_kind = FusionPassKind::kAttentionQkv;
+      return true;
+    }
+    return false;
+  }
+
+  static bool isFusionPassEnabled(const GraphPlannerOptions& options, FusionPassKind pass) {
+    switch (pass) {
+      case FusionPassKind::kConv:
+        return options.enable_fusion_pass_conv;
+      case FusionPassKind::kMatMul:
+        return options.enable_fusion_pass_matmul;
+      case FusionPassKind::kAttention:
+        return options.enable_fusion_pass_attention;
+      case FusionPassKind::kAttentionQkv:
+        return options.enable_fusion_pass_attention_qkv;
+      default:
+        return false;
+    }
+  }
+
+  static std::vector<FusionPassKind> buildFusionPassOrder(const GraphPlannerOptions& options) {
+    std::vector<FusionPassKind> parsed;
+    std::string csv = options.fusion_pass_order;
+    if (csv.empty()) {
+      csv = "conv,matmul,attention,attention_qkv";
+    }
+    std::size_t begin = 0;
+    while (begin <= csv.size()) {
+      const std::size_t comma = csv.find(',', begin);
+      const std::size_t end = (comma == std::string::npos) ? csv.size() : comma;
+      const std::string token = trimLower(csv.substr(begin, end - begin));
+      FusionPassKind kind = FusionPassKind::kConv;
+      if (!token.empty() && parseFusionPassToken(token, &kind)) {
+        parsed.push_back(kind);
+      }
+      if (comma == std::string::npos) {
+        break;
+      }
+      begin = comma + 1;
+    }
+
+    const std::vector<FusionPassKind> default_order = {
+        FusionPassKind::kConv,
+        FusionPassKind::kMatMul,
+        FusionPassKind::kAttention,
+        FusionPassKind::kAttentionQkv};
+    if (parsed.empty()) {
+      parsed = default_order;
+    }
+
+    std::vector<FusionPassKind> out;
+    out.reserve(default_order.size());
+    for (FusionPassKind pass : parsed) {
+      if (!isFusionPassEnabled(options, pass)) {
+        continue;
+      }
+      if (std::find(out.begin(), out.end(), pass) == out.end()) {
+        out.push_back(pass);
+      }
+    }
+    for (FusionPassKind pass : default_order) {
+      if (!isFusionPassEnabled(options, pass)) {
+        continue;
+      }
+      if (std::find(out.begin(), out.end(), pass) == out.end()) {
+        out.push_back(pass);
+      }
+    }
+    return out;
+  }
+
+  static CostProfileCoefficients resolveCostProfile(const GraphPlannerOptions& options) {
+    CostProfileCoefficients out;
+    out.launch_overhead_ns = options.cost_launch_overhead_ns;
+    out.transfer_overhead_ns = options.cost_transfer_overhead_ns;
+    out.sync_boundary_ns = options.cost_sync_boundary_ns;
+    out.elementwise_per_element_ns = options.cost_elementwise_per_element_ns;
+    out.matmul_per_mac_ns = options.cost_matmul_per_mac_ns;
+    out.conv_per_mac_ns = options.cost_conv_per_mac_ns;
+    std::string signature = trimLower(options.cost_profile_signature);
+    if (signature.empty() || signature == "auto") {
+      switch (options.preferred_device) {
+        case runtime::Device::kMetal:
+          signature = "metal_apple_silicon";
+          break;
+        case runtime::Device::kCUDA:
+          signature = "cuda_generic";
+          break;
+        case runtime::Device::kCPU:
+        default:
+          signature = "cpu_generic";
+          break;
+      }
+    }
+
+    // v2 profile calibration presets. Callers can still override coefficients
+    // directly via planner options.
+    if (options.enable_fusion_cost_model_v2) {
+      if (signature == "metal_apple_silicon") {
+        out.launch_overhead_ns = options.cost_launch_overhead_ns * 0.88;
+        out.transfer_overhead_ns = options.cost_transfer_overhead_ns * 0.85;
+        out.sync_boundary_ns = options.cost_sync_boundary_ns * 0.92;
+        out.elementwise_per_element_ns = options.cost_elementwise_per_element_ns * 0.93;
+        out.matmul_per_mac_ns = options.cost_matmul_per_mac_ns * 0.90;
+        out.conv_per_mac_ns = options.cost_conv_per_mac_ns * 0.90;
+      } else if (signature == "cpu_generic") {
+        out.launch_overhead_ns = options.cost_launch_overhead_ns * 0.75;
+        out.transfer_overhead_ns = options.cost_transfer_overhead_ns * 0.55;
+        out.sync_boundary_ns = options.cost_sync_boundary_ns * 0.60;
+        out.elementwise_per_element_ns = options.cost_elementwise_per_element_ns * 1.08;
+        out.matmul_per_mac_ns = options.cost_matmul_per_mac_ns * 1.18;
+        out.conv_per_mac_ns = options.cost_conv_per_mac_ns * 1.22;
+      } else if (signature == "cuda_generic") {
+        out.launch_overhead_ns = options.cost_launch_overhead_ns * 0.82;
+        out.transfer_overhead_ns = options.cost_transfer_overhead_ns * 0.90;
+        out.sync_boundary_ns = options.cost_sync_boundary_ns * 0.88;
+        out.elementwise_per_element_ns = options.cost_elementwise_per_element_ns * 0.86;
+        out.matmul_per_mac_ns = options.cost_matmul_per_mac_ns * 0.84;
+        out.conv_per_mac_ns = options.cost_conv_per_mac_ns * 0.82;
+      } else {
+        signature = "default";
+      }
+    } else {
+      signature = "default";
+    }
+    out.signature = signature;
+    return out;
+  }
+
+  static double estimateNodeCoreCostNs(
+      const GraphNode& node,
+      const std::vector<GraphTensorValue>& tensors,
+      const CostProfileCoefficients& coeffs) {
+    if (node.op == OpKind::kMatMul &&
+        node.inputs.size() == 2 &&
+        node.inputs[0] < tensors.size() &&
+        node.inputs[1] < tensors.size()) {
+      const auto& lhs = tensors[node.inputs[0]].spec.shape;
+      const auto& rhs = tensors[node.inputs[1]].spec.shape;
+      if (lhs.size() == 2 && rhs.size() == 2) {
+        const double m = static_cast<double>(lhs[0]);
+        const double k = static_cast<double>(lhs[1]);
+        const double n = static_cast<double>(rhs[1]);
+        return m * k * n * coeffs.matmul_per_mac_ns;
+      }
+    }
+    if ((node.op == OpKind::kConv2dNchw3x3 || node.op == OpKind::kConv2dNchw3x3s1p1) &&
+        node.inputs.size() >= 2 &&
+        node.inputs[0] < tensors.size() &&
+        node.inputs[1] < tensors.size() &&
+        !node.outputs.empty() &&
+        node.outputs[0] < tensors.size()) {
+      const auto& x = tensors[node.inputs[0]].spec.shape;
+      const auto& w = tensors[node.inputs[1]].spec.shape;
+      const auto& y = tensors[node.outputs[0]].spec.shape;
+      if (x.size() == 4 && w.size() == 4 && y.size() == 4) {
+        const double batch = static_cast<double>(x[0]);
+        const double in_ch = static_cast<double>(x[1]);
+        const double out_ch = static_cast<double>(w[0]);
+        const double out_h = static_cast<double>(y[2]);
+        const double out_w = static_cast<double>(y[3]);
+        const double kh = static_cast<double>(w[2]);
+        const double kw = static_cast<double>(w[3]);
+        return batch * out_h * out_w * out_ch * in_ch * kh * kw * coeffs.conv_per_mac_ns;
+      }
+    }
+    if (node.op == OpKind::kAttentionForward &&
+        node.inputs.size() == 3 &&
+        node.inputs[0] < tensors.size()) {
+      const auto& q = tensors[node.inputs[0]].spec.shape;
+      if (q.size() == 2) {
+        const double seq = static_cast<double>(q[0]);
+        const double d = static_cast<double>(q[1]);
+        const double attn_macs = (2.0 * seq * seq * d) + (seq * seq * d);
+        const double softmax_elems = seq * seq;
+        return (attn_macs * coeffs.matmul_per_mac_ns * 1.10) +
+               (softmax_elems * coeffs.elementwise_per_element_ns * 1.35);
+      }
+    }
+    if (node.op == OpKind::kRelu && !node.inputs.empty() && node.inputs[0] < tensors.size()) {
+      const std::size_t n = detail::numelFromShapeContract(tensors[node.inputs[0]].spec.shape);
+      return static_cast<double>(n) * coeffs.elementwise_per_element_ns;
+    }
+    // Generic fallback for light ops.
+    if (!node.outputs.empty() && node.outputs[0] < tensors.size()) {
+      const std::size_t n = detail::numelFromShapeContract(tensors[node.outputs[0]].spec.shape);
+      return static_cast<double>(n) * coeffs.elementwise_per_element_ns;
+    }
+    return 0.0;
+  }
+
   std::uint64_t planCacheKeyForOptions(const GraphPlannerOptions& options) const {
     std::uint64_t seed = 1469598103934665603ULL;
     seed = hashCombine(seed, static_cast<std::uint64_t>(options.preferred_device));
@@ -1612,14 +2021,25 @@ class GraphIR {
     seed = hashCombine(seed, options.separate_fallback_segments ? 1ULL : 0ULL);
     seed = hashCombine(seed, options.insert_sync_on_device_change ? 1ULL : 0ULL);
     seed = hashCombine(seed, options.enable_fusion_v1 ? 1ULL : 0ULL);
+    seed = hashCombine(seed, options.enable_fusion_pass_conv ? 1ULL : 0ULL);
+    seed = hashCombine(seed, options.enable_fusion_pass_matmul ? 1ULL : 0ULL);
+    seed = hashCombine(seed, options.enable_fusion_pass_attention ? 1ULL : 0ULL);
+    seed = hashCombine(seed, options.enable_fusion_pass_attention_qkv ? 1ULL : 0ULL);
+    seed = hashCombine(seed, hashString(options.fusion_pass_order));
     seed = hashCombine(seed, options.enable_fusion_cost_model_v1 ? 1ULL : 0ULL);
+    seed = hashCombine(seed, options.enable_fusion_cost_model_v2 ? 1ULL : 0ULL);
     seed = hashCombine(seed, options.enable_plan_cache ? 1ULL : 0ULL);
+    seed = hashCombine(seed, hashString(options.cost_profile_signature));
     seed = hashCombine(seed, hashDouble(options.fusion_cost_min_speedup));
     seed = hashCombine(seed, hashDouble(options.cost_launch_overhead_ns));
     seed = hashCombine(seed, hashDouble(options.cost_transfer_overhead_ns));
+    seed = hashCombine(seed, hashDouble(options.cost_sync_boundary_ns));
     seed = hashCombine(seed, hashDouble(options.cost_elementwise_per_element_ns));
     seed = hashCombine(seed, hashDouble(options.cost_matmul_per_mac_ns));
     seed = hashCombine(seed, hashDouble(options.cost_conv_per_mac_ns));
+    seed = hashCombine(seed, hashDouble(options.planner_cost_weight_compute));
+    seed = hashCombine(seed, hashDouble(options.planner_cost_weight_boundary));
+    seed = hashCombine(seed, hashDouble(options.planner_cost_weight_preference));
     return seed;
   }
 
@@ -1627,6 +2047,7 @@ class GraphIR {
     graph_revision_ += 1;
     plan_cache_.valid = false;
     last_plan_cache_hit_ = false;
+    last_plan_cost_ = PlanCostTelemetry{};
   }
 
   static void incrementDeviceNodeCount(runtime::Device device, GraphPlanSummary* summary) {
@@ -1741,6 +2162,7 @@ class GraphIR {
     decision->estimated_fused_cost_ns = estimate.fused_ns;
     decision->estimated_speedup = estimate.speedup;
     decision->cost_model_applied = options.enable_fusion_cost_model_v1;
+    decision->cost_profile_signature = resolveCostProfile(options).signature;
 
     if (!options.enable_fusion_cost_model_v1) {
       return true;
@@ -1765,6 +2187,7 @@ class GraphIR {
       const GraphTensorValue& w_tensor,
       const GraphTensorValue& conv_mid_tensor) {
     FusionCostEstimate out;
+    const CostProfileCoefficients coeffs = resolveCostProfile(options);
     if (x_tensor.spec.shape.size() != 4 || w_tensor.spec.shape.size() != 4 || conv_mid_tensor.spec.shape.size() != 4) {
       return out;
     }
@@ -1777,11 +2200,11 @@ class GraphIR {
     const double kernel_w = static_cast<double>(w_tensor.spec.shape[3]);
     const double conv_macs = batch * out_h * out_w * out_channels * in_channels * kernel_h * kernel_w;
     const double relu_elements = static_cast<double>(detail::numelFromShapeContract(conv_mid_tensor.spec.shape));
-    const double conv_core_ns = conv_macs * options.cost_conv_per_mac_ns;
-    const double relu_core_ns = relu_elements * options.cost_elementwise_per_element_ns;
+    const double conv_core_ns = conv_macs * coeffs.conv_per_mac_ns;
+    const double relu_core_ns = relu_elements * coeffs.elementwise_per_element_ns;
 
-    out.unfused_ns = (2.0 * options.cost_launch_overhead_ns) + options.cost_transfer_overhead_ns + conv_core_ns + relu_core_ns;
-    out.fused_ns = options.cost_launch_overhead_ns + conv_core_ns + (0.55 * relu_core_ns);
+    out.unfused_ns = (2.0 * coeffs.launch_overhead_ns) + coeffs.transfer_overhead_ns + conv_core_ns + relu_core_ns;
+    out.fused_ns = coeffs.launch_overhead_ns + conv_core_ns + (0.55 * relu_core_ns);
     out.speedup = (out.fused_ns > 0.0) ? (out.unfused_ns / out.fused_ns) : std::numeric_limits<double>::quiet_NaN();
     return out;
   }
@@ -1793,6 +2216,7 @@ class GraphIR {
       const GraphTensorValue& vec_out_tensor,
       const GraphTensorValue& relu_out_tensor) {
     FusionCostEstimate out;
+    const CostProfileCoefficients coeffs = resolveCostProfile(options);
     if (lhs_tensor.spec.shape.size() != 2 ||
         rhs_tensor.spec.shape.size() != 2 ||
         vec_out_tensor.spec.shape.size() != 2 ||
@@ -1805,14 +2229,14 @@ class GraphIR {
     const double mm_macs = m * k * n;
     const double bias_elements = static_cast<double>(detail::numelFromShapeContract(vec_out_tensor.spec.shape));
     const double relu_elements = static_cast<double>(detail::numelFromShapeContract(relu_out_tensor.spec.shape));
-    const double mm_core_ns = mm_macs * options.cost_matmul_per_mac_ns;
-    const double bias_core_ns = bias_elements * options.cost_elementwise_per_element_ns;
-    const double relu_core_ns = relu_elements * options.cost_elementwise_per_element_ns;
+    const double mm_core_ns = mm_macs * coeffs.matmul_per_mac_ns;
+    const double bias_core_ns = bias_elements * coeffs.elementwise_per_element_ns;
+    const double relu_core_ns = relu_elements * coeffs.elementwise_per_element_ns;
 
     out.unfused_ns =
-        (3.0 * options.cost_launch_overhead_ns) + (2.0 * options.cost_transfer_overhead_ns) + mm_core_ns + bias_core_ns + relu_core_ns;
+        (3.0 * coeffs.launch_overhead_ns) + (2.0 * coeffs.transfer_overhead_ns) + mm_core_ns + bias_core_ns + relu_core_ns;
     out.fused_ns =
-        options.cost_launch_overhead_ns + mm_core_ns + (0.65 * bias_core_ns) + (0.50 * relu_core_ns);
+        coeffs.launch_overhead_ns + mm_core_ns + (0.65 * bias_core_ns) + (0.50 * relu_core_ns);
     out.speedup = (out.fused_ns > 0.0) ? (out.unfused_ns / out.fused_ns) : std::numeric_limits<double>::quiet_NaN();
     return out;
   }
@@ -1824,6 +2248,7 @@ class GraphIR {
       const GraphTensorValue& proj_weight_tensor,
       const GraphTensorValue& proj_out_tensor) {
     FusionCostEstimate out;
+    const CostProfileCoefficients coeffs = resolveCostProfile(options);
     if (q_tensor.spec.shape.size() != 2 ||
         attn_out_tensor.spec.shape.size() != 2 ||
         proj_weight_tensor.spec.shape.size() != 2 ||
@@ -1837,13 +2262,43 @@ class GraphIR {
     const double proj_macs = seq * d * proj_out;
     const double softmax_elems = seq * seq;
     const double attn_core_ns =
-        (attn_macs * options.cost_matmul_per_mac_ns * 1.10) +
-        (softmax_elems * options.cost_elementwise_per_element_ns * 1.35);
-    const double proj_core_ns = proj_macs * options.cost_matmul_per_mac_ns;
+        (attn_macs * coeffs.matmul_per_mac_ns * 1.10) +
+        (softmax_elems * coeffs.elementwise_per_element_ns * 1.35);
+    const double proj_core_ns = proj_macs * coeffs.matmul_per_mac_ns;
 
     out.unfused_ns =
-        (2.0 * options.cost_launch_overhead_ns) + options.cost_transfer_overhead_ns + attn_core_ns + proj_core_ns;
-    out.fused_ns = options.cost_launch_overhead_ns + attn_core_ns + proj_core_ns;
+        (2.0 * coeffs.launch_overhead_ns) + coeffs.transfer_overhead_ns + attn_core_ns + proj_core_ns;
+    out.fused_ns = coeffs.launch_overhead_ns + attn_core_ns + proj_core_ns;
+    out.speedup = (out.fused_ns > 0.0) ? (out.unfused_ns / out.fused_ns) : std::numeric_limits<double>::quiet_NaN();
+    return out;
+  }
+
+  static FusionCostEstimate estimateAttentionQkvProjCost(
+      const GraphPlannerOptions& options,
+      const GraphTensorValue& pack_input_tensor,
+      const GraphTensorValue& q_tensor,
+      const GraphTensorValue& attn_out_tensor,
+      const GraphTensorValue& proj_weight_tensor,
+      const GraphTensorValue& proj_out_tensor) {
+    FusionCostEstimate out;
+    if (pack_input_tensor.spec.shape.size() != 4 ||
+        q_tensor.spec.shape.size() != 2 ||
+        attn_out_tensor.spec.shape.size() != 2 ||
+        proj_weight_tensor.spec.shape.size() != 2 ||
+        proj_out_tensor.spec.shape.size() != 2) {
+      return out;
+    }
+
+    const CostProfileCoefficients coeffs = resolveCostProfile(options);
+    const FusionCostEstimate attn_proj =
+        estimateAttentionProjCost(options, q_tensor, attn_out_tensor, proj_weight_tensor, proj_out_tensor);
+    if (!std::isfinite(attn_proj.unfused_ns) || !std::isfinite(attn_proj.fused_ns)) {
+      return out;
+    }
+    const double pack_elements = static_cast<double>(detail::numelFromShapeContract(q_tensor.spec.shape) * 3ULL);
+    const double pack_core_ns = pack_elements * coeffs.elementwise_per_element_ns * 0.85;
+    out.unfused_ns = attn_proj.unfused_ns + coeffs.launch_overhead_ns + coeffs.transfer_overhead_ns + pack_core_ns;
+    out.fused_ns = attn_proj.fused_ns + (pack_core_ns * 0.45);
     out.speedup = (out.fused_ns > 0.0) ? (out.unfused_ns / out.fused_ns) : std::numeric_limits<double>::quiet_NaN();
     return out;
   }
@@ -2143,6 +2598,133 @@ class GraphIR {
       set_reason("projection_control_dependency_present");
       return false;
     }
+    set_reason("eligible");
+    return true;
+  }
+
+  bool canFuseAttentionQkvProjTriplet(const GraphNode& pack_node,
+                                      const GraphNode& attn_node,
+                                      const GraphNode& proj_node,
+                                      const std::vector<std::size_t>& consumer_counts,
+                                      std::string* out_reason) const {
+    auto set_reason = [&](const char* reason) {
+      if (out_reason != nullptr) {
+        *out_reason = reason;
+      }
+    };
+
+    if (pack_node.op != OpKind::kQkvPackRepeat) {
+      set_reason("pack_pattern_mismatch");
+      return false;
+    }
+    if (attn_node.op != OpKind::kAttentionForward) {
+      set_reason("middle_op_not_attention");
+      return false;
+    }
+    if (proj_node.op != OpKind::kMatMul) {
+      set_reason("final_op_not_matmul");
+      return false;
+    }
+    if (pack_node.id + 1 != attn_node.id || attn_node.id + 1 != proj_node.id) {
+      set_reason("non_adjacent_node");
+      return false;
+    }
+    if (pack_node.inputs.size() != 1 || pack_node.outputs.size() != 3) {
+      set_reason("pack_arity_mismatch");
+      return false;
+    }
+    if (attn_node.inputs.size() != 3 || attn_node.outputs.size() != 1) {
+      set_reason("attention_arity_mismatch");
+      return false;
+    }
+    if (proj_node.inputs.size() != 2 || proj_node.outputs.size() != 1) {
+      set_reason("projection_arity_mismatch");
+      return false;
+    }
+
+    for (std::size_t tid : pack_node.outputs) {
+      if (tid >= tensors_.size()) {
+        set_reason("pack_output_out_of_range");
+        return false;
+      }
+      if (tid >= consumer_counts.size() || consumer_counts[tid] != 1) {
+        set_reason("pack_output_multi_consumer");
+        return false;
+      }
+    }
+    if (attn_node.inputs[0] != pack_node.outputs[0] ||
+        attn_node.inputs[1] != pack_node.outputs[1] ||
+        attn_node.inputs[2] != pack_node.outputs[2]) {
+      set_reason("pack_attention_tensor_mismatch");
+      return false;
+    }
+
+    const std::size_t attn_out_id = attn_node.outputs[0];
+    if (attn_out_id >= tensors_.size()) {
+      set_reason("attention_output_out_of_range");
+      return false;
+    }
+    if (attn_out_id >= consumer_counts.size() || consumer_counts[attn_out_id] != 1) {
+      set_reason("attention_output_multi_consumer");
+      return false;
+    }
+    if (proj_node.inputs[0] != attn_out_id) {
+      set_reason("projection_input_not_attention_output");
+      return false;
+    }
+
+    const GraphTensorValue& in_tensor = tensors_[pack_node.inputs[0]];
+    const GraphTensorValue& q_tensor = tensors_[pack_node.outputs[0]];
+    const GraphTensorValue& k_tensor = tensors_[pack_node.outputs[1]];
+    const GraphTensorValue& v_tensor = tensors_[pack_node.outputs[2]];
+    const GraphTensorValue& attn_out_tensor = tensors_[attn_out_id];
+    const GraphTensorValue& proj_w_tensor = tensors_[proj_node.inputs[1]];
+    const GraphTensorValue& proj_out_tensor = tensors_[proj_node.outputs[0]];
+    if (in_tensor.spec.shape.size() != 4 ||
+        q_tensor.spec.shape.size() != 2 ||
+        k_tensor.spec.shape.size() != 2 ||
+        v_tensor.spec.shape.size() != 2 ||
+        attn_out_tensor.spec.shape.size() != 2 ||
+        proj_w_tensor.spec.shape.size() != 2 ||
+        proj_out_tensor.spec.shape.size() != 2) {
+      set_reason("tensor_rank_mismatch");
+      return false;
+    }
+    if (q_tensor.spec.shape != k_tensor.spec.shape ||
+        q_tensor.spec.shape != v_tensor.spec.shape ||
+        q_tensor.spec.shape != attn_out_tensor.spec.shape) {
+      set_reason("attention_shape_mismatch");
+      return false;
+    }
+    if (proj_w_tensor.spec.shape[0] != attn_out_tensor.spec.shape[1] ||
+        proj_out_tensor.spec.shape[0] != attn_out_tensor.spec.shape[0] ||
+        proj_out_tensor.spec.shape[1] != proj_w_tensor.spec.shape[1]) {
+      set_reason("projection_shape_mismatch");
+      return false;
+    }
+    if (q_tensor.spec.dtype != DType::kFloat32 ||
+        k_tensor.spec.dtype != DType::kFloat32 ||
+        v_tensor.spec.dtype != DType::kFloat32 ||
+        attn_out_tensor.spec.dtype != DType::kFloat32 ||
+        proj_w_tensor.spec.dtype != DType::kFloat32 ||
+        proj_out_tensor.spec.dtype != DType::kFloat32) {
+      set_reason("dtype_mismatch");
+      return false;
+    }
+    if (q_tensor.spec.layout != Layout::kContiguous ||
+        k_tensor.spec.layout != Layout::kContiguous ||
+        v_tensor.spec.layout != Layout::kContiguous ||
+        attn_out_tensor.spec.layout != Layout::kContiguous ||
+        proj_w_tensor.spec.layout != Layout::kContiguous ||
+        proj_out_tensor.spec.layout != Layout::kContiguous) {
+      set_reason("layout_not_contiguous");
+      return false;
+    }
+    if (!attn_node.control_deps.empty() || !proj_node.control_deps.empty()) {
+      set_reason("control_dependency_present");
+      return false;
+    }
+
     set_reason("eligible");
     return true;
   }
@@ -2972,6 +3554,36 @@ class GraphIR {
   }
 
   template <typename T>
+  runtime::Status executeAttentionQkvProjFusedNodeTyped(
+      const GraphNode& pack_node,
+      const GraphNode& attn_node,
+      const GraphNode& proj_node,
+      runtime::Device assigned_device,
+      const std::vector<std::size_t>& consumer_counts,
+      std::unordered_map<std::size_t, std::vector<T>>* values) const {
+    if constexpr (!std::is_same_v<T, float>) {
+      return runtime::Status::kNotSupported;
+    }
+    if (values == nullptr) {
+      return runtime::Status::kInvalidValue;
+    }
+    std::string fuse_reason;
+    if (!canFuseAttentionQkvProjTriplet(pack_node, attn_node, proj_node, consumer_counts, &fuse_reason)) {
+      return runtime::Status::kInvalidValue;
+    }
+
+    runtime::Status st = executeNodeTyped<T>(pack_node, assigned_device, values);
+    if (st != runtime::Status::kSuccess) {
+      return st;
+    }
+    st = executeAttentionProjFusedNodeTyped<T>(attn_node, proj_node, assigned_device, consumer_counts, values);
+    if (st != runtime::Status::kSuccess) {
+      return st;
+    }
+    return runtime::Status::kSuccess;
+  }
+
+  template <typename T>
   runtime::Status executeTyped(
       const GraphPlannerOptions& options,
       const std::unordered_map<std::size_t, std::vector<T>>& feeds,
@@ -2998,6 +3610,7 @@ class GraphIR {
     std::unordered_set<std::size_t> visited_nodes;
     visited_nodes.reserve(nodes_.size());
     const std::vector<std::size_t> consumer_counts = buildTensorConsumerCounts();
+    const std::vector<FusionPassKind> fusion_pass_order = buildFusionPassOrder(options);
 
     for (const auto& group : groups) {
       if (group.sync_boundary_before) {
@@ -3016,19 +3629,34 @@ class GraphIR {
           return runtime::Status::kInvalidValue;
         }
         const GraphNode& node = nodes_[node_id];
-        if (options.enable_fusion_v1 && node.op == OpKind::kConv2dNchw3x3s1p1 && gi + 1 < group.node_ids.size()) {
-          const std::size_t next_node_id = group.node_ids[gi + 1];
-          if (next_node_id < nodes_.size()) {
-            const GraphNode& next_node = nodes_[next_node_id];
-            std::string fuse_reason;
-            if (canFuseConvReluPair(node, next_node, consumer_counts, &fuse_reason)) {
-              bool allow_fusion = true;
-              if (options.enable_fusion_cost_model_v1) {
-                const FusionCostEstimate estimate = estimateConvReluCost(
-                    options, tensors_[node.inputs[0]], tensors_[node.inputs[1]], tensors_[node.outputs[0]]);
-                allow_fusion = std::isfinite(estimate.speedup) && estimate.speedup >= options.fusion_cost_min_speedup;
-              }
-              if (allow_fusion) {
+        bool fused_here = false;
+        std::size_t fused_span = 0;
+        if (options.enable_fusion_v1) {
+          for (std::size_t pass_index = 0; pass_index < fusion_pass_order.size() && !fused_here; ++pass_index) {
+            const FusionPassKind pass = fusion_pass_order[pass_index];
+            switch (pass) {
+              case FusionPassKind::kConv: {
+                if (node.op != OpKind::kConv2dNchw3x3s1p1 || gi + 1 >= group.node_ids.size()) {
+                  break;
+                }
+                const std::size_t next_node_id = group.node_ids[gi + 1];
+                if (next_node_id >= nodes_.size()) {
+                  break;
+                }
+                const GraphNode& next_node = nodes_[next_node_id];
+                std::string fuse_reason;
+                if (!canFuseConvReluPair(node, next_node, consumer_counts, &fuse_reason)) {
+                  break;
+                }
+                bool allow_fusion = true;
+                if (options.enable_fusion_cost_model_v1) {
+                  const FusionCostEstimate estimate = estimateConvReluCost(
+                      options, tensors_[node.inputs[0]], tensors_[node.inputs[1]], tensors_[node.outputs[0]]);
+                  allow_fusion = std::isfinite(estimate.speedup) && estimate.speedup >= options.fusion_cost_min_speedup;
+                }
+                if (!allow_fusion) {
+                  break;
+                }
                 if (visited_nodes.find(next_node_id) != visited_nodes.end()) {
                   return runtime::Status::kInvalidValue;
                 }
@@ -3039,32 +3667,38 @@ class GraphIR {
                 }
                 visited_nodes.insert(node_id);
                 visited_nodes.insert(next_node_id);
-                gi += 1;
-                continue;
+                fused_here = true;
+                fused_span = 1;
+                break;
               }
-            }
-          }
-        }
-
-        if (options.enable_fusion_v1 && node.op == OpKind::kMatMul && gi + 2 < group.node_ids.size()) {
-          const std::size_t next_node_id = group.node_ids[gi + 1];
-          const std::size_t next2_node_id = group.node_ids[gi + 2];
-          if (next_node_id < nodes_.size() && next2_node_id < nodes_.size()) {
-            const GraphNode& next_node = nodes_[next_node_id];
-            const GraphNode& next2_node = nodes_[next2_node_id];
-            std::string fuse_reason;
-            if (canFuseMatMulBiasReluTriplet(node, next_node, next2_node, consumer_counts, &fuse_reason)) {
-              bool allow_fusion = true;
-              if (options.enable_fusion_cost_model_v1) {
-                const FusionCostEstimate estimate = estimateMatMulBiasReluCost(
-                    options,
-                    tensors_[node.inputs[0]],
-                    tensors_[node.inputs[1]],
-                    tensors_[next_node.outputs[0]],
-                    tensors_[next2_node.outputs[0]]);
-                allow_fusion = std::isfinite(estimate.speedup) && estimate.speedup >= options.fusion_cost_min_speedup;
-              }
-              if (allow_fusion) {
+              case FusionPassKind::kMatMul: {
+                if (node.op != OpKind::kMatMul || gi + 2 >= group.node_ids.size()) {
+                  break;
+                }
+                const std::size_t next_node_id = group.node_ids[gi + 1];
+                const std::size_t next2_node_id = group.node_ids[gi + 2];
+                if (next_node_id >= nodes_.size() || next2_node_id >= nodes_.size()) {
+                  break;
+                }
+                const GraphNode& next_node = nodes_[next_node_id];
+                const GraphNode& next2_node = nodes_[next2_node_id];
+                std::string fuse_reason;
+                if (!canFuseMatMulBiasReluTriplet(node, next_node, next2_node, consumer_counts, &fuse_reason)) {
+                  break;
+                }
+                bool allow_fusion = true;
+                if (options.enable_fusion_cost_model_v1) {
+                  const FusionCostEstimate estimate = estimateMatMulBiasReluCost(
+                      options,
+                      tensors_[node.inputs[0]],
+                      tensors_[node.inputs[1]],
+                      tensors_[next_node.outputs[0]],
+                      tensors_[next2_node.outputs[0]]);
+                  allow_fusion = std::isfinite(estimate.speedup) && estimate.speedup >= options.fusion_cost_min_speedup;
+                }
+                if (!allow_fusion) {
+                  break;
+                }
                 if (visited_nodes.find(next_node_id) != visited_nodes.end() ||
                     visited_nodes.find(next2_node_id) != visited_nodes.end()) {
                   return runtime::Status::kInvalidValue;
@@ -3077,30 +3711,36 @@ class GraphIR {
                 visited_nodes.insert(node_id);
                 visited_nodes.insert(next_node_id);
                 visited_nodes.insert(next2_node_id);
-                gi += 2;
-                continue;
+                fused_here = true;
+                fused_span = 2;
+                break;
               }
-            }
-          }
-        }
-
-        if (options.enable_fusion_v1 && node.op == OpKind::kAttentionForward && gi + 1 < group.node_ids.size()) {
-          const std::size_t next_node_id = group.node_ids[gi + 1];
-          if (next_node_id < nodes_.size()) {
-            const GraphNode& next_node = nodes_[next_node_id];
-            std::string fuse_reason;
-            if (canFuseAttentionProjPair(node, next_node, consumer_counts, &fuse_reason)) {
-              bool allow_fusion = true;
-              if (options.enable_fusion_cost_model_v1) {
-                const FusionCostEstimate estimate = estimateAttentionProjCost(
-                    options,
-                    tensors_[node.inputs[0]],
-                    tensors_[node.outputs[0]],
-                    tensors_[next_node.inputs[1]],
-                    tensors_[next_node.outputs[0]]);
-                allow_fusion = std::isfinite(estimate.speedup) && estimate.speedup >= options.fusion_cost_min_speedup;
-              }
-              if (allow_fusion) {
+              case FusionPassKind::kAttention: {
+                if (node.op != OpKind::kAttentionForward || gi + 1 >= group.node_ids.size()) {
+                  break;
+                }
+                const std::size_t next_node_id = group.node_ids[gi + 1];
+                if (next_node_id >= nodes_.size()) {
+                  break;
+                }
+                const GraphNode& next_node = nodes_[next_node_id];
+                std::string fuse_reason;
+                if (!canFuseAttentionProjPair(node, next_node, consumer_counts, &fuse_reason)) {
+                  break;
+                }
+                bool allow_fusion = true;
+                if (options.enable_fusion_cost_model_v1) {
+                  const FusionCostEstimate estimate = estimateAttentionProjCost(
+                      options,
+                      tensors_[node.inputs[0]],
+                      tensors_[node.outputs[0]],
+                      tensors_[next_node.inputs[1]],
+                      tensors_[next_node.outputs[0]]);
+                  allow_fusion = std::isfinite(estimate.speedup) && estimate.speedup >= options.fusion_cost_min_speedup;
+                }
+                if (!allow_fusion) {
+                  break;
+                }
                 if (visited_nodes.find(next_node_id) != visited_nodes.end()) {
                   return runtime::Status::kInvalidValue;
                 }
@@ -3111,11 +3751,64 @@ class GraphIR {
                 }
                 visited_nodes.insert(node_id);
                 visited_nodes.insert(next_node_id);
-                gi += 1;
-                continue;
+                fused_here = true;
+                fused_span = 1;
+                break;
               }
+              case FusionPassKind::kAttentionQkv: {
+                if (node.op != OpKind::kQkvPackRepeat || gi + 2 >= group.node_ids.size()) {
+                  break;
+                }
+                const std::size_t mid_node_id = group.node_ids[gi + 1];
+                const std::size_t next_node_id = group.node_ids[gi + 2];
+                if (mid_node_id >= nodes_.size() || next_node_id >= nodes_.size()) {
+                  break;
+                }
+                const GraphNode& mid_node = nodes_[mid_node_id];
+                const GraphNode& next_node = nodes_[next_node_id];
+                std::string fuse_reason;
+                if (!canFuseAttentionQkvProjTriplet(node, mid_node, next_node, consumer_counts, &fuse_reason)) {
+                  break;
+                }
+                bool allow_fusion = true;
+                if (options.enable_fusion_cost_model_v1) {
+                  const FusionCostEstimate estimate = estimateAttentionQkvProjCost(
+                      options,
+                      tensors_[node.inputs[0]],
+                      tensors_[node.outputs[0]],
+                      tensors_[mid_node.outputs[0]],
+                      tensors_[next_node.inputs[1]],
+                      tensors_[next_node.outputs[0]]);
+                  allow_fusion = std::isfinite(estimate.speedup) && estimate.speedup >= options.fusion_cost_min_speedup;
+                }
+                if (!allow_fusion) {
+                  break;
+                }
+                if (visited_nodes.find(mid_node_id) != visited_nodes.end() ||
+                    visited_nodes.find(next_node_id) != visited_nodes.end()) {
+                  return runtime::Status::kInvalidValue;
+                }
+                st = executeAttentionQkvProjFusedNodeTyped<T>(
+                    node, mid_node, next_node, group.assigned_device, consumer_counts, &values);
+                if (st != runtime::Status::kSuccess) {
+                  return st;
+                }
+                visited_nodes.insert(node_id);
+                visited_nodes.insert(mid_node_id);
+                visited_nodes.insert(next_node_id);
+                fused_here = true;
+                fused_span = 2;
+                break;
+              }
+              default:
+                break;
             }
           }
+        }
+
+        if (fused_here) {
+          gi += fused_span;
+          continue;
         }
 
         st = executeNodeTyped<T>(node, group.assigned_device, &values);
@@ -3154,6 +3847,7 @@ class GraphIR {
   mutable bool last_plan_cache_hit_{false};
   mutable std::size_t plan_cache_stats_hits_{0};
   mutable std::size_t plan_cache_stats_misses_{0};
+  mutable PlanCostTelemetry last_plan_cost_{};
 };
 
 }  // namespace lightning_core::graph

@@ -191,6 +191,14 @@ py::dict toPlanSummaryDict(const lc::graph::GraphPlanSummary& summary) {
   out["plan_cache_hits_total"] = summary.plan_cache_hits_total;
   out["plan_cache_misses_total"] = summary.plan_cache_misses_total;
   out["plan_cache_hit_rate_pct"] = summary.plan_cache_hit_rate_pct;
+  out["planner_score_model"] = summary.planner_score_model;
+  out["cost_profile_signature"] = summary.cost_profile_signature;
+  out["estimated_total_cost_ns"] = summary.estimated_total_cost_ns;
+  out["estimated_compute_cost_ns"] = summary.estimated_compute_cost_ns;
+  out["estimated_launch_cost_ns"] = summary.estimated_launch_cost_ns;
+  out["estimated_transfer_cost_ns"] = summary.estimated_transfer_cost_ns;
+  out["estimated_sync_cost_ns"] = summary.estimated_sync_cost_ns;
+  out["estimated_boundary_cost_ns"] = summary.estimated_boundary_cost_ns;
   return out;
 }
 
@@ -199,6 +207,8 @@ py::list toFusionDecisionList(const std::vector<lc::graph::GraphFusionDecision>&
   for (const auto& d : decisions) {
     py::dict row;
     row["pattern"] = lc::graph::fusionPatternName(d.pattern);
+    row["pass_id"] = d.pass_id;
+    row["pass_order"] = d.pass_order;
     row["start_node_id"] = d.start_node_id;
     row["end_node_id"] = d.end_node_id;
     row["assigned_device"] = toString(d.assigned_device);
@@ -207,6 +217,7 @@ py::list toFusionDecisionList(const std::vector<lc::graph::GraphFusionDecision>&
     row["estimated_unfused_cost_ns"] = d.estimated_unfused_cost_ns;
     row["estimated_fused_cost_ns"] = d.estimated_fused_cost_ns;
     row["estimated_speedup"] = d.estimated_speedup;
+    row["cost_profile_signature"] = d.cost_profile_signature;
     row["reason"] = d.reason;
     out.append(row);
   }
@@ -221,9 +232,25 @@ lc::graph::GraphPlannerOptions parseGraphPlannerOptions(
     bool separate_fallback_segments,
     bool insert_sync_on_device_change,
     bool enable_fusion_v1,
+    bool enable_fusion_pass_conv,
+    bool enable_fusion_pass_matmul,
+    bool enable_fusion_pass_attention,
+    bool enable_fusion_pass_attention_qkv,
+    const std::string& fusion_pass_order,
     bool enable_fusion_cost_model_v1,
+    bool enable_fusion_cost_model_v2,
     bool enable_plan_cache,
-    double fusion_cost_min_speedup) {
+    double fusion_cost_min_speedup,
+    const std::string& cost_profile_signature,
+    double cost_launch_overhead_ns,
+    double cost_transfer_overhead_ns,
+    double cost_sync_boundary_ns,
+    double cost_elementwise_per_element_ns,
+    double cost_matmul_per_mac_ns,
+    double cost_conv_per_mac_ns,
+    double planner_cost_weight_compute,
+    double planner_cost_weight_boundary,
+    double planner_cost_weight_preference) {
   lc::graph::GraphPlannerOptions options;
   options.preferred_device = parseDevice(preferred_device);
   options.sync_policy.mode = parseSyncMode(sync_mode);
@@ -232,9 +259,25 @@ lc::graph::GraphPlannerOptions parseGraphPlannerOptions(
   options.separate_fallback_segments = separate_fallback_segments;
   options.insert_sync_on_device_change = insert_sync_on_device_change;
   options.enable_fusion_v1 = enable_fusion_v1;
+  options.enable_fusion_pass_conv = enable_fusion_pass_conv;
+  options.enable_fusion_pass_matmul = enable_fusion_pass_matmul;
+  options.enable_fusion_pass_attention = enable_fusion_pass_attention;
+  options.enable_fusion_pass_attention_qkv = enable_fusion_pass_attention_qkv;
+  options.fusion_pass_order = fusion_pass_order;
   options.enable_fusion_cost_model_v1 = enable_fusion_cost_model_v1;
+  options.enable_fusion_cost_model_v2 = enable_fusion_cost_model_v2;
   options.enable_plan_cache = enable_plan_cache;
   options.fusion_cost_min_speedup = fusion_cost_min_speedup;
+  options.cost_profile_signature = cost_profile_signature;
+  options.cost_launch_overhead_ns = cost_launch_overhead_ns;
+  options.cost_transfer_overhead_ns = cost_transfer_overhead_ns;
+  options.cost_sync_boundary_ns = cost_sync_boundary_ns;
+  options.cost_elementwise_per_element_ns = cost_elementwise_per_element_ns;
+  options.cost_matmul_per_mac_ns = cost_matmul_per_mac_ns;
+  options.cost_conv_per_mac_ns = cost_conv_per_mac_ns;
+  options.planner_cost_weight_compute = planner_cost_weight_compute;
+  options.planner_cost_weight_boundary = planner_cost_weight_boundary;
+  options.planner_cost_weight_preference = planner_cost_weight_preference;
   return options;
 }
 
@@ -403,9 +446,25 @@ void bindGraph(py::module_& m) {
               bool separate_fallback_segments,
               bool insert_sync_on_device_change,
               bool enable_fusion_v1,
+              bool enable_fusion_pass_conv,
+              bool enable_fusion_pass_matmul,
+              bool enable_fusion_pass_attention,
+              bool enable_fusion_pass_attention_qkv,
+              const std::string& fusion_pass_order,
               bool enable_fusion_cost_model_v1,
+              bool enable_fusion_cost_model_v2,
               bool enable_plan_cache,
-              double fusion_cost_min_speedup) {
+              double fusion_cost_min_speedup,
+              const std::string& cost_profile_signature,
+              double cost_launch_overhead_ns,
+              double cost_transfer_overhead_ns,
+              double cost_sync_boundary_ns,
+              double cost_elementwise_per_element_ns,
+              double cost_matmul_per_mac_ns,
+              double cost_conv_per_mac_ns,
+              double planner_cost_weight_compute,
+              double planner_cost_weight_boundary,
+              double planner_cost_weight_preference) {
              const lc::graph::GraphPlannerOptions options = parseGraphPlannerOptions(
                  preferred_device,
                  sync_mode,
@@ -414,9 +473,25 @@ void bindGraph(py::module_& m) {
                  separate_fallback_segments,
                  insert_sync_on_device_change,
                  enable_fusion_v1,
+                 enable_fusion_pass_conv,
+                 enable_fusion_pass_matmul,
+                 enable_fusion_pass_attention,
+                 enable_fusion_pass_attention_qkv,
+                 fusion_pass_order,
                  enable_fusion_cost_model_v1,
+                 enable_fusion_cost_model_v2,
                  enable_plan_cache,
-                 fusion_cost_min_speedup);
+                 fusion_cost_min_speedup,
+                 cost_profile_signature,
+                 cost_launch_overhead_ns,
+                 cost_transfer_overhead_ns,
+                 cost_sync_boundary_ns,
+                 cost_elementwise_per_element_ns,
+                 cost_matmul_per_mac_ns,
+                 cost_conv_per_mac_ns,
+                 planner_cost_weight_compute,
+                 planner_cost_weight_boundary,
+                 planner_cost_weight_preference);
 
              std::vector<lc::graph::GraphExecutionGroup> groups;
              std::vector<lc::graph::GraphPlanStep> steps;
@@ -437,9 +512,25 @@ void bindGraph(py::module_& m) {
            py::arg("separate_fallback_segments") = true,
            py::arg("insert_sync_on_device_change") = true,
            py::arg("enable_fusion_v1") = true,
+           py::arg("enable_fusion_pass_conv") = true,
+           py::arg("enable_fusion_pass_matmul") = true,
+           py::arg("enable_fusion_pass_attention") = true,
+           py::arg("enable_fusion_pass_attention_qkv") = true,
+           py::arg("fusion_pass_order") = "conv,matmul,attention,attention_qkv",
            py::arg("enable_fusion_cost_model_v1") = true,
+           py::arg("enable_fusion_cost_model_v2") = true,
            py::arg("enable_plan_cache") = true,
-           py::arg("fusion_cost_min_speedup") = 1.01)
+           py::arg("fusion_cost_min_speedup") = 1.01,
+           py::arg("cost_profile_signature") = "auto",
+           py::arg("cost_launch_overhead_ns") = 12000.0,
+           py::arg("cost_transfer_overhead_ns") = 4000.0,
+           py::arg("cost_sync_boundary_ns") = 2500.0,
+           py::arg("cost_elementwise_per_element_ns") = 0.50,
+           py::arg("cost_matmul_per_mac_ns") = 0.0035,
+           py::arg("cost_conv_per_mac_ns") = 0.0022,
+           py::arg("planner_cost_weight_compute") = 1.0,
+           py::arg("planner_cost_weight_boundary") = 1.0,
+           py::arg("planner_cost_weight_preference") = 1.0)
       .def("plan_summary",
            [](const lc::graph::GraphIR& g,
               const std::string& preferred_device,
@@ -449,9 +540,25 @@ void bindGraph(py::module_& m) {
               bool separate_fallback_segments,
               bool insert_sync_on_device_change,
               bool enable_fusion_v1,
+              bool enable_fusion_pass_conv,
+              bool enable_fusion_pass_matmul,
+              bool enable_fusion_pass_attention,
+              bool enable_fusion_pass_attention_qkv,
+              const std::string& fusion_pass_order,
               bool enable_fusion_cost_model_v1,
+              bool enable_fusion_cost_model_v2,
               bool enable_plan_cache,
-              double fusion_cost_min_speedup) {
+              double fusion_cost_min_speedup,
+              const std::string& cost_profile_signature,
+              double cost_launch_overhead_ns,
+              double cost_transfer_overhead_ns,
+              double cost_sync_boundary_ns,
+              double cost_elementwise_per_element_ns,
+              double cost_matmul_per_mac_ns,
+              double cost_conv_per_mac_ns,
+              double planner_cost_weight_compute,
+              double planner_cost_weight_boundary,
+              double planner_cost_weight_preference) {
              const lc::graph::GraphPlannerOptions options = parseGraphPlannerOptions(
                  preferred_device,
                  sync_mode,
@@ -460,9 +567,25 @@ void bindGraph(py::module_& m) {
                  separate_fallback_segments,
                  insert_sync_on_device_change,
                  enable_fusion_v1,
+                 enable_fusion_pass_conv,
+                 enable_fusion_pass_matmul,
+                 enable_fusion_pass_attention,
+                 enable_fusion_pass_attention_qkv,
+                 fusion_pass_order,
                  enable_fusion_cost_model_v1,
+                 enable_fusion_cost_model_v2,
                  enable_plan_cache,
-                 fusion_cost_min_speedup);
+                 fusion_cost_min_speedup,
+                 cost_profile_signature,
+                 cost_launch_overhead_ns,
+                 cost_transfer_overhead_ns,
+                 cost_sync_boundary_ns,
+                 cost_elementwise_per_element_ns,
+                 cost_matmul_per_mac_ns,
+                 cost_conv_per_mac_ns,
+                 planner_cost_weight_compute,
+                 planner_cost_weight_boundary,
+                 planner_cost_weight_preference);
              lc::graph::GraphPlanSummary summary{};
              std::vector<lc::graph::GraphExecutionGroup> groups;
              std::vector<lc::graph::GraphPlanStep> steps;
@@ -480,9 +603,25 @@ void bindGraph(py::module_& m) {
            py::arg("separate_fallback_segments") = true,
            py::arg("insert_sync_on_device_change") = true,
            py::arg("enable_fusion_v1") = true,
+           py::arg("enable_fusion_pass_conv") = true,
+           py::arg("enable_fusion_pass_matmul") = true,
+           py::arg("enable_fusion_pass_attention") = true,
+           py::arg("enable_fusion_pass_attention_qkv") = true,
+           py::arg("fusion_pass_order") = "conv,matmul,attention,attention_qkv",
            py::arg("enable_fusion_cost_model_v1") = true,
+           py::arg("enable_fusion_cost_model_v2") = true,
            py::arg("enable_plan_cache") = true,
-           py::arg("fusion_cost_min_speedup") = 1.01)
+           py::arg("fusion_cost_min_speedup") = 1.01,
+           py::arg("cost_profile_signature") = "auto",
+           py::arg("cost_launch_overhead_ns") = 12000.0,
+           py::arg("cost_transfer_overhead_ns") = 4000.0,
+           py::arg("cost_sync_boundary_ns") = 2500.0,
+           py::arg("cost_elementwise_per_element_ns") = 0.50,
+           py::arg("cost_matmul_per_mac_ns") = 0.0035,
+           py::arg("cost_conv_per_mac_ns") = 0.0022,
+           py::arg("planner_cost_weight_compute") = 1.0,
+           py::arg("planner_cost_weight_boundary") = 1.0,
+           py::arg("planner_cost_weight_preference") = 1.0)
       .def("fusion_report",
            [](const lc::graph::GraphIR& g,
               const std::string& preferred_device,
@@ -492,9 +631,25 @@ void bindGraph(py::module_& m) {
               bool separate_fallback_segments,
               bool insert_sync_on_device_change,
               bool enable_fusion_v1,
+              bool enable_fusion_pass_conv,
+              bool enable_fusion_pass_matmul,
+              bool enable_fusion_pass_attention,
+              bool enable_fusion_pass_attention_qkv,
+              const std::string& fusion_pass_order,
               bool enable_fusion_cost_model_v1,
+              bool enable_fusion_cost_model_v2,
               bool enable_plan_cache,
-              double fusion_cost_min_speedup) {
+              double fusion_cost_min_speedup,
+              const std::string& cost_profile_signature,
+              double cost_launch_overhead_ns,
+              double cost_transfer_overhead_ns,
+              double cost_sync_boundary_ns,
+              double cost_elementwise_per_element_ns,
+              double cost_matmul_per_mac_ns,
+              double cost_conv_per_mac_ns,
+              double planner_cost_weight_compute,
+              double planner_cost_weight_boundary,
+              double planner_cost_weight_preference) {
              const lc::graph::GraphPlannerOptions options = parseGraphPlannerOptions(
                  preferred_device,
                  sync_mode,
@@ -503,9 +658,25 @@ void bindGraph(py::module_& m) {
                  separate_fallback_segments,
                  insert_sync_on_device_change,
                  enable_fusion_v1,
+                 enable_fusion_pass_conv,
+                 enable_fusion_pass_matmul,
+                 enable_fusion_pass_attention,
+                 enable_fusion_pass_attention_qkv,
+                 fusion_pass_order,
                  enable_fusion_cost_model_v1,
+                 enable_fusion_cost_model_v2,
                  enable_plan_cache,
-                 fusion_cost_min_speedup);
+                 fusion_cost_min_speedup,
+                 cost_profile_signature,
+                 cost_launch_overhead_ns,
+                 cost_transfer_overhead_ns,
+                 cost_sync_boundary_ns,
+                 cost_elementwise_per_element_ns,
+                 cost_matmul_per_mac_ns,
+                 cost_conv_per_mac_ns,
+                 planner_cost_weight_compute,
+                 planner_cost_weight_boundary,
+                 planner_cost_weight_preference);
              std::vector<lc::graph::GraphFusionDecision> decisions;
              throwIfNotSuccess(g.fusionReport(options, &decisions));
              return toFusionDecisionList(decisions);
@@ -517,9 +688,25 @@ void bindGraph(py::module_& m) {
            py::arg("separate_fallback_segments") = true,
            py::arg("insert_sync_on_device_change") = true,
            py::arg("enable_fusion_v1") = true,
+           py::arg("enable_fusion_pass_conv") = true,
+           py::arg("enable_fusion_pass_matmul") = true,
+           py::arg("enable_fusion_pass_attention") = true,
+           py::arg("enable_fusion_pass_attention_qkv") = true,
+           py::arg("fusion_pass_order") = "conv,matmul,attention,attention_qkv",
            py::arg("enable_fusion_cost_model_v1") = true,
+           py::arg("enable_fusion_cost_model_v2") = true,
            py::arg("enable_plan_cache") = true,
-           py::arg("fusion_cost_min_speedup") = 1.01)
+           py::arg("fusion_cost_min_speedup") = 1.01,
+           py::arg("cost_profile_signature") = "auto",
+           py::arg("cost_launch_overhead_ns") = 12000.0,
+           py::arg("cost_transfer_overhead_ns") = 4000.0,
+           py::arg("cost_sync_boundary_ns") = 2500.0,
+           py::arg("cost_elementwise_per_element_ns") = 0.50,
+           py::arg("cost_matmul_per_mac_ns") = 0.0035,
+           py::arg("cost_conv_per_mac_ns") = 0.0022,
+           py::arg("planner_cost_weight_compute") = 1.0,
+           py::arg("planner_cost_weight_boundary") = 1.0,
+           py::arg("planner_cost_weight_preference") = 1.0)
       .def("execute_f32",
            [](const lc::graph::GraphIR& g,
               const py::dict& feeds,
@@ -530,9 +717,25 @@ void bindGraph(py::module_& m) {
               bool separate_fallback_segments,
               bool insert_sync_on_device_change,
               bool enable_fusion_v1,
+              bool enable_fusion_pass_conv,
+              bool enable_fusion_pass_matmul,
+              bool enable_fusion_pass_attention,
+              bool enable_fusion_pass_attention_qkv,
+              const std::string& fusion_pass_order,
               bool enable_fusion_cost_model_v1,
+              bool enable_fusion_cost_model_v2,
               bool enable_plan_cache,
-              double fusion_cost_min_speedup) {
+              double fusion_cost_min_speedup,
+              const std::string& cost_profile_signature,
+              double cost_launch_overhead_ns,
+              double cost_transfer_overhead_ns,
+              double cost_sync_boundary_ns,
+              double cost_elementwise_per_element_ns,
+              double cost_matmul_per_mac_ns,
+              double cost_conv_per_mac_ns,
+              double planner_cost_weight_compute,
+              double planner_cost_weight_boundary,
+              double planner_cost_weight_preference) {
              const lc::graph::GraphPlannerOptions options = parseGraphPlannerOptions(
                  preferred_device,
                  sync_mode,
@@ -541,9 +744,25 @@ void bindGraph(py::module_& m) {
                  separate_fallback_segments,
                  insert_sync_on_device_change,
                  enable_fusion_v1,
+                 enable_fusion_pass_conv,
+                 enable_fusion_pass_matmul,
+                 enable_fusion_pass_attention,
+                 enable_fusion_pass_attention_qkv,
+                 fusion_pass_order,
                  enable_fusion_cost_model_v1,
+                 enable_fusion_cost_model_v2,
                  enable_plan_cache,
-                 fusion_cost_min_speedup);
+                 fusion_cost_min_speedup,
+                 cost_profile_signature,
+                 cost_launch_overhead_ns,
+                 cost_transfer_overhead_ns,
+                 cost_sync_boundary_ns,
+                 cost_elementwise_per_element_ns,
+                 cost_matmul_per_mac_ns,
+                 cost_conv_per_mac_ns,
+                 planner_cost_weight_compute,
+                 planner_cost_weight_boundary,
+                 planner_cost_weight_preference);
              std::unordered_map<std::size_t, std::vector<float>> values;
              std::vector<lc::graph::GraphExecutionGroup> groups;
              std::vector<lc::graph::GraphPlanStep> steps;
@@ -567,9 +786,25 @@ void bindGraph(py::module_& m) {
            py::arg("separate_fallback_segments") = true,
            py::arg("insert_sync_on_device_change") = true,
            py::arg("enable_fusion_v1") = true,
+           py::arg("enable_fusion_pass_conv") = true,
+           py::arg("enable_fusion_pass_matmul") = true,
+           py::arg("enable_fusion_pass_attention") = true,
+           py::arg("enable_fusion_pass_attention_qkv") = true,
+           py::arg("fusion_pass_order") = "conv,matmul,attention,attention_qkv",
            py::arg("enable_fusion_cost_model_v1") = true,
+           py::arg("enable_fusion_cost_model_v2") = true,
            py::arg("enable_plan_cache") = true,
-           py::arg("fusion_cost_min_speedup") = 1.01)
+           py::arg("fusion_cost_min_speedup") = 1.01,
+           py::arg("cost_profile_signature") = "auto",
+           py::arg("cost_launch_overhead_ns") = 12000.0,
+           py::arg("cost_transfer_overhead_ns") = 4000.0,
+           py::arg("cost_sync_boundary_ns") = 2500.0,
+           py::arg("cost_elementwise_per_element_ns") = 0.50,
+           py::arg("cost_matmul_per_mac_ns") = 0.0035,
+           py::arg("cost_conv_per_mac_ns") = 0.0022,
+           py::arg("planner_cost_weight_compute") = 1.0,
+           py::arg("planner_cost_weight_boundary") = 1.0,
+           py::arg("planner_cost_weight_preference") = 1.0)
       .def("execute_f64",
            [](const lc::graph::GraphIR& g,
               const py::dict& feeds,
@@ -580,9 +815,25 @@ void bindGraph(py::module_& m) {
               bool separate_fallback_segments,
               bool insert_sync_on_device_change,
               bool enable_fusion_v1,
+              bool enable_fusion_pass_conv,
+              bool enable_fusion_pass_matmul,
+              bool enable_fusion_pass_attention,
+              bool enable_fusion_pass_attention_qkv,
+              const std::string& fusion_pass_order,
               bool enable_fusion_cost_model_v1,
+              bool enable_fusion_cost_model_v2,
               bool enable_plan_cache,
-              double fusion_cost_min_speedup) {
+              double fusion_cost_min_speedup,
+              const std::string& cost_profile_signature,
+              double cost_launch_overhead_ns,
+              double cost_transfer_overhead_ns,
+              double cost_sync_boundary_ns,
+              double cost_elementwise_per_element_ns,
+              double cost_matmul_per_mac_ns,
+              double cost_conv_per_mac_ns,
+              double planner_cost_weight_compute,
+              double planner_cost_weight_boundary,
+              double planner_cost_weight_preference) {
              const lc::graph::GraphPlannerOptions options = parseGraphPlannerOptions(
                  preferred_device,
                  sync_mode,
@@ -591,9 +842,25 @@ void bindGraph(py::module_& m) {
                  separate_fallback_segments,
                  insert_sync_on_device_change,
                  enable_fusion_v1,
+                 enable_fusion_pass_conv,
+                 enable_fusion_pass_matmul,
+                 enable_fusion_pass_attention,
+                 enable_fusion_pass_attention_qkv,
+                 fusion_pass_order,
                  enable_fusion_cost_model_v1,
+                 enable_fusion_cost_model_v2,
                  enable_plan_cache,
-                 fusion_cost_min_speedup);
+                 fusion_cost_min_speedup,
+                 cost_profile_signature,
+                 cost_launch_overhead_ns,
+                 cost_transfer_overhead_ns,
+                 cost_sync_boundary_ns,
+                 cost_elementwise_per_element_ns,
+                 cost_matmul_per_mac_ns,
+                 cost_conv_per_mac_ns,
+                 planner_cost_weight_compute,
+                 planner_cost_weight_boundary,
+                 planner_cost_weight_preference);
              std::unordered_map<std::size_t, std::vector<double>> values;
              std::vector<lc::graph::GraphExecutionGroup> groups;
              std::vector<lc::graph::GraphPlanStep> steps;
@@ -617,7 +884,23 @@ void bindGraph(py::module_& m) {
            py::arg("separate_fallback_segments") = true,
            py::arg("insert_sync_on_device_change") = true,
            py::arg("enable_fusion_v1") = true,
+           py::arg("enable_fusion_pass_conv") = true,
+           py::arg("enable_fusion_pass_matmul") = true,
+           py::arg("enable_fusion_pass_attention") = true,
+           py::arg("enable_fusion_pass_attention_qkv") = true,
+           py::arg("fusion_pass_order") = "conv,matmul,attention,attention_qkv",
            py::arg("enable_fusion_cost_model_v1") = true,
+           py::arg("enable_fusion_cost_model_v2") = true,
            py::arg("enable_plan_cache") = true,
-           py::arg("fusion_cost_min_speedup") = 1.01);
+           py::arg("fusion_cost_min_speedup") = 1.01,
+           py::arg("cost_profile_signature") = "auto",
+           py::arg("cost_launch_overhead_ns") = 12000.0,
+           py::arg("cost_transfer_overhead_ns") = 4000.0,
+           py::arg("cost_sync_boundary_ns") = 2500.0,
+           py::arg("cost_elementwise_per_element_ns") = 0.50,
+           py::arg("cost_matmul_per_mac_ns") = 0.0035,
+           py::arg("cost_conv_per_mac_ns") = 0.0022,
+           py::arg("planner_cost_weight_compute") = 1.0,
+           py::arg("planner_cost_weight_boundary") = 1.0,
+           py::arg("planner_cost_weight_preference") = 1.0);
 }

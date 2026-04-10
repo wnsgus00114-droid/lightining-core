@@ -123,6 +123,52 @@ def _collect_trace_metrics(run_once: Callable[[], None], trace_iters: int) -> di
     }
 
 
+def _boundary_defaults() -> dict[str, object]:
+    return {
+        "route_boundary_switch_count": float("nan"),
+        "route_boundary_copy_mode": "n/a",
+        "route_boundary_reason_code": "n/a",
+        "route_boundary_copy_bytes_estimate": float("nan"),
+        "route_boundary_overhead_est_ns": float("nan"),
+        "route_boundary_overhead_est_ms": float("nan"),
+        "route_zero_copy_eligible": False,
+    }
+
+
+def _apply_boundary_defaults(row: dict) -> dict:
+    for k, v in _boundary_defaults().items():
+        row.setdefault(k, v)
+    return row
+
+
+def _conv_attn_route_report(
+    *,
+    x: np.ndarray,
+    w: np.ndarray,
+    b: np.ndarray,
+    seq: int,
+    dim: int,
+    device: str,
+) -> dict[str, object]:
+    if not (hasattr(lc, "api") and hasattr(lc.api, "conv_attention_torchstrong_nchw_route_report")):
+        return {}
+    rep = lc.api.conv_attention_torchstrong_nchw_route_report(
+        x,
+        w,
+        b,
+        int(seq),
+        int(dim),
+        1,
+        1,
+        1,
+        1,
+        device,
+        "eager",
+        None,
+    )
+    return dict(rep) if isinstance(rep, dict) else {}
+
+
 def _resolve_device(arg_device: str) -> str:
     if arg_device != "auto":
         return arg_device
@@ -206,6 +252,7 @@ def _benchmark_case(
         "api_lightning_fallback_per_iter": api_lightning_trace["fallback_per_iter"],
         "note": runtime_trace["note"] or api_lightning_trace["note"],
     }
+    _apply_boundary_defaults(pure_row)
 
     if interop_fn is None:
         interop_row = {
@@ -226,6 +273,7 @@ def _benchmark_case(
             "api_torch_fallback_per_iter": float("nan"),
             "note": "torch backend unavailable",
         }
+        _apply_boundary_defaults(interop_row)
         return pure_row, interop_row
 
     _set_engine("torch")
@@ -251,6 +299,7 @@ def _benchmark_case(
         "api_torch_fallback_per_iter": api_torch_trace["fallback_per_iter"],
         "note": api_torch_trace["note"],
     }
+    _apply_boundary_defaults(interop_row)
     return pure_row, interop_row
 
 
@@ -296,6 +345,18 @@ def main() -> None:
         action=argparse.BooleanOptionalAction,
         default=False,
         help="Fail when torch is available but no interop row is status=ok.",
+    )
+    parser.add_argument(
+        "--require-max-boundary-overhead-ms",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Fail when estimated boundary overhead exceeds max budget in conv->attn rows.",
+    )
+    parser.add_argument(
+        "--max-boundary-overhead-ms",
+        type=float,
+        default=0.35,
+        help="Maximum allowed estimated boundary overhead (ms) for conv->attn rows.",
     )
     args = parser.parse_args()
 
@@ -405,6 +466,26 @@ def main() -> None:
             iters=max(60, args.iters // 2),
             trace_iters=max(4, args.trace_iters // 2),
         )
+        _set_engine("lightning")
+        light_route = _conv_attn_route_report(x=x_pipe, w=w_pipe, b=b_pipe, seq=seq, dim=dim, device=device)
+        pure["route_boundary_switch_count"] = int(light_route.get("boundary_switch_count", 0))
+        pure["route_boundary_copy_mode"] = str(light_route.get("boundary_copy_mode", "n/a"))
+        pure["route_boundary_reason_code"] = str(light_route.get("boundary_reason_code", "n/a"))
+        pure["route_boundary_copy_bytes_estimate"] = float(light_route.get("boundary_copy_bytes_estimate", 0))
+        pure["route_boundary_overhead_est_ns"] = float(light_route.get("boundary_overhead_est_ns", 0))
+        pure["route_boundary_overhead_est_ms"] = float(pure["route_boundary_overhead_est_ns"]) / 1e6
+        pure["route_zero_copy_eligible"] = bool(light_route.get("zero_copy_eligible", False))
+        if _torch_available():
+            _set_engine("torch")
+            torch_route = _conv_attn_route_report(x=x_pipe, w=w_pipe, b=b_pipe, seq=seq, dim=dim, device=device)
+            _set_engine("lightning")
+            interop["route_boundary_switch_count"] = int(torch_route.get("boundary_switch_count", 0))
+            interop["route_boundary_copy_mode"] = str(torch_route.get("boundary_copy_mode", "n/a"))
+            interop["route_boundary_reason_code"] = str(torch_route.get("boundary_reason_code", "n/a"))
+            interop["route_boundary_copy_bytes_estimate"] = float(torch_route.get("boundary_copy_bytes_estimate", 0))
+            interop["route_boundary_overhead_est_ns"] = float(torch_route.get("boundary_overhead_est_ns", 0))
+            interop["route_boundary_overhead_est_ms"] = float(interop["route_boundary_overhead_est_ns"]) / 1e6
+            interop["route_zero_copy_eligible"] = bool(torch_route.get("zero_copy_eligible", False))
         pure_rows.append(pure)
         interop_rows.append(interop)
 
@@ -425,6 +506,13 @@ def main() -> None:
         "runtime_fallback_per_iter",
         "api_lightning_fallback_per_iter",
         "note",
+        "route_boundary_switch_count",
+        "route_boundary_copy_mode",
+        "route_boundary_reason_code",
+        "route_boundary_copy_bytes_estimate",
+        "route_boundary_overhead_est_ns",
+        "route_boundary_overhead_est_ms",
+        "route_zero_copy_eligible",
     ]
     interop_fields = [
         "suite",
@@ -443,6 +531,13 @@ def main() -> None:
         "api_lightning_fallback_per_iter",
         "api_torch_fallback_per_iter",
         "note",
+        "route_boundary_switch_count",
+        "route_boundary_copy_mode",
+        "route_boundary_reason_code",
+        "route_boundary_copy_bytes_estimate",
+        "route_boundary_overhead_est_ns",
+        "route_boundary_overhead_est_ms",
+        "route_zero_copy_eligible",
     ]
 
     pure_csv_path = args.out_dir / args.pure_csv
@@ -507,6 +602,19 @@ def main() -> None:
         interop_ok = [r for r in interop_rows if r.get("status") == "ok"]
         if not interop_ok:
             raise SystemExit(6)
+
+    if args.require_max_boundary_overhead_ms:
+        offenders = []
+        for row in interop_rows:
+            if str(row.get("bench", "")) != "conv_attention_torchstrong_nchw":
+                continue
+            value = float(row.get("route_boundary_overhead_est_ms", float("nan")))
+            if math.isfinite(value) and value > float(args.max_boundary_overhead_ms):
+                offenders.append((str(row.get("shape", "")), value))
+        if offenders:
+            for shape, value in offenders:
+                print(f"boundary-overhead-budget-fail: shape={shape} estimated_overhead_ms={value:.6f}")
+            raise SystemExit(7)
 
 
 if __name__ == "__main__":

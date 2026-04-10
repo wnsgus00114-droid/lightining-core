@@ -6,6 +6,7 @@ emits explain reports for:
 - conv+relu (conv_relu_v1)
 - matmul+bias+relu (matmul_bias_relu_v1)
 - attention_forward+projection(matmul) (attention_proj_v1)
+- qkv_pack_repeat+attention_forward+projection(matmul) (attention_qkv_proj_v1)
 """
 
 from __future__ import annotations
@@ -123,6 +124,31 @@ def _build_attention_proj_graph(*, multi_consumer: bool) -> tuple[object, dict[s
     return g, ids, feeds, "attention_proj_v1", "attention(seq=48,d=48)+proj(48x64)"
 
 
+def _build_attention_qkv_proj_graph(*, multi_consumer: bool) -> tuple[object, dict[str, int], dict[int, np.ndarray], str, str]:
+    g = lc.GraphIR()
+    ids: dict[str, int] = {}
+    seq = 48
+    head_dim = 48
+    proj_out = 64
+    ids["x"] = g.add_tensor([1, 3, 8, 8], dtype="float32", name="x", constant=True)
+    ids["q"] = g.add_tensor([seq, head_dim], dtype="float32", name="q")
+    ids["k"] = g.add_tensor([seq, head_dim], dtype="float32", name="k")
+    ids["v"] = g.add_tensor([seq, head_dim], dtype="float32", name="v")
+    ids["proj_w"] = g.add_tensor([head_dim, proj_out], dtype="float32", name="proj_w", constant=True)
+    ids["attn_mid"] = g.add_tensor([seq, head_dim], dtype="float32", name="attn_mid")
+    ids["out"] = g.add_tensor([seq, proj_out], dtype="float32", name="out")
+    g.add_node("qkv_pack_repeat", [ids["x"]], [ids["q"], ids["k"], ids["v"]])
+    g.add_node("attention_forward", [ids["q"], ids["k"], ids["v"]], [ids["attn_mid"]])
+    g.add_node("matmul", [ids["attn_mid"], ids["proj_w"]], [ids["out"]])
+
+    feeds: dict[int, np.ndarray] = {}
+    if multi_consumer:
+        ids["side_bias"] = g.add_tensor([seq, head_dim], dtype="float32", name="side_bias", constant=True)
+        ids["side"] = g.add_tensor([seq, head_dim], dtype="float32", name="side")
+        g.add_node("matrix_sub", [ids["attn_mid"], ids["side_bias"]], [ids["side"]])
+    return g, ids, feeds, "attention_qkv_proj_v1", "qkv_pack+attention(seq=48,d=48)+proj(48x64)"
+
+
 def _run_case(
     *,
     case_name: str,
@@ -150,10 +176,15 @@ def _run_case(
         feeds[ids["bias"]] = rng.random((128, 128), dtype=np.float32) * 0.2 - 0.1
         if multi_consumer:
             feeds[ids["side_bias"]] = rng.random((128, 128), dtype=np.float32) * 0.2 - 0.1
-    else:
+    elif pattern == "attention_proj_v1":
         feeds[ids["q"]] = rng.random((48, 48), dtype=np.float32) * 2.0 - 1.0
         feeds[ids["k"]] = rng.random((48, 48), dtype=np.float32) * 2.0 - 1.0
         feeds[ids["v"]] = rng.random((48, 48), dtype=np.float32) * 2.0 - 1.0
+        feeds[ids["proj_w"]] = rng.random((48, 64), dtype=np.float32) * 0.2 - 0.1
+        if multi_consumer:
+            feeds[ids["side_bias"]] = rng.random((48, 48), dtype=np.float32) * 0.2 - 0.1
+    else:
+        feeds[ids["x"]] = rng.random((1, 3, 8, 8), dtype=np.float32) * 2.0 - 1.0
         feeds[ids["proj_w"]] = rng.random((48, 64), dtype=np.float32) * 0.2 - 0.1
         if multi_consumer:
             feeds[ids["side_bias"]] = rng.random((48, 48), dtype=np.float32) * 0.2 - 0.1
@@ -163,6 +194,7 @@ def _run_case(
             feeds,
             preferred_device=device,
             enable_fusion_v1=True,
+            fusion_pass_order="attention_qkv,attention,matmul,conv",
             enable_fusion_cost_model_v1=True,
             fusion_cost_min_speedup=cost_model_min_speedup,
         )
@@ -172,6 +204,7 @@ def _run_case(
             feeds,
             preferred_device=device,
             enable_fusion_v1=False,
+            fusion_pass_order="attention_qkv,attention,matmul,conv",
             enable_fusion_cost_model_v1=True,
             fusion_cost_min_speedup=cost_model_min_speedup,
         )
@@ -184,6 +217,7 @@ def _run_case(
             feeds,
             preferred_device=device,
             enable_fusion_v1=True,
+            fusion_pass_order="attention_qkv,attention,matmul,conv",
             enable_fusion_cost_model_v1=True,
             fusion_cost_min_speedup=cost_model_min_speedup,
         )["values"][ids["out"]],
@@ -194,6 +228,7 @@ def _run_case(
             feeds,
             preferred_device=device,
             enable_fusion_v1=False,
+            fusion_pass_order="attention_qkv,attention,matmul,conv",
             enable_fusion_cost_model_v1=True,
             fusion_cost_min_speedup=cost_model_min_speedup,
         )["values"][ids["out"]],
@@ -206,6 +241,7 @@ def _run_case(
         g.fusion_report(
             preferred_device=device,
             enable_fusion_v1=True,
+            fusion_pass_order="attention_qkv,attention,matmul,conv",
             enable_fusion_cost_model_v1=True,
             fusion_cost_min_speedup=cost_model_min_speedup,
         )
@@ -214,6 +250,7 @@ def _run_case(
         g.fusion_report(
             preferred_device=device,
             enable_fusion_v1=False,
+            fusion_pass_order="attention_qkv,attention,matmul,conv",
             enable_fusion_cost_model_v1=True,
             fusion_cost_min_speedup=cost_model_min_speedup,
         )
@@ -222,6 +259,7 @@ def _run_case(
         g.fusion_report(
             preferred_device=device,
             enable_fusion_v1=True,
+            fusion_pass_order="attention_qkv,attention,matmul,conv",
             enable_fusion_cost_model_v1=True,
             fusion_cost_min_speedup=1000.0,
         )
@@ -427,6 +465,8 @@ def main() -> None:
         ("matmul_bias_relu_multi_consumer", "matmul_bias_relu_v1", _build_mm_bias_relu_graph, True),
         ("attention_proj_eligible", "attention_proj_v1", _build_attention_proj_graph, False),
         ("attention_proj_multi_consumer", "attention_proj_v1", _build_attention_proj_graph, True),
+        ("attention_qkv_proj_eligible", "attention_qkv_proj_v1", _build_attention_qkv_proj_graph, False),
+        ("attention_qkv_proj_multi_consumer", "attention_qkv_proj_v1", _build_attention_qkv_proj_graph, True),
     ]
 
     for case_name, pattern, builder, multi_consumer in cases:
@@ -434,8 +474,10 @@ def main() -> None:
             shape = "conv(n=1,c=3->16,h=8,w=8,k=3)+relu"
         elif pattern == "matmul_bias_relu_v1":
             shape = "matmul(128x128x128)+bias+relu"
-        else:
+        elif pattern == "attention_proj_v1":
             shape = "attention(seq=48,d=48)+proj(48x64)"
+        else:
+            shape = "qkv_pack+attention(seq=48,d=48)+proj(48x64)"
         try:
             row, detail = _run_case(
                 case_name=case_name,
@@ -510,7 +552,14 @@ def main() -> None:
         raise SystemExit(3)
 
     eligible_rows = [
-        r for r in ok_rows if r["bench"] in {"conv_relu_eligible", "matmul_bias_relu_eligible", "attention_proj_eligible"}
+        r
+        for r in ok_rows
+        if r["bench"] in {
+            "conv_relu_eligible",
+            "matmul_bias_relu_eligible",
+            "attention_proj_eligible",
+            "attention_qkv_proj_eligible",
+        }
     ]
     for r in eligible_rows:
         ratio = float(r.get("fused_over_unfused", float("nan")))

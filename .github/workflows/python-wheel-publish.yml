@@ -68,6 +68,8 @@ jobs:
       LC_FUSION_MAX_ATTENTION: "2.20"
       LC_PHASE_B_EXIT_MIN_GRAPH_PIPELINE_ADOPTION_RATE_PCT: "100.0"
       LC_PHASE_B_EXIT_ALLOW_CHAIN_LATENCY_NOT_APPLICABLE: "true"
+      LC_PHASE_C_CONTRACT_JSON: docs/phase_c_engine_contract.json
+      LC_INTEROP_BOUNDARY_MAX_OVERHEAD_MS: "0.35"
       QB_DEVICE: cpu
       QB_WARMUP: "10"
       QB_ITERS: "40"
@@ -100,6 +102,7 @@ jobs:
         run: |
           python scripts/generate_phase_b_contract_docs.py --check
           python scripts/check_phase_b_contract_sync.py
+          python scripts/check_phase_c_contract_sync.py
 
       - name: Prepare release benchmark evidence directory
         run: |
@@ -112,9 +115,12 @@ jobs:
           python benchmarks/python/quick_bench_ci_summary.py --input ${REPORT_DIR}/quick_bench.csv --json ${REPORT_DIR}/quick_bench_summary.json --md ${REPORT_DIR}/quick_bench_summary.md --regress-threshold 1.0
           python benchmarks/python/quick_bench_variance_gate.py --runs-csv ${REPORT_DIR}/quick_bench_variance_runs.csv --json ${REPORT_DIR}/quick_bench_variance_summary.json --md ${REPORT_DIR}/quick_bench_variance_summary.md --repeats ${QB_VAR_REPEATS} --variance-threshold-pct ${QB_VAR_THRESHOLD_PCT} --device ${QB_DEVICE} --warmup ${QB_VAR_WARMUP} --iters ${QB_VAR_ITERS} --seed ${QB_SEED} --trim-runs ${QB_VAR_TRIM_RUNS}
           python benchmarks/python/graph_eager_ab_bench.py --device auto --warmup ${LC_GRAPH_AB_WARMUP} --iters ${LC_GRAPH_AB_ITERS} --trace-iters ${LC_GRAPH_AB_TRACE_ITERS} --seed ${QB_SEED} --fusion-cost-min-speedup ${LC_GRAPH_AB_FUSION_COST_MIN_SPEEDUP} --require-host-dispatch-reduction --min-host-dispatch-reduction-rate-pct ${LC_GRAPH_AB_MIN_HOST_DISPATCH_REDUCTION_RATE_PCT} --require-chained-latency-reduction --min-chained-latency-reduction-pct ${LC_GRAPH_AB_MIN_CHAINED_LATENCY_REDUCTION_PCT} --require-max-unsupported-ratio-pct --max-unsupported-ratio-pct ${LC_GRAPH_AB_MAX_UNSUPPORTED_RATIO_PCT} --csv ${REPORT_DIR}/graph_eager_ab.csv --json ${REPORT_DIR}/graph_eager_ab.json --md ${REPORT_DIR}/graph_eager_ab.md
-          python benchmarks/python/engine_split_bench.py --device auto --warmup ${QB_WARMUP} --iters ${QB_ITERS} --trace-iters ${QB_TRACE_ITERS} --seed ${QB_SEED} --require-shared-bench-coverage --out-dir ${REPORT_DIR} --pure-csv engine_split_pure_lc.csv --pure-json engine_split_pure_lc.json --interop-csv engine_split_interop.csv --interop-json engine_split_interop.json
+          python benchmarks/python/engine_split_bench.py --device auto --warmup ${QB_WARMUP} --iters ${QB_ITERS} --trace-iters ${QB_TRACE_ITERS} --seed ${QB_SEED} --require-shared-bench-coverage --require-max-boundary-overhead-ms --max-boundary-overhead-ms ${LC_INTEROP_BOUNDARY_MAX_OVERHEAD_MS} --out-dir ${REPORT_DIR} --pure-csv engine_split_pure_lc.csv --pure-json engine_split_pure_lc.json --interop-csv engine_split_interop.csv --interop-json engine_split_interop.json
           python benchmarks/python/fusion_pilot_bench.py --device auto --warmup 6 --iters 24 --seed 20260408 --cost-model-min-speedup ${LC_GRAPH_AB_FUSION_COST_MIN_SPEEDUP} --max-fused-over-unfused-conv ${LC_FUSION_MAX_CONV} --max-fused-over-unfused-matmul ${LC_FUSION_MAX_MATMUL} --max-fused-over-unfused-attention ${LC_FUSION_MAX_ATTENTION} --csv ${REPORT_DIR}/fusion_pilot.csv --json ${REPORT_DIR}/fusion_pilot.json --md ${REPORT_DIR}/fusion_pilot.md
+          python benchmarks/python/cost_model_v2_calibration.py --device auto --warmup 4 --iters 12 --json ${REPORT_DIR}/cost_model_v2_calibration.json --md ${REPORT_DIR}/cost_model_v2_calibration.md
+          python benchmarks/python/model_runner_alpha_bench.py --device auto --warmup 4 --iters 20 --csv ${REPORT_DIR}/model_runner_alpha.csv --json ${REPORT_DIR}/model_runner_alpha.json --md ${REPORT_DIR}/model_runner_alpha.md
           python benchmarks/python/phase_b_exit_audit.py --graph-json ${REPORT_DIR}/graph_eager_ab.json --contract-json docs/phase_b_graph_contract.json --out-json ${REPORT_DIR}/phase_b_exit_audit.json --out-md ${REPORT_DIR}/phase_b_exit_audit.md --bundle-json ${REPORT_DIR}/phase_b_exit_candidate_bundle.json --target-graph-pipeline-adoption-rate-pct ${LC_PHASE_B_EXIT_MIN_GRAPH_PIPELINE_ADOPTION_RATE_PCT} --allow-chain-latency-not-applicable --require-artifacts --artifact ${REPORT_DIR}/quick_bench.csv --artifact ${REPORT_DIR}/quick_bench_summary.json --artifact ${REPORT_DIR}/quick_bench_variance_summary.json --artifact ${REPORT_DIR}/graph_eager_ab.csv --artifact ${REPORT_DIR}/graph_eager_ab.json --artifact ${REPORT_DIR}/engine_split_pure_lc.csv --artifact ${REPORT_DIR}/engine_split_pure_lc.json --artifact ${REPORT_DIR}/engine_split_interop.csv --artifact ${REPORT_DIR}/engine_split_interop.json --artifact ${REPORT_DIR}/fusion_pilot.csv --artifact ${REPORT_DIR}/fusion_pilot.json --artifact ${REPORT_DIR}/release_bench_environment.json --artifact ${REPORT_DIR}/release_bench_commands.txt --readme README.md --roadmap ROADMAP.md --expected-version ${GITHUB_REF_NAME} --require-doc-sync --require-pass
+          python benchmarks/python/phase_c_exit_audit.py --graph-json ${REPORT_DIR}/graph_eager_ab.json --fusion-json ${REPORT_DIR}/fusion_pilot.json --engine-interop-json ${REPORT_DIR}/engine_split_interop.json --model-runner-json ${REPORT_DIR}/model_runner_alpha.json --cost-calibration-json ${REPORT_DIR}/cost_model_v2_calibration.json --contract-json ${LC_PHASE_C_CONTRACT_JSON} --out-json ${REPORT_DIR}/phase_c_exit_audit.json --out-md ${REPORT_DIR}/phase_c_exit_audit.md --bundle-json ${REPORT_DIR}/phase_c_exit_candidate_bundle.json --require-artifacts --artifact ${REPORT_DIR}/graph_eager_ab.json --artifact ${REPORT_DIR}/fusion_pilot.json --artifact ${REPORT_DIR}/engine_split_interop.json --artifact ${REPORT_DIR}/model_runner_alpha.json --artifact ${REPORT_DIR}/cost_model_v2_calibration.json --readme README.md --roadmap ROADMAP.md --expected-version ${GITHUB_REF_NAME} --require-doc-sync --require-pass
           CMD
 
       - name: Capture release benchmark environment
@@ -220,6 +226,8 @@ jobs:
             --trace-iters "$QB_TRACE_ITERS" \
             --seed "$QB_SEED" \
             --require-shared-bench-coverage \
+            --require-max-boundary-overhead-ms \
+            --max-boundary-overhead-ms "$LC_INTEROP_BOUNDARY_MAX_OVERHEAD_MS" \
             --out-dir "$REPORT_DIR" \
             --pure-csv engine_split_pure_lc.csv \
             --pure-json engine_split_pure_lc.json \
@@ -266,6 +274,29 @@ jobs:
             > "$REPORT_DIR/fusion_pilot.log"
           cat "$REPORT_DIR/fusion_pilot.log"
 
+      - name: Run release cost model v2 calibration
+        run: |
+          python benchmarks/python/cost_model_v2_calibration.py \
+            --device auto \
+            --warmup 4 \
+            --iters 12 \
+            --json "$REPORT_DIR/cost_model_v2_calibration.json" \
+            --md "$REPORT_DIR/cost_model_v2_calibration.md" \
+            > "$REPORT_DIR/cost_model_v2_calibration.log"
+          cat "$REPORT_DIR/cost_model_v2_calibration.log"
+
+      - name: Run release model runner alpha benchmark
+        run: |
+          python benchmarks/python/model_runner_alpha_bench.py \
+            --device auto \
+            --warmup 4 \
+            --iters 20 \
+            --csv "$REPORT_DIR/model_runner_alpha.csv" \
+            --json "$REPORT_DIR/model_runner_alpha.json" \
+            --md "$REPORT_DIR/model_runner_alpha.md" \
+            > "$REPORT_DIR/model_runner_alpha.log"
+          cat "$REPORT_DIR/model_runner_alpha.log"
+
       - name: Run Phase B exit audit
         run: |
           if [ "$LC_PHASE_B_EXIT_ALLOW_CHAIN_LATENCY_NOT_APPLICABLE" = "true" ]; then
@@ -304,6 +335,32 @@ jobs:
             > "$REPORT_DIR/phase_b_exit_audit.log"
           cat "$REPORT_DIR/phase_b_exit_audit.log"
 
+      - name: Run Phase C exit audit
+        run: |
+          python benchmarks/python/phase_c_exit_audit.py \
+            --graph-json "$REPORT_DIR/graph_eager_ab.json" \
+            --fusion-json "$REPORT_DIR/fusion_pilot.json" \
+            --engine-interop-json "$REPORT_DIR/engine_split_interop.json" \
+            --model-runner-json "$REPORT_DIR/model_runner_alpha.json" \
+            --cost-calibration-json "$REPORT_DIR/cost_model_v2_calibration.json" \
+            --contract-json "$LC_PHASE_C_CONTRACT_JSON" \
+            --out-json "$REPORT_DIR/phase_c_exit_audit.json" \
+            --out-md "$REPORT_DIR/phase_c_exit_audit.md" \
+            --bundle-json "$REPORT_DIR/phase_c_exit_candidate_bundle.json" \
+            --require-artifacts \
+            --artifact "$REPORT_DIR/graph_eager_ab.json" \
+            --artifact "$REPORT_DIR/fusion_pilot.json" \
+            --artifact "$REPORT_DIR/engine_split_interop.json" \
+            --artifact "$REPORT_DIR/model_runner_alpha.json" \
+            --artifact "$REPORT_DIR/cost_model_v2_calibration.json" \
+            --readme README.md \
+            --roadmap ROADMAP.md \
+            --expected-version "$GITHUB_REF_NAME" \
+            --require-doc-sync \
+            --require-pass \
+            > "$REPORT_DIR/phase_c_exit_audit.log"
+          cat "$REPORT_DIR/phase_c_exit_audit.log"
+
       - name: Build release benchmark manifest
         run: |
           python - <<'PY'
@@ -334,10 +391,21 @@ jobs:
               "fusion_pilot.json",
               "fusion_pilot.md",
               "fusion_pilot.log",
+              "cost_model_v2_calibration.json",
+              "cost_model_v2_calibration.md",
+              "cost_model_v2_calibration.log",
+              "model_runner_alpha.csv",
+              "model_runner_alpha.json",
+              "model_runner_alpha.md",
+              "model_runner_alpha.log",
               "phase_b_exit_audit.json",
               "phase_b_exit_audit.md",
               "phase_b_exit_candidate_bundle.json",
               "phase_b_exit_audit.log",
+              "phase_c_exit_audit.json",
+              "phase_c_exit_audit.md",
+              "phase_c_exit_candidate_bundle.json",
+              "phase_c_exit_audit.log",
               "release_bench_environment.json",
               "release_bench_commands.txt",
           ]
@@ -390,6 +458,8 @@ jobs:
           echo "- graph/eager host-dispatch gate: \`$REPORT_DIR/graph_eager_ab.csv\`, \`$REPORT_DIR/graph_eager_ab.json\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- fusion pilot evidence: \`$REPORT_DIR/fusion_pilot.csv\`, \`$REPORT_DIR/fusion_pilot.json\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- phase-b exit audit: \`$REPORT_DIR/phase_b_exit_audit.json\`, \`$REPORT_DIR/phase_b_exit_candidate_bundle.json\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- model runner alpha: \`$REPORT_DIR/model_runner_alpha.csv\`, \`$REPORT_DIR/model_runner_alpha.json\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- phase-c exit audit: \`$REPORT_DIR/phase_c_exit_audit.json\`, \`$REPORT_DIR/phase_c_exit_candidate_bundle.json\`" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           cat "$REPORT_DIR/quick_bench_summary.md" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
@@ -405,6 +475,14 @@ jobs:
           if [ -f "$REPORT_DIR/phase_b_exit_audit.md" ]; then
             echo "" >> "$GITHUB_STEP_SUMMARY"
             cat "$REPORT_DIR/phase_b_exit_audit.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f "$REPORT_DIR/model_runner_alpha.md" ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            cat "$REPORT_DIR/model_runner_alpha.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f "$REPORT_DIR/phase_c_exit_audit.md" ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            cat "$REPORT_DIR/phase_c_exit_audit.md" >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Upload release benchmark evidence
@@ -436,10 +514,21 @@ jobs:
             ${{ env.REPORT_DIR }}/fusion_pilot.json
             ${{ env.REPORT_DIR }}/fusion_pilot.md
             ${{ env.REPORT_DIR }}/fusion_pilot.log
+            ${{ env.REPORT_DIR }}/cost_model_v2_calibration.json
+            ${{ env.REPORT_DIR }}/cost_model_v2_calibration.md
+            ${{ env.REPORT_DIR }}/cost_model_v2_calibration.log
+            ${{ env.REPORT_DIR }}/model_runner_alpha.csv
+            ${{ env.REPORT_DIR }}/model_runner_alpha.json
+            ${{ env.REPORT_DIR }}/model_runner_alpha.md
+            ${{ env.REPORT_DIR }}/model_runner_alpha.log
             ${{ env.REPORT_DIR }}/phase_b_exit_audit.json
             ${{ env.REPORT_DIR }}/phase_b_exit_audit.md
             ${{ env.REPORT_DIR }}/phase_b_exit_candidate_bundle.json
             ${{ env.REPORT_DIR }}/phase_b_exit_audit.log
+            ${{ env.REPORT_DIR }}/phase_c_exit_audit.json
+            ${{ env.REPORT_DIR }}/phase_c_exit_audit.md
+            ${{ env.REPORT_DIR }}/phase_c_exit_candidate_bundle.json
+            ${{ env.REPORT_DIR }}/phase_c_exit_audit.log
             ${{ env.REPORT_DIR }}/release_bench_environment.json
             ${{ env.REPORT_DIR }}/release_bench_commands.txt
             ${{ env.REPORT_DIR }}/release_bench_manifest.json

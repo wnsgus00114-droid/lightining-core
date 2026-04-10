@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from threading import Lock
@@ -26,6 +27,26 @@ _LC_API_DIRECT_EXPORTS: dict[str, Any] = {}
 _CHECKPOINT_META_KEY = "__lc_checkpoint_meta__"
 _CHECKPOINT_FORMAT = "lc_checkpoint_v1"
 _CHECKPOINT_FORMAT_V11 = "lc_checkpoint_v1_1"
+_CHECKPOINT_FORMAT_V12 = "lc_checkpoint_v1_2"
+_CHECKPOINT_INTEGRITY_SIGNATURE = "lc_integrity_sha256_v1"
+
+
+class CheckpointValidationError(ValueError):
+    """Structured checkpoint validation error."""
+
+    def __init__(self, code: str, message: str, details: dict[str, Any] | None = None):
+        super().__init__(f"{code}: {message}")
+        self.code = str(code)
+        self.details = details or {}
+
+
+class RoutePolicyValidationError(ValueError):
+    """Structured route-policy boundary validation error."""
+
+    def __init__(self, code: str, message: str, details: dict[str, Any] | None = None):
+        super().__init__(f"{code}: {message}")
+        self.code = str(code)
+        self.details = details or {}
 
 
 def _import_torch():
@@ -90,6 +111,63 @@ def _normalize_route_policy(route_policy: dict[str, Any] | None) -> dict[str, st
             raise ValueError(f"unsupported route_policy key '{key}'; allowed keys: {allowed}")
         normalized[key_s] = _normalize_route_engine(value, field=f"route_policy.{key_s}")
     return normalized
+
+
+def validate_route_policy(route_policy: Any, *, strict: bool = False) -> dict[str, Any]:
+    """Validate route policy contract with structured reason codes."""
+
+    def _fail(code: str, message: str, details: dict[str, Any]) -> dict[str, Any]:
+        out = {
+            "ok": False,
+            "code": str(code),
+            "message": str(message),
+            "details": dict(details),
+            "normalized": {"conv": "auto", "attention": "auto", "graph": "auto"},
+        }
+        if strict:
+            raise RoutePolicyValidationError(code, message, details)
+        return out
+
+    if route_policy is None:
+        return {
+            "ok": True,
+            "code": "ok",
+            "message": "route_policy omitted; using defaults",
+            "details": {},
+            "normalized": {"conv": "auto", "attention": "auto", "graph": "auto"},
+        }
+    if not isinstance(route_policy, dict):
+        return _fail(
+            "interop_route_policy_invalid_type",
+            "route_policy must be a dict with optional keys: conv, attention, graph",
+            {"type": type(route_policy).__name__},
+        )
+    for key in route_policy.keys():
+        key_s = str(key).strip().lower()
+        if key_s not in _VALID_ROUTE_POLICY_KEYS:
+            return _fail(
+                "interop_route_policy_invalid_key",
+                f"unsupported route_policy key '{key_s}'",
+                {"allowed_keys": sorted(_VALID_ROUTE_POLICY_KEYS), "received_key": key_s},
+            )
+    normalized: dict[str, str] = {"conv": "auto", "attention": "auto", "graph": "auto"}
+    for key, value in route_policy.items():
+        key_s = str(key).strip().lower()
+        token = str(value).strip().lower()
+        if token not in _VALID_ROUTE_ENGINES:
+            return _fail(
+                "interop_route_policy_invalid_value",
+                f"{key_s} route must be one of: {', '.join(sorted(_VALID_ROUTE_ENGINES))}",
+                {"key": key_s, "value": token},
+            )
+        normalized[key_s] = token
+    return {
+        "ok": True,
+        "code": "ok",
+        "message": "route policy validated",
+        "details": {},
+        "normalized": normalized,
+    }
 
 
 def _resolve_engine_preference(device: str, preference: str) -> tuple[str, str]:
@@ -218,6 +296,44 @@ def tensor(x: Any) -> np.ndarray:
     return _as_f32_c(x)
 
 
+def _json_dumps_stable(payload: Any) -> str:
+    return json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+
+
+def _sha256_hex(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _tensor_entry_hash(arr: np.ndarray) -> str:
+    data = np.asarray(arr)
+    header = {
+        "dtype": str(data.dtype),
+        "shape": [int(x) for x in data.shape],
+        "nbytes": int(data.nbytes),
+    }
+    h = hashlib.sha256()
+    h.update(_json_dumps_stable(header).encode("utf-8"))
+    h.update(np.ascontiguousarray(data).view(np.uint8).tobytes())
+    return h.hexdigest()
+
+
+def _build_tensor_manifest(flat_state: dict[str, np.ndarray]) -> dict[str, dict[str, Any]]:
+    manifest: dict[str, dict[str, Any]] = {}
+    for key in sorted(flat_state.keys()):
+        arr = np.asarray(flat_state[key])
+        manifest[str(key)] = {
+            "dtype": str(arr.dtype),
+            "shape": [int(x) for x in arr.shape],
+            "nbytes": int(arr.nbytes),
+            "sha256": _tensor_entry_hash(arr),
+        }
+    return manifest
+
+
+def _manifest_hash(manifest: dict[str, dict[str, Any]]) -> str:
+    return _sha256_hex(_json_dumps_stable(manifest).encode("utf-8"))
+
+
 def _checkpoint_meta_array(payload: dict[str, Any]) -> np.ndarray:
     raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     return np.frombuffer(raw, dtype=np.uint8)
@@ -275,6 +391,265 @@ def _strip_state_prefix(state: dict[str, Any], prefix: str) -> dict[str, Any]:
     return out
 
 
+def _checkpoint_integrity_meta(
+    *,
+    format_name: str,
+    flat_state: dict[str, np.ndarray],
+    metadata: dict[str, Any] | None = None,
+    model_class: str = "",
+    compat_read: list[str] | None = None,
+) -> dict[str, Any]:
+    tensor_manifest = _build_tensor_manifest(flat_state)
+    tensor_hashes = {k: v["sha256"] for k, v in tensor_manifest.items()}
+    manifest_hash = _manifest_hash(tensor_manifest)
+    payload = {
+        "format": str(format_name),
+        "format_version": "1.2",
+        "compat_read": list(compat_read or [_CHECKPOINT_FORMAT, _CHECKPOINT_FORMAT_V11, _CHECKPOINT_FORMAT_V12]),
+        "saved_at_utc": datetime.now(timezone.utc).isoformat(),
+        "engine": get_backend(),
+        "model_class": str(model_class),
+        "num_tensors": len(flat_state),
+        "keys": sorted(flat_state.keys()),
+        "integrity_signature": _CHECKPOINT_INTEGRITY_SIGNATURE,
+        "manifest_hash": manifest_hash,
+        "tensor_hashes": tensor_hashes,
+        "tensor_manifest": tensor_manifest,
+        "user_metadata": metadata or {},
+    }
+    return payload
+
+
+def _checkpoint_fail(
+    *,
+    path: str,
+    meta: dict[str, Any],
+    code: str,
+    message: str,
+    details: dict[str, Any],
+    strict: bool,
+) -> dict[str, Any]:
+    out = {
+        "path": path,
+        "ok": False,
+        "code": str(code),
+        "message": str(message),
+        "details": dict(details),
+        "meta": meta,
+    }
+    if strict:
+        raise CheckpointValidationError(code, message, out)
+    return out
+
+
+def validate_checkpoint(
+    path: str | os.PathLike[str],
+    *,
+    expected_formats: list[str] | tuple[str, ...] | None = None,
+    strict: bool = False,
+    require_signature: bool = True,
+) -> dict[str, Any]:
+    """Validate checkpoint integrity and compatibility contract."""
+    load_path = os.fspath(path)
+    try:
+        with np.load(load_path, allow_pickle=False) as data:
+            files = list(data.files)
+            if _CHECKPOINT_META_KEY not in files:
+                return _checkpoint_fail(
+                    path=load_path,
+                    meta={},
+                    code="checkpoint_meta_missing",
+                    message="checkpoint metadata key is missing",
+                    details={"meta_key": _CHECKPOINT_META_KEY},
+                    strict=strict,
+                )
+            meta = _checkpoint_meta_from_array(np.asarray(data[_CHECKPOINT_META_KEY]))
+            if not isinstance(meta, dict) or not meta:
+                return _checkpoint_fail(
+                    path=load_path,
+                    meta={},
+                    code="checkpoint_meta_invalid",
+                    message="checkpoint metadata is empty or invalid JSON object",
+                    details={},
+                    strict=strict,
+                )
+            fmt = str(meta.get("format", ""))
+            if expected_formats is None:
+                expected = {_CHECKPOINT_FORMAT, _CHECKPOINT_FORMAT_V11, _CHECKPOINT_FORMAT_V12}
+            else:
+                expected = {str(x) for x in expected_formats}
+            if fmt and fmt not in expected:
+                return _checkpoint_fail(
+                    path=load_path,
+                    meta=meta,
+                    code="checkpoint_format_unsupported",
+                    message=f"unsupported checkpoint format: {fmt}",
+                    details={"expected_formats": sorted(expected), "observed_format": fmt},
+                    strict=strict,
+                )
+
+            if require_signature:
+                sig = str(meta.get("integrity_signature", ""))
+                if sig and sig != _CHECKPOINT_INTEGRITY_SIGNATURE:
+                    return _checkpoint_fail(
+                        path=load_path,
+                        meta=meta,
+                        code="checkpoint_signature_mismatch",
+                        message="checkpoint integrity signature mismatch",
+                        details={"expected_signature": _CHECKPOINT_INTEGRITY_SIGNATURE, "observed_signature": sig},
+                        strict=strict,
+                    )
+
+            state: dict[str, np.ndarray] = {}
+            for name in files:
+                if name == _CHECKPOINT_META_KEY:
+                    continue
+                state[name] = np.asarray(data[name])
+    except CheckpointValidationError:
+        raise
+    except Exception as exc:
+        return _checkpoint_fail(
+            path=load_path,
+            meta={},
+            code="checkpoint_read_error",
+            message=str(exc),
+            details={"exception_type": exc.__class__.__name__},
+            strict=strict,
+        )
+
+    observed_num = len(state)
+    expected_num = int(meta.get("num_tensors", observed_num))
+    if expected_num != observed_num:
+        return _checkpoint_fail(
+            path=load_path,
+            meta=meta,
+            code="checkpoint_num_tensors_mismatch",
+            message="num_tensors in metadata does not match state payload",
+            details={"meta_num_tensors": expected_num, "state_num_tensors": observed_num},
+            strict=strict,
+        )
+
+    observed_manifest = _build_tensor_manifest(state)
+    observed_hash = _manifest_hash(observed_manifest)
+    meta_manifest_hash = str(meta.get("manifest_hash", ""))
+    if meta_manifest_hash and meta_manifest_hash != observed_hash:
+        return _checkpoint_fail(
+            path=load_path,
+            meta=meta,
+            code="checkpoint_manifest_hash_mismatch",
+            message="manifest hash mismatch",
+            details={"meta_manifest_hash": meta_manifest_hash, "observed_manifest_hash": observed_hash},
+            strict=strict,
+        )
+
+    meta_tensor_hashes = dict(meta.get("tensor_hashes", {})) if isinstance(meta.get("tensor_hashes", {}), dict) else {}
+    if meta_tensor_hashes:
+        for key in sorted(observed_manifest.keys()):
+            observed_tensor_hash = str(observed_manifest[key].get("sha256", ""))
+            meta_tensor_hash = str(meta_tensor_hashes.get(key, ""))
+            if not meta_tensor_hash:
+                return _checkpoint_fail(
+                    path=load_path,
+                    meta=meta,
+                    code="checkpoint_manifest_missing_tensor",
+                    message=f"tensor hash missing for key '{key}'",
+                    details={"key": key},
+                    strict=strict,
+                )
+            if meta_tensor_hash != observed_tensor_hash:
+                return _checkpoint_fail(
+                    path=load_path,
+                    meta=meta,
+                    code="checkpoint_tensor_hash_mismatch",
+                    message=f"tensor hash mismatch for key '{key}'",
+                    details={"key": key, "meta_hash": meta_tensor_hash, "observed_hash": observed_tensor_hash},
+                    strict=strict,
+                )
+
+    return {
+        "path": load_path,
+        "ok": True,
+        "code": "ok",
+        "message": "checkpoint validation passed",
+        "meta": meta,
+        "details": {
+            "state_num_tensors": observed_num,
+            "observed_manifest_hash": observed_hash,
+            "expected_formats": sorted(expected),
+        },
+    }
+
+
+def checkpoint_conversion_diagnostics(
+    state_or_obj: Any,
+    *,
+    source_format: str = "auto",
+) -> dict[str, Any]:
+    """Diagnose conversion readiness from external framework state payloads."""
+    if hasattr(state_or_obj, "state_dict") and callable(getattr(state_or_obj, "state_dict")):
+        state_obj = state_or_obj.state_dict()  # type: ignore[call-arg]
+    else:
+        state_obj = state_or_obj
+    if not isinstance(state_obj, dict):
+        raise TypeError("state_or_obj must be dict or object implementing state_dict()")
+
+    src = str(source_format).strip().lower()
+    if src == "auto":
+        src = "generic_state_dict"
+        for value in state_obj.values():
+            module_name = getattr(type(value), "__module__", "").lower()
+            if module_name.startswith("torch"):
+                src = "torch_state_dict"
+                break
+            if module_name.startswith("tensorflow"):
+                src = "tf_checkpoint"
+                break
+
+    supported: dict[str, np.ndarray] = {}
+    unsupported: list[dict[str, Any]] = []
+    for key, value in state_obj.items():
+        key_s = str(key)
+        try:
+            supported[key_s] = _checkpoint_state_to_array(value)
+        except Exception as exc:
+            unsupported.append(
+                {
+                    "key": key_s,
+                    "reason_code": "conversion_value_unsupported",
+                    "message": str(exc),
+                    "value_type": type(value).__name__,
+                }
+            )
+
+    manifest = _build_tensor_manifest(supported)
+    return {
+        "source_format": src,
+        "integrity_signature": _CHECKPOINT_INTEGRITY_SIGNATURE,
+        "total_entries": len(state_obj),
+        "convertible_entries": len(supported),
+        "unsupported_entries": unsupported,
+        "convertible": len(unsupported) == 0,
+        "manifest_hash": _manifest_hash(manifest),
+        "tensor_manifest": manifest,
+    }
+
+
+def validate_checkpoint_conversion(
+    state_or_obj: Any,
+    *,
+    source_format: str = "auto",
+    strict: bool = False,
+) -> dict[str, Any]:
+    out = checkpoint_conversion_diagnostics(state_or_obj, source_format=source_format)
+    if strict and not bool(out.get("convertible", False)):
+        raise CheckpointValidationError(
+            "checkpoint_conversion_not_convertible",
+            "state payload contains unsupported entries",
+            {"unsupported_entries": out.get("unsupported_entries", [])},
+        )
+    return out
+
+
 def save_checkpoint(
     path: str | os.PathLike[str],
     state_or_obj: Any,
@@ -282,7 +657,7 @@ def save_checkpoint(
     metadata: dict[str, Any] | None = None,
     compressed: bool = True,
 ) -> str:
-    """Save checkpoint state to .npz (format: lc_checkpoint_v1)."""
+    """Save checkpoint state to .npz (format: lc_checkpoint_v1_2)."""
     if hasattr(state_or_obj, "state_dict") and callable(getattr(state_or_obj, "state_dict")):
         state_obj = state_or_obj.state_dict()  # type: ignore[call-arg]
     else:
@@ -291,14 +666,11 @@ def save_checkpoint(
         raise TypeError("state_or_obj must be dict or object implementing state_dict()")
 
     flat_state = _flatten_checkpoint_state(state_obj)
-    meta_payload = {
-        "format": _CHECKPOINT_FORMAT,
-        "saved_at_utc": datetime.now(timezone.utc).isoformat(),
-        "engine": get_backend(),
-        "num_tensors": len(flat_state),
-        "keys": sorted(flat_state.keys()),
-        "user_metadata": metadata or {},
-    }
+    meta_payload = _checkpoint_integrity_meta(
+        format_name=_CHECKPOINT_FORMAT_V12,
+        flat_state=flat_state,
+        metadata=metadata,
+    )
 
     save_dict: dict[str, np.ndarray] = dict(flat_state)
     save_dict[_CHECKPOINT_META_KEY] = _checkpoint_meta_array(meta_payload)
@@ -316,11 +688,16 @@ def load_checkpoint(
     *,
     into: Any | None = None,
     strict: bool = True,
+    validate: bool = True,
+    expected_formats: list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     """Load checkpoint from .npz and optionally apply to target via load_state_dict()."""
     load_path = os.fspath(path)
     state: dict[str, np.ndarray] = {}
     meta: dict[str, Any] = {}
+    validation: dict[str, Any] | None = None
+    if validate:
+        validation = validate_checkpoint(load_path, expected_formats=expected_formats, strict=True)
     with np.load(load_path, allow_pickle=False) as data:
         files = list(data.files)
         if _CHECKPOINT_META_KEY in files:
@@ -336,7 +713,7 @@ def load_checkpoint(
             raise TypeError("into must implement load_state_dict(state, strict=...)")
         load_fn(state, strict=bool(strict))
 
-    return {"path": load_path, "meta": meta, "state": state}
+    return {"path": load_path, "meta": meta, "state": state, "validation": validation}
 
 
 def save_model_checkpoint(
@@ -346,7 +723,7 @@ def save_model_checkpoint(
     metadata: dict[str, Any] | None = None,
     compressed: bool = True,
 ) -> str:
-    """Save model-level checkpoint (format: lc_checkpoint_v1_1)."""
+    """Save model-level checkpoint (format: lc_checkpoint_v1_2)."""
     state_fn = getattr(model, "state_dict", None)
     if not callable(state_fn):
         raise TypeError("model must implement state_dict()")
@@ -356,16 +733,13 @@ def save_model_checkpoint(
         raise TypeError("model.state_dict() must return dict")
 
     flat_state = _flatten_checkpoint_state(model_state, prefix="model")
-    meta_payload = {
-        "format": _CHECKPOINT_FORMAT_V11,
-        "compat_read": [_CHECKPOINT_FORMAT, _CHECKPOINT_FORMAT_V11],
-        "saved_at_utc": datetime.now(timezone.utc).isoformat(),
-        "engine": get_backend(),
-        "model_class": model.__class__.__name__,
-        "model_keys": sorted(flat_state.keys()),
-        "num_tensors": len(flat_state),
-        "user_metadata": metadata or {},
-    }
+    meta_payload = _checkpoint_integrity_meta(
+        format_name=_CHECKPOINT_FORMAT_V12,
+        flat_state=flat_state,
+        metadata=metadata,
+        model_class=model.__class__.__name__,
+        compat_read=[_CHECKPOINT_FORMAT, _CHECKPOINT_FORMAT_V11, _CHECKPOINT_FORMAT_V12],
+    )
     save_dict: dict[str, np.ndarray] = dict(flat_state)
     save_dict[_CHECKPOINT_META_KEY] = _checkpoint_meta_array(meta_payload)
 
@@ -382,13 +756,14 @@ def load_model_checkpoint(
     *,
     into: Any | None = None,
     strict: bool = True,
+    validate: bool = True,
 ) -> dict[str, Any]:
     """Load model-level checkpoint with forward-compat support for v1."""
-    payload = load_checkpoint(path, into=None, strict=strict)
+    payload = load_checkpoint(path, into=None, strict=strict, validate=validate)
     meta = dict(payload.get("meta", {}))
     state = dict(payload.get("state", {}))
     fmt = str(meta.get("format", ""))
-    if fmt and fmt not in {_CHECKPOINT_FORMAT, _CHECKPOINT_FORMAT_V11}:
+    if fmt and fmt not in {_CHECKPOINT_FORMAT, _CHECKPOINT_FORMAT_V11, _CHECKPOINT_FORMAT_V12}:
         raise ValueError(f"unsupported checkpoint format: {fmt}")
 
     model_state = _strip_state_prefix(state, "model")
@@ -517,6 +892,230 @@ class TinyMLPModel:
         self.fc2 = Linear(self.d_hidden, self.d_out, bias=True)
         self.fc1.load_state_dict(state, strict=strict, prefix=f"{key}fc1")
         self.fc2.load_state_dict(state, strict=strict, prefix=f"{key}fc2")
+
+
+class _EngineScope:
+    def __init__(self, name: str):
+        self._name = str(name)
+        self._prev = get_backend()
+
+    def __enter__(self) -> "_EngineScope":
+        set_backend(self._name)
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        set_backend(self._prev)
+        return False
+
+
+class TinyTransformerRunner:
+    """Model-runner alpha: tiny transformer-ish block with graph/eager/interop modes."""
+
+    def __init__(self, *, seq_len: int = 48, d_model: int = 48, d_ff: int = 128, seed: int = 20260410):
+        self.seq_len = int(seq_len)
+        self.d_model = int(d_model)
+        self.d_ff = int(d_ff)
+        rng = np.random.default_rng(int(seed))
+        self.wq = (rng.standard_normal((self.d_model, self.d_model)) * 0.05).astype(np.float32)
+        self.wk = (rng.standard_normal((self.d_model, self.d_model)) * 0.05).astype(np.float32)
+        self.wv = (rng.standard_normal((self.d_model, self.d_model)) * 0.05).astype(np.float32)
+        self.wo = (rng.standard_normal((self.d_model, self.d_model)) * 0.05).astype(np.float32)
+        self.w1 = (rng.standard_normal((self.d_model, self.d_ff)) * 0.04).astype(np.float32)
+        self.b1 = np.zeros((1, self.d_ff), dtype=np.float32)
+        self.w2 = (rng.standard_normal((self.d_ff, self.d_model)) * 0.04).astype(np.float32)
+        self.b2 = np.zeros((1, self.d_model), dtype=np.float32)
+        self._graph_bundle: dict[str, Any] | None = None
+
+    def state_dict(self, prefix: str = "") -> dict[str, np.ndarray]:
+        key = (str(prefix).rstrip(".") + ".") if prefix else ""
+        return {
+            f"{key}seq_len": np.asarray([self.seq_len], dtype=np.int32),
+            f"{key}d_model": np.asarray([self.d_model], dtype=np.int32),
+            f"{key}d_ff": np.asarray([self.d_ff], dtype=np.int32),
+            f"{key}wq": np.ascontiguousarray(self.wq),
+            f"{key}wk": np.ascontiguousarray(self.wk),
+            f"{key}wv": np.ascontiguousarray(self.wv),
+            f"{key}wo": np.ascontiguousarray(self.wo),
+            f"{key}w1": np.ascontiguousarray(self.w1),
+            f"{key}b1": np.ascontiguousarray(self.b1),
+            f"{key}w2": np.ascontiguousarray(self.w2),
+            f"{key}b2": np.ascontiguousarray(self.b2),
+        }
+
+    def load_state_dict(self, state: dict[str, Any], strict: bool = True, prefix: str = "") -> None:
+        key = (str(prefix).rstrip(".") + ".") if prefix else ""
+        mapping = {
+            "wq": (self.d_model, self.d_model),
+            "wk": (self.d_model, self.d_model),
+            "wv": (self.d_model, self.d_model),
+            "wo": (self.d_model, self.d_model),
+            "w1": (self.d_model, self.d_ff),
+            "b1": (1, self.d_ff),
+            "w2": (self.d_ff, self.d_model),
+            "b2": (1, self.d_model),
+        }
+        for field in ("seq_len", "d_model", "d_ff"):
+            fk = f"{key}{field}"
+            if fk in state:
+                vv = np.asarray(state[fk]).reshape(-1)
+                if vv.size > 0:
+                    setattr(self, field, int(vv[0]))
+            elif strict:
+                raise KeyError(f"missing key: {fk}")
+        for name, shape in mapping.items():
+            sk = f"{key}{name}"
+            if sk not in state:
+                if strict:
+                    raise KeyError(f"missing key: {sk}")
+                continue
+            arr = np.asarray(state[sk], dtype=np.float32)
+            if tuple(arr.shape) != tuple(shape):
+                raise ValueError(f"{name} shape mismatch: expected {shape} got {tuple(arr.shape)}")
+            setattr(self, name, np.ascontiguousarray(arr))
+        self._graph_bundle = None
+
+    def _forward_eager(self, x_arr: np.ndarray, *, device: str) -> np.ndarray:
+        q = lightning_matmul(x_arr, self.wq, device=device)
+        k = lightning_matmul(x_arr, self.wk, device=device)
+        v = lightning_matmul(x_arr, self.wv, device=device)
+        attn = lightning_attention(q, k, v, seq=self.seq_len, head_dim=self.d_model, device=device, causal=False)
+        o = lightning_matmul(attn, self.wo, device=device)
+        h = lightning_matmul(o, self.w1, device=device) + self.b1
+        h = np.maximum(h, 0.0).astype(np.float32, copy=False)
+        y = lightning_matmul(h, self.w2, device=device) + self.b2
+        return np.asarray(y, dtype=np.float32)
+
+    def _build_graph_bundle(self) -> dict[str, Any]:
+        if self._graph_bundle is not None:
+            return self._graph_bundle
+        if not hasattr(lc, "GraphIR"):
+            raise RuntimeError("GraphIR is unavailable")
+        g = lc.GraphIR()
+        ids: dict[str, int] = {}
+        ids["x"] = g.add_tensor([self.seq_len, self.d_model], dtype="float32", name="x", constant=True)
+        ids["wq"] = g.add_tensor([self.d_model, self.d_model], dtype="float32", name="wq", constant=True)
+        ids["wk"] = g.add_tensor([self.d_model, self.d_model], dtype="float32", name="wk", constant=True)
+        ids["wv"] = g.add_tensor([self.d_model, self.d_model], dtype="float32", name="wv", constant=True)
+        ids["wo"] = g.add_tensor([self.d_model, self.d_model], dtype="float32", name="wo", constant=True)
+        ids["w1"] = g.add_tensor([self.d_model, self.d_ff], dtype="float32", name="w1", constant=True)
+        ids["b1"] = g.add_tensor([self.seq_len, self.d_ff], dtype="float32", name="b1", constant=True)
+        ids["w2"] = g.add_tensor([self.d_ff, self.d_model], dtype="float32", name="w2", constant=True)
+        ids["b2"] = g.add_tensor([self.seq_len, self.d_model], dtype="float32", name="b2", constant=True)
+
+        ids["q"] = g.add_tensor([self.seq_len, self.d_model], dtype="float32", name="q")
+        ids["k"] = g.add_tensor([self.seq_len, self.d_model], dtype="float32", name="k")
+        ids["v"] = g.add_tensor([self.seq_len, self.d_model], dtype="float32", name="v")
+        ids["attn"] = g.add_tensor([self.seq_len, self.d_model], dtype="float32", name="attn")
+        ids["o"] = g.add_tensor([self.seq_len, self.d_model], dtype="float32", name="o")
+        ids["ff1"] = g.add_tensor([self.seq_len, self.d_ff], dtype="float32", name="ff1")
+        ids["ff1b"] = g.add_tensor([self.seq_len, self.d_ff], dtype="float32", name="ff1b")
+        ids["ff1r"] = g.add_tensor([self.seq_len, self.d_ff], dtype="float32", name="ff1r")
+        ids["ff2"] = g.add_tensor([self.seq_len, self.d_model], dtype="float32", name="ff2")
+        ids["out"] = g.add_tensor([self.seq_len, self.d_model], dtype="float32", name="out")
+
+        g.add_node("matmul", [ids["x"], ids["wq"]], [ids["q"]])
+        g.add_node("matmul", [ids["x"], ids["wk"]], [ids["k"]])
+        g.add_node("matmul", [ids["x"], ids["wv"]], [ids["v"]])
+        g.add_node("attention_forward", [ids["q"], ids["k"], ids["v"]], [ids["attn"]])
+        g.add_node("matmul", [ids["attn"], ids["wo"]], [ids["o"]])
+        g.add_node("matmul", [ids["o"], ids["w1"]], [ids["ff1"]])
+        g.add_node("vector_add", [ids["ff1"], ids["b1"]], [ids["ff1b"]])
+        g.add_node("relu", [ids["ff1b"]], [ids["ff1r"]])
+        g.add_node("matmul", [ids["ff1r"], ids["w2"]], [ids["ff2"]])
+        g.add_node("vector_add", [ids["ff2"], ids["b2"]], [ids["out"]])
+
+        self._graph_bundle = {"graph": g, "ids": ids}
+        return self._graph_bundle
+
+    def _forward_graph(self, x_arr: np.ndarray, *, device: str) -> np.ndarray:
+        bundle = self._build_graph_bundle()
+        g = bundle["graph"]
+        ids = bundle["ids"]
+        b1_full = np.broadcast_to(self.b1, (self.seq_len, self.d_ff)).astype(np.float32, copy=False)
+        b2_full = np.broadcast_to(self.b2, (self.seq_len, self.d_model)).astype(np.float32, copy=False)
+        feeds = {
+            ids["x"]: x_arr,
+            ids["wq"]: self.wq,
+            ids["wk"]: self.wk,
+            ids["wv"]: self.wv,
+            ids["wo"]: self.wo,
+            ids["w1"]: self.w1,
+            ids["b1"]: b1_full,
+            ids["w2"]: self.w2,
+            ids["b2"]: b2_full,
+        }
+        out = g.execute_f32(
+            feeds,
+            preferred_device=device,
+            enable_fusion_v1=True,
+            fusion_pass_order="attention_qkv,attention,matmul,conv",
+        )
+        values = dict(out.get("values", {}))
+        if ids["out"] not in values:
+            raise RuntimeError("graph output missing")
+        return np.asarray(values[ids["out"]], dtype=np.float32).reshape(self.seq_len, self.d_model)
+
+    def run(self, x: Any, *, mode: str = "eager", device: str = "auto") -> np.ndarray:
+        mode_s = str(mode).strip().lower()
+        if mode_s not in {"eager", "graph", "interop"}:
+            raise ValueError("mode must be one of: eager, graph, interop")
+        x_arr = np.asarray(x, dtype=np.float32)
+        if x_arr.shape != (self.seq_len, self.d_model):
+            raise ValueError(f"input shape must be {(self.seq_len, self.d_model)}")
+        if mode_s == "graph":
+            with _EngineScope("lightning"):
+                return self._forward_graph(x_arr, device=device)
+        if mode_s == "interop":
+            with _EngineScope("torch"):
+                return self._forward_eager(x_arr, device=device)
+        return self._forward_eager(x_arr, device=device)
+
+
+def create_torch_module_wrapper(
+    runner: TinyTransformerRunner,
+    *,
+    mode: str = "eager",
+    device: str = "auto",
+):
+    torch, _ = _import_torch()
+    if torch is None:
+        raise RuntimeError("torch is not available")
+
+    class LightningCoreTorchModule(torch.nn.Module):  # type: ignore[name-defined]
+        def __init__(self, model_runner: TinyTransformerRunner):
+            super().__init__()
+            self.model_runner = model_runner
+
+        def forward(self, x):  # type: ignore[override]
+            x_np = x.detach().to("cpu").contiguous().numpy().astype(np.float32, copy=False)
+            y_np = self.model_runner.run(x_np, mode=mode, device=device)
+            return torch.as_tensor(y_np, dtype=x.dtype, device=x.device)
+
+    return LightningCoreTorchModule(runner)
+
+
+def create_tf_keras_layer_wrapper(
+    runner: TinyTransformerRunner,
+    *,
+    mode: str = "eager",
+    device: str = "auto",
+):
+    try:
+        import tensorflow as tf  # type: ignore
+    except Exception as exc:
+        raise RuntimeError("tensorflow is not available") from exc
+
+    class LightningCoreKerasLayer(tf.keras.layers.Layer):  # type: ignore[name-defined]
+        def __init__(self, model_runner: TinyTransformerRunner):
+            super().__init__()
+            self.model_runner = model_runner
+
+        def call(self, inputs, *args, **kwargs):  # type: ignore[override]
+            x_np = np.asarray(inputs, dtype=np.float32)
+            y_np = self.model_runner.run(x_np, mode=mode, device=device)
+            return tf.convert_to_tensor(y_np, dtype=inputs.dtype)
+
+    return LightningCoreKerasLayer(runner)
 
 
 def _sum_to_shape(grad: np.ndarray, shape: tuple[int, ...]) -> np.ndarray:
@@ -659,6 +1258,205 @@ def ag_relu(x: Any) -> AutoTensor:
     return out
 
 
+def ag_reshape(x: Any, shape: tuple[int, ...] | list[int]) -> AutoTensor:
+    tx = _as_tensor(x)
+    target = tuple(int(v) for v in shape)
+    out = AutoTensor(np.asarray(tx.data.reshape(target), dtype=np.float32), requires_grad=tx.requires_grad, parents=(tx,), op="reshape")
+
+    def _backward() -> None:
+        if out.grad is None or not tx.requires_grad:
+            return
+        gx = np.asarray(out.grad, dtype=np.float32).reshape(tx.data.shape)
+        tx.grad = gx if tx.grad is None else (tx.grad + gx)
+
+    out._backward = _backward
+    return out
+
+
+def _conv2d_forward_nchw_numpy(
+    x: np.ndarray,
+    w: np.ndarray,
+    b: np.ndarray | None,
+    *,
+    stride_h: int,
+    stride_w: int,
+    pad_h: int,
+    pad_w: int,
+) -> np.ndarray:
+    n, ic, ih, iw = [int(v) for v in x.shape]
+    oc, w_ic, kh, kw = [int(v) for v in w.shape]
+    if ic != w_ic:
+        raise ValueError("conv2d channel mismatch")
+    oh = (ih + 2 * int(pad_h) - kh) // int(stride_h) + 1
+    ow = (iw + 2 * int(pad_w) - kw) // int(stride_w) + 1
+    x_pad = np.pad(x, ((0, 0), (0, 0), (int(pad_h), int(pad_h)), (int(pad_w), int(pad_w))), mode="constant")
+    y = np.zeros((n, oc, oh, ow), dtype=np.float32)
+    for bn in range(n):
+        for oc_i in range(oc):
+            for oy in range(oh):
+                iy0 = oy * int(stride_h)
+                for ox in range(ow):
+                    ix0 = ox * int(stride_w)
+                    region = x_pad[bn, :, iy0 : iy0 + kh, ix0 : ix0 + kw]
+                    y[bn, oc_i, oy, ox] = float(np.sum(region * w[oc_i]))
+            if b is not None:
+                y[bn, oc_i, :, :] += float(b[oc_i])
+    return y
+
+
+def _conv2d_backward_nchw_numpy(
+    x: np.ndarray,
+    w: np.ndarray,
+    grad_out: np.ndarray,
+    *,
+    stride_h: int,
+    stride_w: int,
+    pad_h: int,
+    pad_w: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    n, ic, ih, iw = [int(v) for v in x.shape]
+    oc, w_ic, kh, kw = [int(v) for v in w.shape]
+    if ic != w_ic:
+        raise ValueError("conv2d channel mismatch")
+    _, _, oh, ow = [int(v) for v in grad_out.shape]
+    x_pad = np.pad(x, ((0, 0), (0, 0), (int(pad_h), int(pad_h)), (int(pad_w), int(pad_w))), mode="constant")
+    gx_pad = np.zeros_like(x_pad, dtype=np.float32)
+    gw = np.zeros_like(w, dtype=np.float32)
+    gb = grad_out.sum(axis=(0, 2, 3)).astype(np.float32, copy=False)
+    for bn in range(n):
+        for oc_i in range(oc):
+            for oy in range(oh):
+                iy0 = oy * int(stride_h)
+                for ox in range(ow):
+                    ix0 = ox * int(stride_w)
+                    go = float(grad_out[bn, oc_i, oy, ox])
+                    region = x_pad[bn, :, iy0 : iy0 + kh, ix0 : ix0 + kw]
+                    gw[oc_i] += go * region
+                    gx_pad[bn, :, iy0 : iy0 + kh, ix0 : ix0 + kw] += go * w[oc_i]
+    if int(pad_h) == 0 and int(pad_w) == 0:
+        gx = gx_pad
+    else:
+        gx = gx_pad[:, :, int(pad_h) : int(pad_h) + ih, int(pad_w) : int(pad_w) + iw]
+    return gx.astype(np.float32, copy=False), gw.astype(np.float32, copy=False), gb
+
+
+def ag_conv2d(
+    x: Any,
+    weight: Any,
+    bias: Any | None = None,
+    *,
+    stride_h: int = 1,
+    stride_w: int = 1,
+    pad_h: int = 0,
+    pad_w: int = 0,
+) -> AutoTensor:
+    tx = _as_tensor(x)
+    tw = _as_tensor(weight)
+    tb = _as_tensor(bias) if bias is not None else None
+    x_arr = np.asarray(tx.data, dtype=np.float32)
+    w_arr = np.asarray(tw.data, dtype=np.float32)
+    b_arr = None if tb is None else np.asarray(tb.data, dtype=np.float32).reshape(-1)
+    if x_arr.ndim != 4 or w_arr.ndim != 4:
+        raise ValueError("ag_conv2d expects x:[N,C,H,W], weight:[O,C,KH,KW]")
+    if b_arr is not None and b_arr.shape[0] != w_arr.shape[0]:
+        raise ValueError("bias shape mismatch")
+
+    out_data = _conv2d_forward_nchw_numpy(
+        x_arr,
+        w_arr,
+        b_arr,
+        stride_h=int(stride_h),
+        stride_w=int(stride_w),
+        pad_h=int(pad_h),
+        pad_w=int(pad_w),
+    )
+    parents = (tx, tw) if tb is None else (tx, tw, tb)
+    out = AutoTensor(
+        out_data,
+        requires_grad=bool(tx.requires_grad or tw.requires_grad or (tb is not None and tb.requires_grad)),
+        parents=parents,
+        op="conv2d",
+    )
+
+    def _backward() -> None:
+        if out.grad is None:
+            return
+        gx, gw, gb = _conv2d_backward_nchw_numpy(
+            x_arr,
+            w_arr,
+            np.asarray(out.grad, dtype=np.float32),
+            stride_h=int(stride_h),
+            stride_w=int(stride_w),
+            pad_h=int(pad_h),
+            pad_w=int(pad_w),
+        )
+        if tx.requires_grad:
+            tx.grad = gx if tx.grad is None else (tx.grad + gx)
+        if tw.requires_grad:
+            tw.grad = gw if tw.grad is None else (tw.grad + gw)
+        if tb is not None and tb.requires_grad:
+            gb_r = gb.reshape(tb.data.shape)
+            tb.grad = gb_r if tb.grad is None else (tb.grad + gb_r)
+
+    out._backward = _backward
+    return out
+
+
+def ag_attention(q: Any, k: Any, v: Any, *, causal: bool = False) -> AutoTensor:
+    tq = _as_tensor(q)
+    tk = _as_tensor(k)
+    tv = _as_tensor(v)
+    q_arr = np.asarray(tq.data, dtype=np.float32)
+    k_arr = np.asarray(tk.data, dtype=np.float32)
+    v_arr = np.asarray(tv.data, dtype=np.float32)
+    if q_arr.ndim != 2 or k_arr.ndim != 2 or v_arr.ndim != 2:
+        raise ValueError("ag_attention expects q/k/v rank-2 tensors [seq, head_dim]")
+    if q_arr.shape != k_arr.shape or q_arr.shape != v_arr.shape:
+        raise ValueError("ag_attention q/k/v shape mismatch")
+    seq, dim = int(q_arr.shape[0]), int(q_arr.shape[1])
+    scale = 1.0 / float(np.sqrt(max(dim, 1)))
+    scores = (q_arr @ k_arr.T) * scale
+    causal_mask: np.ndarray | None = None
+    if causal:
+        causal_mask = np.triu(np.ones((seq, seq), dtype=bool), k=1)
+        scores = scores.copy()
+        scores[causal_mask] = -1.0e9
+    max_per_row = np.max(scores, axis=-1, keepdims=True)
+    shifted = scores - max_per_row
+    exp_shifted = np.exp(shifted).astype(np.float32, copy=False)
+    probs = exp_shifted / np.sum(exp_shifted, axis=-1, keepdims=True)
+    out_data = probs @ v_arr
+    out = AutoTensor(
+        out_data.astype(np.float32, copy=False),
+        requires_grad=bool(tq.requires_grad or tk.requires_grad or tv.requires_grad),
+        parents=(tq, tk, tv),
+        op="attention",
+    )
+
+    def _backward() -> None:
+        if out.grad is None:
+            return
+        dout = np.asarray(out.grad, dtype=np.float32)
+        dprobs = dout @ v_arr.T
+        dv = probs.T @ dout
+        dot = np.sum(dprobs * probs, axis=-1, keepdims=True)
+        dscores = probs * (dprobs - dot)
+        if causal_mask is not None:
+            dscores = dscores.copy()
+            dscores[causal_mask] = 0.0
+        dq = (dscores @ k_arr) * scale
+        dk = (dscores.T @ q_arr) * scale
+        if tq.requires_grad:
+            tq.grad = dq if tq.grad is None else (tq.grad + dq)
+        if tk.requires_grad:
+            tk.grad = dk if tk.grad is None else (tk.grad + dk)
+        if tv.requires_grad:
+            tv.grad = dv if tv.grad is None else (tv.grad + dv)
+
+    out._backward = _backward
+    return out
+
+
 def ag_mse_loss(pred: Any, target: Any) -> AutoTensor:
     tp = _as_tensor(pred)
     tt = _as_tensor(target)
@@ -717,6 +1515,40 @@ class TinyAutogradMLP:
         ag_zero_grad(self.parameters())
         pred = self.forward(x)
         loss = ag_mse_loss(pred, y)
+        loss.backward()
+        ag_sgd_step(self.parameters(), lr=float(lr))
+        return float(loss.data.reshape(-1)[0])
+
+
+class TinyAutogradConvAttention:
+    """Tiny conv->attention training helper for autograd bootstrap v1 smoke."""
+
+    def __init__(self, *, seed: int = 20260410):
+        rng = np.random.default_rng(int(seed))
+        self.w_conv = ag_parameter((rng.standard_normal((4, 3, 3, 3)) * 0.04).astype(np.float32))
+        self.b_conv = ag_parameter(np.zeros((4,), dtype=np.float32))
+        self.w_proj = ag_parameter((rng.standard_normal((4, 4)) * 0.05).astype(np.float32))
+        self.b_proj = ag_parameter(np.zeros((1, 4), dtype=np.float32))
+
+    def parameters(self) -> list[AutoTensor]:
+        return [self.w_conv, self.b_conv, self.w_proj, self.b_proj]
+
+    def forward(self, x: Any) -> AutoTensor:
+        tx = _as_tensor(x)
+        conv = ag_relu(ag_conv2d(tx, self.w_conv, self.b_conv, stride_h=1, stride_w=1, pad_h=1, pad_w=1))
+        n, c, h, w = [int(v) for v in conv.data.shape]
+        flat = ag_reshape(conv, (n * h * w, c))
+        attn = ag_attention(flat, flat, flat, causal=False)
+        proj = ag_add(ag_matmul(attn, self.w_proj), self.b_proj)
+        return proj
+
+    def train_step(self, x: Any, y: Any, *, lr: float = 1.0e-2) -> float:
+        ag_zero_grad(self.parameters())
+        pred = self.forward(x)
+        target = _as_tensor(y)
+        if pred.data.shape != target.data.shape:
+            raise ValueError("TinyAutogradConvAttention target shape mismatch")
+        loss = ag_mse_loss(pred, target)
         loss.backward()
         ag_sgd_step(self.parameters(), lr=float(lr))
         return float(loss.data.reshape(-1)[0])
@@ -944,7 +1776,7 @@ def _conv_attention_route_context(
     execution_mode: str,
     route_policy: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    policy = _normalize_route_policy(route_policy)
+    policy = dict(validate_route_policy(route_policy, strict=True).get("normalized", {}))
     conv_engine, conv_note = _resolve_engine_preference(effective_device, policy["conv"])
     attention_engine, attention_note = _resolve_engine_preference(effective_device, policy["attention"])
     graph_engine, graph_note = _resolve_engine_preference(effective_device, policy["graph"])
@@ -971,6 +1803,32 @@ def _conv_attention_route_context(
             resolved_mode = "eager"
             fallback_reason = "graph_shape_unsupported"
 
+    out_h = (int(x_arr.shape[2]) + 2 * int(pad_h) - int(w_arr.shape[2])) // int(stride_h) + 1 if x_arr.ndim == 4 and w_arr.ndim == 4 else 0
+    out_w = (int(x_arr.shape[3]) + 2 * int(pad_w) - int(w_arr.shape[3])) // int(stride_w) + 1 if x_arr.ndim == 4 and w_arr.ndim == 4 else 0
+    conv_elements = max(0, int(x_arr.shape[0]) * int(w_arr.shape[0]) * max(out_h, 0) * max(out_w, 0)) if x_arr.ndim == 4 and w_arr.ndim == 4 else 0
+    attn_pack_elements = max(0, 3 * int(seq) * int(head_dim))
+    boundary_switches: list[str] = []
+    if conv_engine != attention_engine:
+        boundary_switches.append("conv_to_attention_engine_switch")
+    if requested_mode == "graph" and resolved_mode != "graph":
+        boundary_switches.append("graph_to_eager_switch")
+    boundary_switch_count = len(boundary_switches)
+    zero_copy_eligible = boundary_switch_count == 0
+    if zero_copy_eligible:
+        boundary_copy_mode = "zero_copy"
+        boundary_reason = "none"
+    elif conv_engine != attention_engine:
+        boundary_copy_mode = "fallback_copy"
+        boundary_reason = "interop_engine_boundary_copy"
+    elif requested_mode == "graph" and resolved_mode != "graph":
+        boundary_copy_mode = "fallback_copy"
+        boundary_reason = "interop_graph_boundary_copy"
+    else:
+        boundary_copy_mode = "fallback_copy"
+        boundary_reason = "interop_boundary_copy_unknown"
+    copy_bytes_estimate = int(max(conv_elements, attn_pack_elements) * 4) if not zero_copy_eligible else 0
+    boundary_overhead_est_ns = int((boundary_switch_count * 15000) + (copy_bytes_estimate * 0.02))
+
     return {
         "requested_mode": requested_mode,
         "resolved_mode": resolved_mode,
@@ -987,6 +1845,14 @@ def _conv_attention_route_context(
         "graph_engine_resolution": graph_note,
         "graph_shape_supported": bool(graph_shape_supported),
         "graph_fallback_reason_code": fallback_reason,
+        "boundary_switch_count": int(boundary_switch_count),
+        "boundary_switches": boundary_switches,
+        "boundary_copy_mode": boundary_copy_mode,
+        "boundary_reason_code": boundary_reason,
+        "boundary_copy_bytes_estimate": int(copy_bytes_estimate),
+        "boundary_overhead_est_ns": int(boundary_overhead_est_ns),
+        "zero_copy_eligible": bool(zero_copy_eligible),
+        "sync_boundary_required": bool(boundary_switch_count > 0),
         "seq": int(seq),
         "head_dim": int(head_dim),
         "kernel_h": int(w_arr.shape[2]) if w_arr.ndim == 4 else -1,
@@ -2168,8 +3034,15 @@ def _install_lc_api_engine_bridge() -> bool:
         api.clear_attention_session_cache = _api_clear_attention_session_cache
         api.save_checkpoint = save_checkpoint
         api.load_checkpoint = load_checkpoint
+        api.validate_checkpoint = validate_checkpoint
+        api.checkpoint_conversion_diagnostics = checkpoint_conversion_diagnostics
+        api.validate_checkpoint_conversion = validate_checkpoint_conversion
         api.save_model_checkpoint = save_model_checkpoint
         api.load_model_checkpoint = load_model_checkpoint
+        api.validate_route_policy = validate_route_policy
+        api.TinyTransformerRunner = TinyTransformerRunner
+        api.create_torch_module_wrapper = create_torch_module_wrapper
+        api.create_tf_keras_layer_wrapper = create_tf_keras_layer_wrapper
 
         def _api_conv_relu_nchw(
             x: Any,

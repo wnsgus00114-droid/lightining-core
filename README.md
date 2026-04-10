@@ -543,7 +543,7 @@ print(report["groups"][:3])    # aggregated bottleneck paths
 print(report["hotspots"][:5])  # top single-event hotspots
 ```
 
-Checkpoint IO v1/v1.1 round-trip:
+Checkpoint IO v1.2 integrity round-trip:
 
 ```python
 import numpy as np
@@ -553,30 +553,52 @@ linear = lc_api.Linear(8, 4, bias=True)
 x = np.random.randn(2, 8).astype(np.float32)
 ref = linear(x)
 
-lc_api.save_checkpoint("linear_v1.npz", linear, metadata={"kind": "linear"})
+lc_api.save_checkpoint("linear_v12.npz", linear, metadata={"kind": "linear"})
 linear.weight.fill(0.0)
 linear.bias.fill(0.0)
-lc_api.load_checkpoint("linear_v1.npz", into=linear, strict=True)
+ckpt_info = lc_api.validate_checkpoint("linear_v12.npz", strict=True)
+print(ckpt_info["meta"]["integrity_signature"])
+lc_api.load_checkpoint("linear_v12.npz", into=linear, strict=True, validate=True)
 
 restored = linear(x)
 print(np.allclose(ref, restored, atol=1e-6, rtol=1e-6))
 ```
 
-Model-level checkpoint v1.1 + tiny autograd step:
+Model-level checkpoint v1.2 + tiny autograd v1 step:
 
 ```python
 import numpy as np
 import lightning_core_integrated_api as lc_api
 
 model = lc_api.TinyMLPModel(8, 16, 4)
-lc_api.save_model_checkpoint("tiny_mlp_v11.npz", model, metadata={"kind": "tiny_mlp"})
-lc_api.load_model_checkpoint("tiny_mlp_v11.npz", into=model, strict=True)
+lc_api.save_model_checkpoint("tiny_mlp_v12.npz", model, metadata={"kind": "tiny_mlp"})
+lc_api.load_model_checkpoint("tiny_mlp_v12.npz", into=model, strict=True, validate=True)
+diag = lc_api.checkpoint_conversion_diagnostics(model.state_dict(), source_format="torch_state_dict")
+print(diag["manifest_hash"])
 
 train = lc_api.TinyAutogradMLP(8, 16, 4, seed=20260411)
 x = np.random.randn(32, 8).astype(np.float32)
 y = np.random.randn(32, 4).astype(np.float32)
 loss = train.train_step(x, y, lr=5e-2)
 print("loss:", loss)
+
+conv_attn_train = lc_api.TinyAutogradConvAttention(seed=20260410)
+x_img = np.random.randn(1, 3, 4, 4).astype(np.float32)
+y_img = np.random.randn(16, 4).astype(np.float32)
+print(conv_attn_train.train_step(x_img, y_img, lr=2e-2))
+```
+
+Model Runner Alpha (`eager/graph/interop`):
+
+```python
+import numpy as np
+import lightning_core_integrated_api as lc_api
+
+runner = lc_api.TinyTransformerRunner(seq_len=48, d_model=48, d_ff=128, seed=20260410)
+x = np.random.randn(48, 48).astype(np.float32)
+y_graph = runner.run(x, mode="graph", device="auto")
+y_eager = runner.run(x, mode="eager", device="auto")
+print(np.allclose(y_graph, y_eager, atol=1e-4, rtol=1e-4))
 ```
 
 # 27. Benchmark Overview
@@ -587,7 +609,10 @@ Primary public benchmark path:
 - `benchmarks/python/graph_eager_ab_bench.py` (graph/eager A/B + host-dispatch/fallback metrics)
 - `benchmarks/python/engine_split_bench.py` (pure-LC vs interop split report + timeline bottleneck grouping on the same API surface)
 - `benchmarks/python/fusion_pilot_bench.py` (fusion v3: conv+relu + matmul+bias+relu + attention+proj with cost-model explain report)
+- `benchmarks/python/model_runner_alpha_bench.py` (tiny transformer runner `eager/graph/interop` alpha benchmark)
+- `benchmarks/python/cost_model_v2_calibration.py` (profile-signature keyed cost calibration with reproducible JSON/MD output)
 - `benchmarks/python/phase_b_exit_audit.py` (ROADMAP 11.2 success-metric audit + release-candidate evidence bundle generation)
+- `benchmarks/python/phase_c_exit_audit.py` (Phase C exit audit: fusion/cost/perf/interop trend bundle + rc-lock gate)
 - `benchmarks/large_gemm_auto_sweep.py` (large GEMM policy sweep)
 - `benchmarks/generate_cross_suite_summary.py` (cross-suite summary report)
 
@@ -612,6 +637,9 @@ benchmarks/
     quick_bench.py
     graph_eager_ab_bench.py
     engine_split_bench.py
+    model_runner_alpha_bench.py
+    cost_model_v2_calibration.py
+    phase_c_exit_audit.py
   large_gemm_auto_sweep.py
   generate_cross_suite_summary.py
   # optional native benchmarks (low-level):
@@ -4908,7 +4936,7 @@ docs/                           # quickstart/advanced/contributor docs
 ```
 
 # 35. Roadmap
-Roadmap baseline is now aligned to **v0.2.8** and tracked in detail in [ROADMAP.md](ROADMAP.md).
+Roadmap baseline is now aligned to **v0.2.17** and tracked in detail in [ROADMAP.md](ROADMAP.md).
 
 Immediate replan (2026-04-01, roadmap-aligned):
 1. [completed] Complete backend abstraction split (compute/memory/sync/profiler) and lock public docs/examples.
@@ -4944,15 +4972,15 @@ Immediate replan (2026-04-01, roadmap-aligned):
 
 Next detailed roadmap (Phase C kickoff, planned):
 31. [completed] v0.2.8 release-gate stabilization: chain-latency gate now applies only when chain-level dispatch reduction evidence exists (false-fail prevention).
-32. [planned] v0.2.9 fusion pass manager v1: deterministic pass order/enable flags + explain-report stability gates.
-33. [planned] v0.2.10 attention fusion pass-4 subset: `qk^T->softmax->v` safe-path rule + fallback reason coverage.
-34. [planned] v0.2.11 cost model v2 calibration: device/backend-calibrated coefficients + reproducible decision artifacts.
-35. [planned] v0.2.12 planner-cost co-optimization: backend/sync/fusion boundary selection tied to cost-model signals.
-36. [planned] v0.2.13 checkpoint IO v1.2 integrity: metadata hash/signature + structured compatibility validator.
-37. [planned] v0.2.14 autograd bootstrap v1: selected `conv` and attention-adjacent backward support + parity gates.
-38. [planned] v0.2.15 model runner alpha: tiny-transformer inference runner with graph/eager/interop switch and reproducible benchmarks.
-39. [planned] v0.2.16 interop boundary hardening: strict subgraph route-policy boundaries + overhead-budget artifacts.
-40. [planned] v0.2.17 Phase C exit audit: fusion/cost-model/perf-trend audit bundle + `v0.3.0-rc0` gate lock.
+32. [completed] v0.2.9 fusion pass manager v1: deterministic pass order/enable flags + explain-report stability gates.
+33. [completed] v0.2.10 attention fusion pass-4 subset: `qk^T->softmax->v`/`qkv_pack->attention->proj` safe-path rules + fallback reason coverage.
+34. [completed] v0.2.11 cost model v2 calibration: device/backend-calibrated coefficients + reproducible calibration artifacts.
+35. [completed] v0.2.12 planner-cost co-optimization: backend/sync/fusion boundary selection tied to cost-model signals and fixed cost telemetry fields.
+36. [completed] v0.2.13 checkpoint IO v1.2 integrity: metadata hash/signature + manifest hash/tensor hash validation + structured `validate_checkpoint` diagnostics.
+37. [completed] v0.2.14 autograd bootstrap v1: `conv2d` and attention-adjacent backward coverage + parity/multi-step training smoke expansion.
+38. [completed] v0.2.15 model runner alpha: tiny-transformer runner with `eager/graph/interop` switch and one-command artifactized benchmark path.
+39. [completed] v0.2.16 interop boundary hardening: strict route-policy validation + boundary switch/copy/overhead reason-code telemetry and budget gates.
+40. [completed] v0.2.17 Phase C exit audit: fusion/cost/perf/interop audit bundle + `phase_c_engine_contract.json` and CI/release gate lock wiring.
 
 Roadmap progress history is auto-generated from:
 - `docs/roadmap_updates.json`

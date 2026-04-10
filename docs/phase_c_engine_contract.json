@@ -1,0 +1,38 @@
+{
+  "contract_version": "phase_c_v0.3.0-rc0_lock",
+  "as_of_date": "2026-04-10",
+  "scope": "Phase C exit gates for engineization readiness (checkpoint integrity / autograd v1 / model-runner alpha / interop boundaries).",
+  "checkpoint_integrity": {
+    "signature": "lc_integrity_sha256_v1",
+    "reason_codes": [
+      "checkpoint_meta_missing",
+      "checkpoint_meta_invalid",
+      "checkpoint_read_error",
+      "checkpoint_format_unsupported",
+      "checkpoint_signature_mismatch",
+      "checkpoint_num_tensors_mismatch",
+      "checkpoint_manifest_hash_mismatch",
+      "checkpoint_manifest_missing_tensor",
+      "checkpoint_tensor_hash_mismatch"
+    ]
+  },
+  "interop_boundary_reason_codes": [
+    "none",
+    "interop_engine_boundary_copy",
+    "interop_graph_boundary_copy",
+    "interop_boundary_copy_unknown"
+  ],
+  "ci_constants": {
+    "phase_c_exit_audit": {
+      "min_fusion_coverage_pct": 60.0,
+      "min_cost_explain_coverage_pct": 80.0,
+      "min_host_dispatch_reduction_rate_pct": 25.0,
+      "min_accuracy_consistency_pct": 80.0,
+      "min_fallback_reason_coverage_pct": 100.0,
+      "max_median_interop_over_pure": 1.35,
+      "min_interop_boundary_reason_coverage_pct": 100.0,
+      "max_interop_boundary_overhead_ms": 0.35,
+      "min_model_runner_mode_success_rate_pct": 66.0
+    }
+  }
+}
