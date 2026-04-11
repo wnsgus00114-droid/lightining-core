@@ -129,5 +129,7 @@
         "matmul_bias_relu_fusion_path"
       ]
     }
-  }
+  },
+  "release_baseline_version": "v0.3.4",
+  "release_baseline_date": "2026-04-11"
 }

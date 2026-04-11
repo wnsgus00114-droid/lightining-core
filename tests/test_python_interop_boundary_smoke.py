@@ -40,7 +40,13 @@ def main() -> None:
         "boundary_switch_count",
         "boundary_copy_mode",
         "boundary_reason_code",
+        "boundary_copy_required",
         "boundary_copy_bytes_estimate",
+        "boundary_upload_overhead_est_ns",
+        "boundary_engine_switch_overhead_est_ns",
+        "boundary_copy_overhead_est_ns",
+        "boundary_sync_overhead_est_ns",
+        "boundary_component_sum_est_ns",
         "boundary_overhead_est_ns",
         "zero_copy_eligible",
     ):
@@ -74,18 +80,35 @@ def main() -> None:
             "--require-max-boundary-overhead-ms",
             "--max-boundary-overhead-ms",
             "5.0",
+            "--require-boundary-reason-coverage",
+            "--min-boundary-reason-coverage-pct",
+            "100.0",
+            "--require-boundary-component-budgets",
+            "--max-boundary-upload-overhead-ms",
+            "5.0",
+            "--max-boundary-engine-switch-overhead-ms",
+            "5.0",
+            "--max-boundary-copy-overhead-ms",
+            "5.0",
+            "--max-boundary-sync-overhead-ms",
+            "5.0",
+            "--require-zero-copy-fallback-reason-coverage",
+            "--min-zero-copy-fallback-reason-coverage-pct",
+            "100.0",
         ]
         proc = subprocess.run(cmd, cwd=str(repo_root), capture_output=True, text=True)
         _require(proc.returncode == 0, f"engine_split boundary gate failed: {proc.stdout}\n{proc.stderr}")
         payload = json.loads((out_dir / "interop.json").read_text(encoding="utf-8"))
+        meta = dict(payload.get("meta", {}))
         rows = list(payload.get("rows", []))
         _require(bool(rows), "interop rows must exist")
         conv_rows = [r for r in rows if r.get("bench") == "conv_attention_torchstrong_nchw"]
         _require(bool(conv_rows), "conv_attention rows must exist in interop report")
+        coverage = float(meta.get("interop_boundary_reason_coverage_pct", 0.0))
+        _require(coverage >= 100.0, f"boundary reason coverage must be 100%, got {coverage}")
 
     print("python interop boundary smoke: ok")
 
 
 if __name__ == "__main__":
     main()
-

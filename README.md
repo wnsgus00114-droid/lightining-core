@@ -13,7 +13,7 @@
 
 # 3. One-line Summary
 Lightning Core is a macOS-first, Metal-backed runtime that provides low-level control (resident IO, policy routing, fused paths) with easy Python APIs.
-Current public release: **v0.2.8** (2026-04-09).
+Current public release: **v0.3.4** (2026-04-11).
 
 # 4. Abstract
 Lightning Core targets high-iteration experimentation on Apple Silicon by combining:
@@ -588,7 +588,7 @@ y_img = np.random.randn(16, 4).astype(np.float32)
 print(conv_attn_train.train_step(x_img, y_img, lr=2e-2))
 ```
 
-Model Runner Alpha (`eager/graph/interop`):
+Model Runner Beta Contracts (`eager/graph/interop` + replay/schema/telemetry):
 
 ```python
 import numpy as np
@@ -596,9 +596,40 @@ import lightning_core_integrated_api as lc_api
 
 runner = lc_api.TinyTransformerRunner(seq_len=48, d_model=48, d_ff=128, seed=20260410)
 x = np.random.randn(48, 48).astype(np.float32)
-y_graph = runner.run(x, mode="graph", device="auto")
+y_graph, graph_meta = runner.run(
+    x,
+    mode="graph",
+    device="auto",
+    route_policy={"conv": "auto", "attention": "auto", "graph": "auto"},
+    return_metadata=True,
+)
 y_eager = runner.run(x, mode="eager", device="auto")
+print("graph fallback reason:", graph_meta["fallback_reason_code"])
 print(np.allclose(y_graph, y_eager, atol=1e-4, rtol=1e-4))
+
+cfg = lc_api.validate_runner_config(
+    {"mode": "graph", "device": "auto", "seed": 20260410, "layout": "seq_dmodel_2d", "dtype": "float32"},
+    strict=True,
+)
+print(cfg["normalized"])
+print(lc_api.runner_replay_report(runner, x, mode="graph", device="auto", repeats=3)["deterministic_replay"])
+print(lc_api.checkpoint_compatibility_matrix()["latest_write_format"])
+
+# Torch bridge wrapper with explicit route policy + telemetry
+try:
+    import torch
+
+    wrapper = lc_api.create_torch_module_wrapper(
+        runner,
+        mode="graph",
+        device="cpu",
+        route_policy={"conv": "auto", "attention": "auto", "graph": "torch"},
+    )
+    y_t = wrapper(torch.as_tensor(x, dtype=torch.float32))
+    print(y_t.shape)
+    print(lc_api.get_torch_wrapper_telemetry(wrapper)["boundary_reason_code"])
+except Exception:
+    pass
 ```
 
 # 27. Benchmark Overview
@@ -609,7 +640,7 @@ Primary public benchmark path:
 - `benchmarks/python/graph_eager_ab_bench.py` (graph/eager A/B + host-dispatch/fallback metrics)
 - `benchmarks/python/engine_split_bench.py` (pure-LC vs interop split report + timeline bottleneck grouping on the same API surface)
 - `benchmarks/python/fusion_pilot_bench.py` (fusion v3: conv+relu + matmul+bias+relu + attention+proj with cost-model explain report)
-- `benchmarks/python/model_runner_alpha_bench.py` (tiny transformer runner `eager/graph/interop` alpha benchmark)
+- `benchmarks/python/model_runner_alpha_bench.py` (tiny transformer runner beta-contract benchmark: replay/schema/checkpoint-matrix fields)
 - `benchmarks/python/cost_model_v2_calibration.py` (profile-signature keyed cost calibration with reproducible JSON/MD output)
 - `benchmarks/python/phase_b_exit_audit.py` (ROADMAP 11.2 success-metric audit + release-candidate evidence bundle generation)
 - `benchmarks/python/phase_c_exit_audit.py` (Phase C exit audit: fusion/cost/perf/interop trend bundle + rc-lock gate)
@@ -665,7 +696,8 @@ Python benchmarks (recommended):
 ```bash
 python benchmarks/python/quick_bench.py --warmup 40 --iters 200 --out benchmark_results/quick_bench.csv
 python benchmarks/python/graph_eager_ab_bench.py --device auto --warmup 6 --iters 24 --trace-iters 8
-python benchmarks/python/engine_split_bench.py --device auto --warmup 20 --iters 120 --trace-iters 8 --out-dir benchmark_results
+python benchmarks/python/engine_split_bench.py --device auto --warmup 20 --iters 120 --trace-iters 8 --require-boundary-reason-coverage --min-boundary-reason-coverage-pct 100 --require-max-boundary-overhead-ms --max-boundary-overhead-ms 0.35 --out-dir benchmark_results
+python benchmarks/python/model_runner_alpha_bench.py --device auto --warmup 4 --iters 20 --require-replay-match --validate-artifact-schema --csv benchmark_results/model_runner_alpha.csv --json benchmark_results/model_runner_alpha.json --md benchmark_results/model_runner_alpha.md
 python benchmarks/python/phase_b_exit_audit.py --graph-json benchmark_results/graph_eager_ab.json --contract-json docs/phase_b_graph_contract.json --out-json benchmark_results/phase_b_exit_audit.json --out-md benchmark_results/phase_b_exit_audit.md --bundle-json benchmark_results/phase_b_exit_candidate_bundle.json
 python benchmarks/large_gemm_auto_sweep.py
 python benchmarks/generate_cross_suite_summary.py
@@ -4895,7 +4927,7 @@ Numbers in this README were refreshed on **2026-03-30** with:
 python ai_model_all_bench.py
 python ml_all_bench.py
 python dl_all_bench.py
-python lightning-core/benchmarks/python/engine_split_bench.py --device auto --warmup 20 --iters 120 --trace-iters 8 --out-dir benchmark_results
+python lightning-core/benchmarks/python/engine_split_bench.py --device auto --warmup 20 --iters 120 --trace-iters 8 --require-boundary-reason-coverage --min-boundary-reason-coverage-pct 100 --require-max-boundary-overhead-ms --max-boundary-overhead-ms 0.35 --out-dir benchmark_results
 ```
 
 Alternative (from `lightning-core/` directory):
@@ -4936,7 +4968,7 @@ docs/                           # quickstart/advanced/contributor docs
 ```
 
 # 35. Roadmap
-Roadmap baseline is now aligned to **v0.2.17** and tracked in detail in [ROADMAP.md](ROADMAP.md).
+Roadmap baseline is now aligned to **v0.3.4** and tracked in detail in [ROADMAP.md](ROADMAP.md).
 
 Immediate replan (2026-04-01, roadmap-aligned):
 1. [completed] Complete backend abstraction split (compute/memory/sync/profiler) and lock public docs/examples.
@@ -4982,6 +5014,16 @@ Next detailed roadmap (Phase C kickoff, planned):
 39. [completed] v0.2.16 interop boundary hardening: strict route-policy validation + boundary switch/copy/overhead reason-code telemetry and budget gates.
 40. [completed] v0.2.17 Phase C exit audit: fusion/cost/perf/interop audit bundle + `phase_c_engine_contract.json` and CI/release gate lock wiring.
 
+Next detailed roadmap (post-v0.3.4 transition, planned):
+41. [completed] v0.3.0 release metadata sync hardening: single-source version sync (`pyproject` -> README/ROADMAP/contracts/release-notes) + release-tag drift hard gate + version-sync report.
+42. [completed] v0.3.1 model runner beta contracts: deterministic replay/config schema/checkpoint compatibility matrix + fixed runner artifact schema (CSV/JSON/MD) gates.
+43. [completed] v0.3.2 torch bridge beta: `nn.Module`-style wrapper with explicit route-policy control, always-on boundary telemetry, and deterministic fallback reason codes.
+44. [completed] v0.3.3 tensorflow bridge prototype: `keras.Layer`-style wrapper + deterministic TF fallback reason mapping + runtime-missing graceful shim.
+45. [completed] v0.3.4 interop boundary budget v2: upload/switch/copy/sync decomposition, zero-copy vs fallback-copy split evidence, and per-boundary budget gates.
+46. [completed] fusion/cost explain coverage hardening: normalized reason-code fields for fuse/unfused/cost-reject paths with coverage-ready artifacts.
+47. [completed] phase-c performance evidence expansion: audit now reports conv/attention/ffn E2E evidence fields and dispatch overhead p95 trend snapshot.
+48. [completed] phase-c exit audit bundle hardening: artifact manifest hash lock + TF interop audit input + expanded boundary evidence fields.
+
 Roadmap progress history is auto-generated from:
 - `docs/roadmap_updates.json`
 
@@ -4989,7 +5031,7 @@ Roadmap progress history is auto-generated from:
 
 ### Progress History (Auto-generated)
 
-- Total tracked updates: `78`
+- Total tracked updates: `82`
 - Source of truth: `docs/roadmap_updates.json`
 - Quick add command:
   `python scripts/generate_roadmap_history.py --add --date YYYY-MM-DD --milestone M-A --area runtime --title "your update"`
@@ -4998,6 +5040,7 @@ Roadmap progress history is auto-generated from:
 
 | Date | Updates | Milestones | Highlights |
 | --- | --- | --- | --- |
+| 2026-04-11 | 4 | M-E, M-C, M-A | Completed v0.3.4 interop boundary budget v2 with upload/switch/copy/sync decomposition and per-component budget gates. / Completed v0.3.3 TensorFlow bridge prototype with deterministic fallback mapping and graceful missing-runtime shim. / ... (+2 more) |
 | 2026-04-09 | 14 | M-C, M-B, M-A | Published detailed Phase C kickoff roadmap queue (v0.2.8-v0.2.17) with deliverables and acceptance gates. / Completed v0.2.8 release-gate stabilization by applying chained-latency applicability only to chain-dispatch-reduced cases. / ... (+12 more) |
 | 2026-04-08 | 19 | M-D, M-C, M-B, M-A | Completed v0.1.32 autograd bootstrap v0 (matmul/add/relu backward + tiny 1-step SGD) with Torch gradient parity smoke. / Completed v0.1.31 checkpoint IO v1.1 model-level save/load helpers with v1 forward-compat smoke coverage. / ... (+17 more) |
 | 2026-04-07 | 6 | M-A | Optimized tiny conv->attn integrated path using op_path timeline bottleneck guidance and tiny-chain CPU preference heuristic. / Finalized lc.api engine bridge (lightning/torch/auto) with same-surface engine switching / ... (+4 more) |
@@ -5009,6 +5052,13 @@ Roadmap progress history is auto-generated from:
 | 2026-03-28 | 1 | M-A | Initial macOS package and release workflow launch. |
 
 **Detailed Timeline**
+
+#### 2026-04-11 (4 updates)
+
+- [completed] [M-E] [benchmark] Completed v0.3.4 interop boundary budget v2 with upload/switch/copy/sync decomposition and per-component budget gates. (`local`)
+- [completed] [M-E] [python] Completed v0.3.3 TensorFlow bridge prototype with deterministic fallback mapping and graceful missing-runtime shim. (`local`)
+- [completed] [M-C] [graph] Hardened fusion explain coverage with normalized reason-code fields and CI/release gate enforcement. (`local`)
+- [completed] [M-A] [release] Bumped public baseline to v0.3.4 and synced release metadata across README/ROADMAP/contracts/release notes. (`local`)
 
 #### 2026-04-09 (14 updates)
 
@@ -5123,12 +5173,12 @@ Phase A (2026 Q2, `v0.1.32`-`v0.2.0`, completed): Runtime Core Hardening
 - Lock tensor lifetime and metadata rules across Metal/CPU parity tests.
 - Add deterministic trace/profiling hooks and fallback behavior.
 
-Phase B (2026 Q3, `v0.2.x`): Graph + Operator Framework
+Phase B (2026 Q3, `v0.2.x`, completed): Graph + Operator Framework
 - Introduce typed operator registry and minimal graph IR.
 - Add graph validation and graph/eager A/B execution mode.
 - Reduce host round-trips for chained workloads.
 
-Phase C (2026 Q4, `v0.3.x`): Fusion + Cost Model
+Phase C (2026 Q4, `v0.3.x`, entry criteria locked): Fusion + Cost Model
 - Add rule-based fusion (`matmul+bias+act`, `conv+act`, attention subgraphs).
 - Add optimization explain reports and fallback diagnostics.
 - Expand tuning cache/versioned performance metadata.
@@ -5265,4 +5315,4 @@ Community feedback channels we actively monitor:
 
 Lightning Core is stable enough for experimentation and benchmarking, while APIs and internals continue to evolve quickly.
 Visibility update: repository topics and benchmark discoverability documentation are actively maintained.
-Current release train: **v0.2.8**.
+Current release train: **v0.3.4**.

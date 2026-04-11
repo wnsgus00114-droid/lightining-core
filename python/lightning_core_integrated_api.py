@@ -29,6 +29,32 @@ _CHECKPOINT_FORMAT = "lc_checkpoint_v1"
 _CHECKPOINT_FORMAT_V11 = "lc_checkpoint_v1_1"
 _CHECKPOINT_FORMAT_V12 = "lc_checkpoint_v1_2"
 _CHECKPOINT_INTEGRITY_SIGNATURE = "lc_integrity_sha256_v1"
+_RUNNER_SCHEMA_VERSION = "runner_beta_contract_v1"
+_RUNNER_ARTIFACT_SCHEMA_VERSION = "model_runner_artifact_v2"
+_VALID_RUNNER_MODES = {"eager", "graph", "interop"}
+_VALID_RUNNER_DEVICES = {"auto", "metal", "cpu", "cuda"}
+_VALID_RUNNER_LAYOUTS = {"seq_dmodel_2d"}
+_VALID_RUNNER_DTYPES = {"float32"}
+_VALID_CHECKPOINT_FORMATS = [_CHECKPOINT_FORMAT, _CHECKPOINT_FORMAT_V11, _CHECKPOINT_FORMAT_V12]
+_TORCH_BRIDGE_BOUNDARY_REASON_CODES = {
+    "none",
+    "interop_torch_tensor_boundary_copy",
+}
+_TF_BRIDGE_REASON_CODES = {
+    "none",
+    "tf_runtime_unavailable",
+    "tf_tensor_boundary_copy",
+    "tf_runner_graph_policy_forced_eager",
+    "tf_runner_graph_execute_failed",
+    "tf_runner_interop_policy_forced_lightning",
+    "tf_runner_unknown_fallback",
+}
+_RUNNER_FALLBACK_REASON_CODES = {
+    "none",
+    "runner_graph_policy_forced_eager",
+    "runner_graph_execute_failed",
+    "runner_interop_policy_forced_lightning",
+}
 
 
 class CheckpointValidationError(ValueError):
@@ -167,6 +193,140 @@ def validate_route_policy(route_policy: Any, *, strict: bool = False) -> dict[st
         "message": "route policy validated",
         "details": {},
         "normalized": normalized,
+    }
+
+
+def runner_config_schema() -> dict[str, Any]:
+    """Return fixed runner config schema for deterministic beta contracts."""
+    return {
+        "schema_version": _RUNNER_SCHEMA_VERSION,
+        "type": "object",
+        "required": ["mode", "device", "seed", "layout", "dtype"],
+        "properties": {
+            "mode": {"type": "string", "enum": sorted(_VALID_RUNNER_MODES)},
+            "device": {"type": "string", "enum": sorted(_VALID_RUNNER_DEVICES)},
+            "seed": {"type": "integer", "minimum": 0, "maximum": 2147483647},
+            "layout": {"type": "string", "enum": sorted(_VALID_RUNNER_LAYOUTS)},
+            "dtype": {"type": "string", "enum": sorted(_VALID_RUNNER_DTYPES)},
+            "route_policy": {
+                "type": "object",
+                "required": ["conv", "attention", "graph"],
+                "properties": {
+                    "conv": {"type": "string", "enum": sorted(_VALID_ROUTE_ENGINES)},
+                    "attention": {"type": "string", "enum": sorted(_VALID_ROUTE_ENGINES)},
+                    "graph": {"type": "string", "enum": sorted(_VALID_ROUTE_ENGINES)},
+                },
+            },
+        },
+    }
+
+
+def validate_runner_config(config: Any, *, strict: bool = False) -> dict[str, Any]:
+    """Validate runner input/config contract with structured reason codes."""
+
+    def _fail(code: str, message: str, details: dict[str, Any]) -> dict[str, Any]:
+        out = {
+            "ok": False,
+            "code": str(code),
+            "message": str(message),
+            "details": dict(details),
+            "normalized": {
+                "mode": "eager",
+                "device": "auto",
+                "seed": 0,
+                "layout": "seq_dmodel_2d",
+                "dtype": "float32",
+                "route_policy": {"conv": "auto", "attention": "auto", "graph": "auto"},
+            },
+        }
+        if strict:
+            raise ValueError(f"{code}: {message}")
+        return out
+
+    if not isinstance(config, dict):
+        return _fail("runner_config_invalid_type", "config must be dict", {"type": type(config).__name__})
+
+    mode = str(config.get("mode", "")).strip().lower()
+    if mode not in _VALID_RUNNER_MODES:
+        return _fail(
+            "runner_config_invalid_mode",
+            f"mode must be one of: {', '.join(sorted(_VALID_RUNNER_MODES))}",
+            {"mode": mode},
+        )
+
+    device = str(config.get("device", "")).strip().lower()
+    if device not in _VALID_RUNNER_DEVICES:
+        return _fail(
+            "runner_config_invalid_device",
+            f"device must be one of: {', '.join(sorted(_VALID_RUNNER_DEVICES))}",
+            {"device": device},
+        )
+
+    layout = str(config.get("layout", "")).strip().lower()
+    if layout not in _VALID_RUNNER_LAYOUTS:
+        return _fail(
+            "runner_config_invalid_layout",
+            f"layout must be one of: {', '.join(sorted(_VALID_RUNNER_LAYOUTS))}",
+            {"layout": layout},
+        )
+
+    dtype = str(config.get("dtype", "")).strip().lower()
+    if dtype not in _VALID_RUNNER_DTYPES:
+        return _fail(
+            "runner_config_invalid_dtype",
+            f"dtype must be one of: {', '.join(sorted(_VALID_RUNNER_DTYPES))}",
+            {"dtype": dtype},
+        )
+
+    try:
+        seed = int(config.get("seed"))
+    except Exception:
+        return _fail("runner_config_invalid_seed", "seed must be an integer", {"seed": config.get("seed")})
+    if seed < 0 or seed > 2147483647:
+        return _fail("runner_config_invalid_seed_range", "seed out of supported range", {"seed": seed})
+
+    rp = validate_route_policy(config.get("route_policy"), strict=False)
+    if not bool(rp.get("ok", False)):
+        details = dict(rp.get("details", {}))
+        details["route_code"] = str(rp.get("code", "interop_route_policy_invalid"))
+        return _fail("runner_config_invalid_route_policy", "route_policy validation failed", details)
+
+    return {
+        "ok": True,
+        "code": "ok",
+        "message": "runner config validated",
+        "details": {},
+        "normalized": {
+            "mode": mode,
+            "device": device,
+            "seed": seed,
+            "layout": layout,
+            "dtype": dtype,
+            "route_policy": dict(rp.get("normalized", {"conv": "auto", "attention": "auto", "graph": "auto"})),
+        },
+    }
+
+
+def checkpoint_compatibility_matrix() -> dict[str, Any]:
+    """Return fixed checkpoint format compatibility matrix for runner/reporting."""
+    rows: list[dict[str, Any]] = []
+    formats = list(_VALID_CHECKPOINT_FORMATS)
+    for fmt in formats:
+        rows.append(
+            {
+                "format": fmt,
+                "save_supported": fmt == _CHECKPOINT_FORMAT_V12,
+                "load_checkpoint_supported": fmt in formats,
+                "load_model_checkpoint_supported": fmt in formats,
+                "validate_checkpoint_supported": fmt in formats,
+                "forward_compatible_to_latest": fmt in {_CHECKPOINT_FORMAT, _CHECKPOINT_FORMAT_V11, _CHECKPOINT_FORMAT_V12},
+            }
+        )
+    return {
+        "schema_version": "checkpoint_compat_matrix_v1",
+        "latest_write_format": _CHECKPOINT_FORMAT_V12,
+        "supported_formats": formats,
+        "rows": rows,
     }
 
 
@@ -909,13 +1069,16 @@ class _EngineScope:
 
 
 class TinyTransformerRunner:
-    """Model-runner alpha: tiny transformer-ish block with graph/eager/interop modes."""
+    """Model-runner beta: tiny transformer-ish block with deterministic contracts."""
 
     def __init__(self, *, seq_len: int = 48, d_model: int = 48, d_ff: int = 128, seed: int = 20260410):
         self.seq_len = int(seq_len)
         self.d_model = int(d_model)
         self.d_ff = int(d_ff)
-        rng = np.random.default_rng(int(seed))
+        self.seed = int(seed)
+        self.layout = "seq_dmodel_2d"
+        self.dtype = "float32"
+        rng = np.random.default_rng(self.seed)
         self.wq = (rng.standard_normal((self.d_model, self.d_model)) * 0.05).astype(np.float32)
         self.wk = (rng.standard_normal((self.d_model, self.d_model)) * 0.05).astype(np.float32)
         self.wv = (rng.standard_normal((self.d_model, self.d_model)) * 0.05).astype(np.float32)
@@ -1055,20 +1218,140 @@ class TinyTransformerRunner:
             raise RuntimeError("graph output missing")
         return np.asarray(values[ids["out"]], dtype=np.float32).reshape(self.seq_len, self.d_model)
 
-    def run(self, x: Any, *, mode: str = "eager", device: str = "auto") -> np.ndarray:
+    def config_contract(self, *, mode: str, device: str, route_policy: dict[str, Any] | None = None) -> dict[str, Any]:
+        return validate_runner_config(
+            {
+                "mode": mode,
+                "device": device,
+                "seed": int(self.seed),
+                "layout": self.layout,
+                "dtype": self.dtype,
+                "route_policy": route_policy,
+            },
+            strict=True,
+        )
+
+    def _run_with_engine(self, engine: str, *, device: str, fn) -> tuple[np.ndarray, str]:
+        with _EngineScope(engine):
+            y = np.asarray(fn(), dtype=np.float32)
+            resolved = _resolve_engine(device) if engine == "auto" else engine
+        return y, resolved
+
+    def run(
+        self,
+        x: Any,
+        *,
+        mode: str = "eager",
+        device: str = "auto",
+        route_policy: dict[str, Any] | None = None,
+        return_metadata: bool = False,
+    ) -> np.ndarray | tuple[np.ndarray, dict[str, Any]]:
         mode_s = str(mode).strip().lower()
-        if mode_s not in {"eager", "graph", "interop"}:
+        if mode_s not in _VALID_RUNNER_MODES:
             raise ValueError("mode must be one of: eager, graph, interop")
         x_arr = np.asarray(x, dtype=np.float32)
         if x_arr.shape != (self.seq_len, self.d_model):
             raise ValueError(f"input shape must be {(self.seq_len, self.d_model)}")
-        if mode_s == "graph":
-            with _EngineScope("lightning"):
-                return self._forward_graph(x_arr, device=device)
-        if mode_s == "interop":
-            with _EngineScope("torch"):
-                return self._forward_eager(x_arr, device=device)
-        return self._forward_eager(x_arr, device=device)
+        contract = self.config_contract(mode=mode_s, device=device, route_policy=route_policy)
+        rp = dict(contract.get("normalized", {}).get("route_policy", {"conv": "auto", "attention": "auto", "graph": "auto"}))
+
+        requested_mode = mode_s
+        resolved_mode = requested_mode
+        fallback_reason = "none"
+        fallback_message = ""
+        graph_pref = str(rp.get("graph", "auto"))
+        attention_pref = str(rp.get("attention", "auto"))
+
+        run_engine = get_backend()
+        if requested_mode == "graph":
+            run_engine = "lightning"
+            if graph_pref == "torch":
+                resolved_mode = "eager"
+                run_engine = "torch"
+                fallback_reason = "runner_graph_policy_forced_eager"
+                fallback_message = "route_policy.graph=torch forces eager path"
+        elif requested_mode == "interop":
+            resolved_mode = "eager"
+            run_engine = "torch"
+            if attention_pref == "lightning":
+                run_engine = "lightning"
+                fallback_reason = "runner_interop_policy_forced_lightning"
+                fallback_message = "route_policy.attention=lightning overrides interop default torch engine"
+        else:
+            if attention_pref in {"lightning", "torch"}:
+                run_engine = attention_pref
+
+        if resolved_mode == "graph":
+            try:
+                y, resolved_engine = self._run_with_engine(
+                    "lightning", device=device, fn=lambda: self._forward_graph(x_arr, device=device)
+                )
+            except Exception as exc:
+                resolved_mode = "eager"
+                fallback_reason = "runner_graph_execute_failed"
+                fallback_message = str(exc)
+                y, resolved_engine = self._run_with_engine(
+                    run_engine, device=device, fn=lambda: self._forward_eager(x_arr, device=device)
+                )
+        else:
+            y, resolved_engine = self._run_with_engine(
+                run_engine, device=device, fn=lambda: self._forward_eager(x_arr, device=device)
+            )
+
+        meta = {
+            "schema_version": _RUNNER_SCHEMA_VERSION,
+            "requested_mode": requested_mode,
+            "resolved_mode": resolved_mode,
+            "requested_device": str(device),
+            "resolved_engine": str(resolved_engine),
+            "fallback_reason_code": str(fallback_reason),
+            "fallback_message": str(fallback_message),
+            "seed": int(self.seed),
+            "layout": self.layout,
+            "dtype": self.dtype,
+            "route_policy": rp,
+            "supported_fallback_reason_codes": sorted(_RUNNER_FALLBACK_REASON_CODES),
+        }
+        if return_metadata:
+            return y, meta
+        return y
+
+
+def runner_replay_report(
+    runner: TinyTransformerRunner,
+    x: Any,
+    *,
+    mode: str = "eager",
+    device: str = "auto",
+    route_policy: dict[str, Any] | None = None,
+    repeats: int = 3,
+    atol: float = 1.0e-6,
+    rtol: float = 1.0e-6,
+) -> dict[str, Any]:
+    repeats_i = max(2, int(repeats))
+    base_out, base_meta = runner.run(
+        x, mode=mode, device=device, route_policy=route_policy, return_metadata=True
+    )
+    max_abs = 0.0
+    allclose = True
+    for _ in range(repeats_i - 1):
+        cur_out, _ = runner.run(x, mode=mode, device=device, route_policy=route_policy, return_metadata=True)
+        delta = np.abs(np.asarray(cur_out, dtype=np.float32) - np.asarray(base_out, dtype=np.float32))
+        cur_max = float(np.max(delta)) if delta.size else 0.0
+        max_abs = max(max_abs, cur_max)
+        if not np.allclose(cur_out, base_out, atol=float(atol), rtol=float(rtol)):
+            allclose = False
+    return {
+        "schema_version": _RUNNER_SCHEMA_VERSION,
+        "mode": str(mode),
+        "device": str(device),
+        "repeats": repeats_i,
+        "deterministic_replay": bool(allclose),
+        "max_abs_replay_diff": float(max_abs),
+        "atol": float(atol),
+        "rtol": float(rtol),
+        "run_meta": dict(base_meta),
+    }
 
 
 def create_torch_module_wrapper(
@@ -1076,22 +1359,107 @@ def create_torch_module_wrapper(
     *,
     mode: str = "eager",
     device: str = "auto",
+    route_policy: dict[str, Any] | None = None,
 ):
     torch, _ = _import_torch()
     if torch is None:
         raise RuntimeError("torch is not available")
+    route_validation = validate_route_policy(route_policy, strict=True)
+    route_norm = dict(route_validation.get("normalized", {"conv": "auto", "attention": "auto", "graph": "auto"}))
 
     class LightningCoreTorchModule(torch.nn.Module):  # type: ignore[name-defined]
         def __init__(self, model_runner: TinyTransformerRunner):
             super().__init__()
             self.model_runner = model_runner
+            self._last_telemetry: dict[str, Any] = {
+                "schema_version": "torch_bridge_telemetry_v1",
+                "boundary_reason_code": "none",
+                "boundary_copy_mode": "zero_copy",
+            }
+
+        def last_telemetry(self) -> dict[str, Any]:
+            return dict(self._last_telemetry)
 
         def forward(self, x):  # type: ignore[override]
-            x_np = x.detach().to("cpu").contiguous().numpy().astype(np.float32, copy=False)
-            y_np = self.model_runner.run(x_np, mode=mode, device=device)
-            return torch.as_tensor(y_np, dtype=x.dtype, device=x.device)
+            t0 = time.perf_counter_ns()
+            x_cpu = x.detach().to("cpu").contiguous()
+            x_np = x_cpu.numpy().astype(np.float32, copy=False)
+            t1 = time.perf_counter_ns()
+            y_np, run_meta = self.model_runner.run(
+                x_np,
+                mode=mode,
+                device=device,
+                route_policy=route_norm,
+                return_metadata=True,
+            )
+            t2 = time.perf_counter_ns()
+            out = torch.as_tensor(y_np, dtype=x.dtype, device=x.device)
+            t3 = time.perf_counter_ns()
+
+            zero_copy_eligible = bool(x.device.type == "cpu" and x.dtype == torch.float32 and bool(x.is_contiguous()))
+            boundary_reason = "none" if zero_copy_eligible else "interop_torch_tensor_boundary_copy"
+            copy_mode = "zero_copy" if zero_copy_eligible else "fallback_copy"
+            copy_bytes = 0 if zero_copy_eligible else int(np.asarray(x_np).nbytes + np.asarray(y_np).nbytes)
+            boundary_overhead_ns = int((t1 - t0) + (t3 - t2))
+            if boundary_reason not in _TORCH_BRIDGE_BOUNDARY_REASON_CODES:
+                boundary_reason = "interop_torch_tensor_boundary_copy"
+
+            self._last_telemetry = {
+                "schema_version": "torch_bridge_telemetry_v1",
+                "requested_mode": str(mode),
+                "resolved_mode": str(run_meta.get("resolved_mode", mode)),
+                "resolved_engine": str(run_meta.get("resolved_engine", "unknown")),
+                "runner_fallback_reason_code": str(run_meta.get("fallback_reason_code", "none")),
+                "boundary_reason_code": boundary_reason,
+                "boundary_copy_mode": copy_mode,
+                "boundary_copy_bytes_estimate": int(copy_bytes),
+                "boundary_overhead_est_ns": int(boundary_overhead_ns),
+                "boundary_overhead_est_ms": float(boundary_overhead_ns / 1e6),
+                "zero_copy_eligible": bool(zero_copy_eligible),
+                "route_policy": dict(route_norm),
+                "supported_boundary_reason_codes": sorted(_TORCH_BRIDGE_BOUNDARY_REASON_CODES),
+                "supported_runner_fallback_reason_codes": sorted(_RUNNER_FALLBACK_REASON_CODES),
+            }
+            return out
 
     return LightningCoreTorchModule(runner)
+
+
+def get_torch_wrapper_telemetry(module: Any) -> dict[str, Any]:
+    getter = getattr(module, "last_telemetry", None)
+    if callable(getter):
+        out = getter()
+        if isinstance(out, dict):
+            return dict(out)
+    return {
+        "schema_version": "torch_bridge_telemetry_v1",
+        "boundary_reason_code": "none",
+        "boundary_copy_mode": "zero_copy",
+    }
+
+
+def _map_tf_runner_fallback_reason(reason_code: Any) -> str:
+    token = str(reason_code).strip().lower()
+    if token in {"", "none"}:
+        return "none"
+    if token == "runner_graph_policy_forced_eager":
+        return "tf_runner_graph_policy_forced_eager"
+    if token == "runner_graph_execute_failed":
+        return "tf_runner_graph_execute_failed"
+    if token == "runner_interop_policy_forced_lightning":
+        return "tf_runner_interop_policy_forced_lightning"
+    return "tf_runner_unknown_fallback"
+
+
+def _tf_telemetry_default() -> dict[str, Any]:
+    return {
+        "schema_version": "tf_bridge_telemetry_v1",
+        "boundary_reason_code": "tf_runtime_unavailable",
+        "boundary_copy_mode": "fallback_copy",
+        "zero_copy_eligible": False,
+        "supported_boundary_reason_codes": sorted(_TF_BRIDGE_REASON_CODES),
+        "supported_runner_fallback_reason_codes": sorted(_RUNNER_FALLBACK_REASON_CODES),
+    }
 
 
 def create_tf_keras_layer_wrapper(
@@ -1099,23 +1467,137 @@ def create_tf_keras_layer_wrapper(
     *,
     mode: str = "eager",
     device: str = "auto",
+    route_policy: dict[str, Any] | None = None,
+    prefer_tensorflow_runtime: bool = True,
+    allow_missing_runtime: bool = True,
+    tensorflow_module: Any | None = None,
 ):
-    try:
-        import tensorflow as tf  # type: ignore
-    except Exception as exc:
-        raise RuntimeError("tensorflow is not available") from exc
+    route_validation = validate_route_policy(route_policy, strict=True)
+    route_norm = dict(route_validation.get("normalized", {"conv": "auto", "attention": "auto", "graph": "auto"}))
+    tf = tensorflow_module
+    if tf is None and bool(prefer_tensorflow_runtime):
+        try:
+            import tensorflow as _tf  # type: ignore
+
+            tf = _tf
+        except Exception:
+            tf = None
+
+    class LightningCoreKerasShim:
+        def __init__(self, model_runner: TinyTransformerRunner):
+            self.model_runner = model_runner
+            self._last_telemetry: dict[str, Any] = _tf_telemetry_default()
+
+        def last_telemetry(self) -> dict[str, Any]:
+            return dict(self._last_telemetry)
+
+        def call(self, inputs, *args, **kwargs):
+            t0 = time.perf_counter_ns()
+            x_np = np.asarray(inputs, dtype=np.float32)
+            t1 = time.perf_counter_ns()
+            y_np, run_meta = self.model_runner.run(
+                x_np,
+                mode=mode,
+                device=device,
+                route_policy=route_norm,
+                return_metadata=True,
+            )
+            t2 = time.perf_counter_ns()
+            out = np.asarray(y_np, dtype=np.float32)
+            t3 = time.perf_counter_ns()
+
+            runner_reason = _map_tf_runner_fallback_reason(run_meta.get("fallback_reason_code", "none"))
+            bridge_reason = "tf_runtime_unavailable" if runner_reason == "none" else runner_reason
+            copy_bytes = int(np.asarray(x_np).nbytes + np.asarray(out).nbytes)
+            boundary_overhead_ns = int((t1 - t0) + (t3 - t2))
+            if bridge_reason not in _TF_BRIDGE_REASON_CODES:
+                bridge_reason = "tf_runner_unknown_fallback"
+            self._last_telemetry = {
+                "schema_version": "tf_bridge_telemetry_v1",
+                "requested_mode": str(mode),
+                "resolved_mode": str(run_meta.get("resolved_mode", mode)),
+                "resolved_engine": str(run_meta.get("resolved_engine", "unknown")),
+                "runner_fallback_reason_code": str(run_meta.get("fallback_reason_code", "none")),
+                "boundary_reason_code": bridge_reason,
+                "boundary_copy_mode": "fallback_copy",
+                "boundary_copy_bytes_estimate": int(copy_bytes),
+                "boundary_overhead_est_ns": int(boundary_overhead_ns),
+                "boundary_overhead_est_ms": float(boundary_overhead_ns / 1e6),
+                "zero_copy_eligible": False,
+                "route_policy": dict(route_norm),
+                "supported_boundary_reason_codes": sorted(_TF_BRIDGE_REASON_CODES),
+                "supported_runner_fallback_reason_codes": sorted(_RUNNER_FALLBACK_REASON_CODES),
+                "runtime": "numpy_shim",
+            }
+            return out
+
+        def __call__(self, inputs, *args, **kwargs):
+            return self.call(inputs, *args, **kwargs)
+
+    if tf is None:
+        if not bool(allow_missing_runtime):
+            raise RuntimeError("tensorflow is not available")
+        return LightningCoreKerasShim(runner)
 
     class LightningCoreKerasLayer(tf.keras.layers.Layer):  # type: ignore[name-defined]
         def __init__(self, model_runner: TinyTransformerRunner):
             super().__init__()
             self.model_runner = model_runner
+            self._last_telemetry: dict[str, Any] = _tf_telemetry_default()
+
+        def last_telemetry(self) -> dict[str, Any]:
+            return dict(self._last_telemetry)
 
         def call(self, inputs, *args, **kwargs):  # type: ignore[override]
+            t0 = time.perf_counter_ns()
             x_np = np.asarray(inputs, dtype=np.float32)
-            y_np = self.model_runner.run(x_np, mode=mode, device=device)
-            return tf.convert_to_tensor(y_np, dtype=inputs.dtype)
+            t1 = time.perf_counter_ns()
+            y_np, run_meta = self.model_runner.run(
+                x_np,
+                mode=mode,
+                device=device,
+                route_policy=route_norm,
+                return_metadata=True,
+            )
+            t2 = time.perf_counter_ns()
+            out = tf.convert_to_tensor(y_np, dtype=inputs.dtype)
+            t3 = time.perf_counter_ns()
+
+            runner_reason = _map_tf_runner_fallback_reason(run_meta.get("fallback_reason_code", "none"))
+            bridge_reason = runner_reason if runner_reason != "none" else "tf_tensor_boundary_copy"
+            copy_bytes = int(np.asarray(x_np).nbytes + np.asarray(y_np).nbytes)
+            boundary_overhead_ns = int((t1 - t0) + (t3 - t2))
+            if bridge_reason not in _TF_BRIDGE_REASON_CODES:
+                bridge_reason = "tf_runner_unknown_fallback"
+            self._last_telemetry = {
+                "schema_version": "tf_bridge_telemetry_v1",
+                "requested_mode": str(mode),
+                "resolved_mode": str(run_meta.get("resolved_mode", mode)),
+                "resolved_engine": str(run_meta.get("resolved_engine", "unknown")),
+                "runner_fallback_reason_code": str(run_meta.get("fallback_reason_code", "none")),
+                "boundary_reason_code": bridge_reason,
+                "boundary_copy_mode": "fallback_copy",
+                "boundary_copy_bytes_estimate": int(copy_bytes),
+                "boundary_overhead_est_ns": int(boundary_overhead_ns),
+                "boundary_overhead_est_ms": float(boundary_overhead_ns / 1e6),
+                "zero_copy_eligible": False,
+                "route_policy": dict(route_norm),
+                "supported_boundary_reason_codes": sorted(_TF_BRIDGE_REASON_CODES),
+                "supported_runner_fallback_reason_codes": sorted(_RUNNER_FALLBACK_REASON_CODES),
+                "runtime": "tensorflow",
+            }
+            return out
 
     return LightningCoreKerasLayer(runner)
+
+
+def get_tf_wrapper_telemetry(module: Any) -> dict[str, Any]:
+    getter = getattr(module, "last_telemetry", None)
+    if callable(getter):
+        out = getter()
+        if isinstance(out, dict):
+            return dict(out)
+    return _tf_telemetry_default()
 
 
 def _sum_to_shape(grad: np.ndarray, shape: tuple[int, ...]) -> np.ndarray:
@@ -1827,7 +2309,31 @@ def _conv_attention_route_context(
         boundary_copy_mode = "fallback_copy"
         boundary_reason = "interop_boundary_copy_unknown"
     copy_bytes_estimate = int(max(conv_elements, attn_pack_elements) * 4) if not zero_copy_eligible else 0
-    boundary_overhead_est_ns = int((boundary_switch_count * 15000) + (copy_bytes_estimate * 0.02))
+    copy_required = bool(not zero_copy_eligible)
+
+    # Boundary budget v2 decomposition (upload/switch/copy/sync).
+    # Keep this deterministic and additive so benchmark gates can assert each
+    # component budget and total-overhead consistency.
+    boundary_upload_overhead_est_ns = 0
+    if copy_required:
+        boundary_upload_overhead_est_ns = max(5000, int(attn_pack_elements * 0.30))
+
+    boundary_engine_switch_overhead_est_ns = int(boundary_switch_count * 9000)
+    boundary_copy_overhead_est_ns = int(copy_bytes_estimate * 0.012) if copy_required else 0
+
+    boundary_sync_overhead_est_ns = 0
+    if boundary_switch_count > 0:
+        boundary_sync_overhead_est_ns = 7000
+        if requested_mode == "graph" and resolved_mode != "graph":
+            boundary_sync_overhead_est_ns += 3500
+
+    boundary_component_sum_est_ns = int(
+        boundary_upload_overhead_est_ns
+        + boundary_engine_switch_overhead_est_ns
+        + boundary_copy_overhead_est_ns
+        + boundary_sync_overhead_est_ns
+    )
+    boundary_overhead_est_ns = int(boundary_component_sum_est_ns)
 
     return {
         "requested_mode": requested_mode,
@@ -1849,7 +2355,13 @@ def _conv_attention_route_context(
         "boundary_switches": boundary_switches,
         "boundary_copy_mode": boundary_copy_mode,
         "boundary_reason_code": boundary_reason,
+        "boundary_copy_required": bool(copy_required),
         "boundary_copy_bytes_estimate": int(copy_bytes_estimate),
+        "boundary_upload_overhead_est_ns": int(boundary_upload_overhead_est_ns),
+        "boundary_engine_switch_overhead_est_ns": int(boundary_engine_switch_overhead_est_ns),
+        "boundary_copy_overhead_est_ns": int(boundary_copy_overhead_est_ns),
+        "boundary_sync_overhead_est_ns": int(boundary_sync_overhead_est_ns),
+        "boundary_component_sum_est_ns": int(boundary_component_sum_est_ns),
         "boundary_overhead_est_ns": int(boundary_overhead_est_ns),
         "zero_copy_eligible": bool(zero_copy_eligible),
         "sync_boundary_required": bool(boundary_switch_count > 0),
@@ -3039,10 +3551,16 @@ def _install_lc_api_engine_bridge() -> bool:
         api.validate_checkpoint_conversion = validate_checkpoint_conversion
         api.save_model_checkpoint = save_model_checkpoint
         api.load_model_checkpoint = load_model_checkpoint
+        api.checkpoint_compatibility_matrix = checkpoint_compatibility_matrix
         api.validate_route_policy = validate_route_policy
+        api.validate_runner_config = validate_runner_config
+        api.runner_config_schema = runner_config_schema
+        api.runner_replay_report = runner_replay_report
         api.TinyTransformerRunner = TinyTransformerRunner
         api.create_torch_module_wrapper = create_torch_module_wrapper
+        api.get_torch_wrapper_telemetry = get_torch_wrapper_telemetry
         api.create_tf_keras_layer_wrapper = create_tf_keras_layer_wrapper
+        api.get_tf_wrapper_telemetry = get_tf_wrapper_telemetry
 
         def _api_conv_relu_nchw(
             x: Any,

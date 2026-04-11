@@ -1,6 +1,6 @@
 # Lightning Core Roadmap
 
-Version context: v0.2.8 (2026-04-09)
+Version context: v0.3.4 (2026-04-11)
 
 ## 1) North Star
 
@@ -20,7 +20,7 @@ Lightning Core started as a macOS Apple-Silicon performance runtime. The long-te
 - Keep API ergonomics improvements performance-safe by default.
 - Keep deprecation policy explicit; no silent API behavior changes.
 
-## 3) Current Baseline (v0.2.8)
+## 3) Current Baseline (v0.3.4)
 
 - Public package on PyPI/TestPyPI.
 - C++ core + Python bindings for runtime/tensor/ops/attention/integrated APIs.
@@ -30,13 +30,16 @@ Lightning Core started as a macOS Apple-Silicon performance runtime. The long-te
 - `lc.api` engine bridge (`set_engine/get_engine`) is stabilized for `lightning/torch/auto` on the same API surface.
 - Graph plan summary API + fixed host-dispatch evidence fields are available in graph/eager benchmark artifacts.
 - Fusion pass-3 includes `attention_forward + projection(matmul)` rule-based pattern with explain report coverage.
-- Checkpoint IO v1.1 includes model-level save/load helpers with forward-compat loading for v1 checkpoints.
-- Autograd bootstrap v0 (`matmul/add/relu` backward + tiny 1-step SGD) is available in Python helper surface.
+- Checkpoint IO v1.2 integrity includes model-level save/load helpers, tensor/manifest hash validation, and structured diagnostics.
+- Autograd bootstrap v1 covers `matmul/add/relu` plus `conv2d` and attention-adjacent backward paths with tiny multi-step training smoke.
+- Model Runner Alpha (`eager/graph/interop`) emits reproducible CSV/JSON/MD artifacts through a single benchmark entry.
+- Interop boundary hardening adds route-policy boundary switch/copy/overhead telemetry and standardized reason-code gates.
 - Phase B0 baseline contract is frozen in `docs/phase_b_graph_contract.json` and synchronized to CI constants.
 - Operator registry contracts now enforce rank/layout/dtype/shape/attribute validation with deterministic reason codes.
 - Validation pass pack v2 emits pass-scoped diagnostics (`schema_contract/topology/alias_lifetime/layout_flow/backend_capability`) for C++/Python graph reports.
 - Planner v3 includes graph-hash/device/sync-policy plan-cache with hit/miss telemetry and benchmark artifact exposure.
 - Phase B exit audit evidence (`phase_b_exit_audit`) is wired into CI/release artifacts with ROADMAP 11.2 metric checks and candidate-bundle manifest output.
+- Phase C exit audit evidence (`phase_c_exit_audit`) is wired into CI/release artifacts with `v0.3.0-rc0` criteria lock constants.
 
 ## 4) Evolution Plan (Mac Runtime -> General Framework)
 
@@ -377,6 +380,33 @@ Each milestone tracks:
    - deliverable: `phase_c_exit_audit.py` + `docs/phase_c_engine_contract.json` with CI/release wiring for Phase C audit bundles.
    - acceptance: docs/CI/release metadata sync checks include Phase C contract lock paths and hard-gate audit flow.
 
+### Next Execution Queue (2026-04-11 Post-v0.3.4 Transition)
+
+38. [completed] v0.3.0 release metadata sync hardening (M-A docs/release)
+   - deliverable: single-source version sync (`pyproject` -> README/ROADMAP/contracts/release notes) + sync report generation.
+   - acceptance: release-tag CI hard-fails on version drift and emits `version_sync_report.{json,md}` evidence.
+39. [completed] v0.3.1 model runner beta contracts (M-D model/test)
+   - deliverable: runner config schema validator, deterministic replay report API, checkpoint compatibility matrix, fixed artifact schema.
+   - acceptance: runner replay/schema smoke and CI benchmark artifacts enforce stable CSV/JSON/MD contract.
+40. [completed] v0.3.2 torch bridge beta (M-E python/interop)
+   - deliverable: `nn.Module` wrapper with explicit `route_policy`, always-on boundary telemetry, deterministic fallback reason codes.
+   - acceptance: torch wrapper parity smoke plus interop reason-coverage and overhead-budget gates are wired into CI/release benchmarks.
+41. [completed] v0.3.3 tensorflow bridge prototype (M-E python/interop)
+   - deliverable: minimal `keras.Layer`-style wrapper, deterministic TF fallback reason mapping, and missing-runtime graceful numpy shim path.
+   - acceptance: TF smoke covers both installed/fake-runtime and runtime-missing paths; TF interop benchmark artifacts emit fixed schema.
+42. [completed] v0.3.4 interop boundary budget v2 (M-E benchmark/ci)
+   - deliverable: upload/switch/copy/sync boundary decomposition, zero-copy vs fallback-copy split metrics, and per-boundary budget gates.
+   - acceptance: interop benchmark + CI/release workflows enforce component budgets and zero-copy-fallback reason coverage.
+43. [completed] Fusion/Cost explain coverage hardening (M-C graph/benchmark)
+   - deliverable: normalized reason-code fields (`fusion_reason_code`, `fusion_disabled_reason_code`, `cost_model_reject_reason_code`) for all fusion rows.
+   - acceptance: explain reason-code coverage is emitted and gateable in fusion artifacts and Phase-C audit.
+44. [completed] Phase C performance evidence expansion (M-C benchmark/audit)
+   - deliverable: audit now emits conv/attention/ffn E2E improvement evidence fields and dispatch overhead p95 trend snapshot fields.
+   - acceptance: release/CI audit bundles expose these metrics in fixed JSON/MD schema for longitudinal tracking.
+45. [completed] Phase C exit audit bundle hardening (M-F docs/ci)
+   - deliverable: `phase_c_exit_audit` adds required-artifact manifest hash, TF interop input support, and expanded interop boundary metrics.
+   - acceptance: bundle carries deterministic manifest-hash evidence and remains hard-gate ready for release candidates.
+
 Progress update history is auto-generated from:
 
 - `docs/roadmap_updates.json`
@@ -385,7 +415,7 @@ Progress update history is auto-generated from:
 
 ### Progress History (Auto-generated)
 
-- Total tracked updates: `78`
+- Total tracked updates: `82`
 - Source of truth: `docs/roadmap_updates.json`
 - Quick add command:
   `python scripts/generate_roadmap_history.py --add --date YYYY-MM-DD --milestone M-A --area runtime --title "your update"`
@@ -394,6 +424,7 @@ Progress update history is auto-generated from:
 
 | Date | Updates | Milestones | Highlights |
 | --- | --- | --- | --- |
+| 2026-04-11 | 4 | M-E, M-C, M-A | Completed v0.3.4 interop boundary budget v2 with upload/switch/copy/sync decomposition and per-component budget gates. / Completed v0.3.3 TensorFlow bridge prototype with deterministic fallback mapping and graceful missing-runtime shim. / ... (+2 more) |
 | 2026-04-09 | 14 | M-C, M-B, M-A | Published detailed Phase C kickoff roadmap queue (v0.2.8-v0.2.17) with deliverables and acceptance gates. / Completed v0.2.8 release-gate stabilization by applying chained-latency applicability only to chain-dispatch-reduced cases. / ... (+12 more) |
 | 2026-04-08 | 19 | M-D, M-C, M-B, M-A | Completed v0.1.32 autograd bootstrap v0 (matmul/add/relu backward + tiny 1-step SGD) with Torch gradient parity smoke. / Completed v0.1.31 checkpoint IO v1.1 model-level save/load helpers with v1 forward-compat smoke coverage. / ... (+17 more) |
 | 2026-04-07 | 6 | M-A | Optimized tiny conv->attn integrated path using op_path timeline bottleneck guidance and tiny-chain CPU preference heuristic. / Finalized lc.api engine bridge (lightning/torch/auto) with same-surface engine switching / ... (+4 more) |
@@ -405,6 +436,13 @@ Progress update history is auto-generated from:
 | 2026-03-28 | 1 | M-A | Initial macOS package and release workflow launch. |
 
 **Detailed Timeline**
+
+#### 2026-04-11 (4 updates)
+
+- [completed] [M-E] [benchmark] Completed v0.3.4 interop boundary budget v2 with upload/switch/copy/sync decomposition and per-component budget gates. (`local`)
+- [completed] [M-E] [python] Completed v0.3.3 TensorFlow bridge prototype with deterministic fallback mapping and graceful missing-runtime shim. (`local`)
+- [completed] [M-C] [graph] Hardened fusion explain coverage with normalized reason-code fields and CI/release gate enforcement. (`local`)
+- [completed] [M-A] [release] Bumped public baseline to v0.3.4 and synced release metadata across README/ROADMAP/contracts/release notes. (`local`)
 
 #### 2026-04-09 (14 updates)
 
@@ -513,7 +551,7 @@ Progress update history is auto-generated from:
 
 <!-- AUTO-ROADMAP-HISTORY:END -->
 
-## 11) Release-Train Detail (v0.2.8 -> v1.0)
+## 11) Release-Train Detail (v0.3.4 -> v1.0)
 
 ## 11.1 2026 Q2 (v0.1.32 ~ v0.2.0): Runtime Contracts [completed]
 
@@ -538,7 +576,7 @@ Success metrics:
 - zero known tensor lifetime bugs in open issue tracker for two consecutive releases,
 - documented capability matrix published in README and docs site.
 
-## 11.2 2026 Q3 (v0.2.x): Graph Execution Foundation
+## 11.2 2026 Q3 (v0.2.x): Graph Execution Foundation [completed]
 
 Planned scope:
 
@@ -560,7 +598,7 @@ Success metrics:
 - >= 15% latency reduction on chained workloads dominated by launch overhead,
 - graph mode adoption in all shipped benchmark pipelines.
 
-## 11.3 2026 Q4 (v0.3.x): Fusion and Cost Model
+## 11.3 2026 Q4 (v0.3.x): Fusion and Cost Model [entry criteria locked]
 
 Planned scope:
 

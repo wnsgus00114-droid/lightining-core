@@ -128,7 +128,18 @@ def _boundary_defaults() -> dict[str, object]:
         "route_boundary_switch_count": float("nan"),
         "route_boundary_copy_mode": "n/a",
         "route_boundary_reason_code": "n/a",
+        "route_boundary_copy_required": False,
         "route_boundary_copy_bytes_estimate": float("nan"),
+        "route_boundary_upload_overhead_est_ns": float("nan"),
+        "route_boundary_upload_overhead_est_ms": float("nan"),
+        "route_boundary_engine_switch_overhead_est_ns": float("nan"),
+        "route_boundary_engine_switch_overhead_est_ms": float("nan"),
+        "route_boundary_copy_overhead_est_ns": float("nan"),
+        "route_boundary_copy_overhead_est_ms": float("nan"),
+        "route_boundary_sync_overhead_est_ns": float("nan"),
+        "route_boundary_sync_overhead_est_ms": float("nan"),
+        "route_boundary_component_sum_est_ns": float("nan"),
+        "route_boundary_component_sum_est_ms": float("nan"),
         "route_boundary_overhead_est_ns": float("nan"),
         "route_boundary_overhead_est_ms": float("nan"),
         "route_zero_copy_eligible": False,
@@ -138,6 +149,34 @@ def _boundary_defaults() -> dict[str, object]:
 def _apply_boundary_defaults(row: dict) -> dict:
     for k, v in _boundary_defaults().items():
         row.setdefault(k, v)
+    return row
+
+
+def _apply_route_fields(row: dict, route: dict[str, object]) -> dict:
+    row["route_boundary_switch_count"] = int(route.get("boundary_switch_count", 0))
+    row["route_boundary_copy_mode"] = str(route.get("boundary_copy_mode", "n/a"))
+    row["route_boundary_reason_code"] = str(route.get("boundary_reason_code", "n/a"))
+    row["route_boundary_copy_required"] = bool(route.get("boundary_copy_required", False))
+    row["route_boundary_copy_bytes_estimate"] = float(route.get("boundary_copy_bytes_estimate", 0))
+
+    row["route_boundary_upload_overhead_est_ns"] = float(route.get("boundary_upload_overhead_est_ns", 0))
+    row["route_boundary_engine_switch_overhead_est_ns"] = float(
+        route.get("boundary_engine_switch_overhead_est_ns", 0)
+    )
+    row["route_boundary_copy_overhead_est_ns"] = float(route.get("boundary_copy_overhead_est_ns", 0))
+    row["route_boundary_sync_overhead_est_ns"] = float(route.get("boundary_sync_overhead_est_ns", 0))
+    row["route_boundary_component_sum_est_ns"] = float(route.get("boundary_component_sum_est_ns", 0))
+    row["route_boundary_overhead_est_ns"] = float(route.get("boundary_overhead_est_ns", 0))
+
+    row["route_boundary_upload_overhead_est_ms"] = float(row["route_boundary_upload_overhead_est_ns"]) / 1e6
+    row["route_boundary_engine_switch_overhead_est_ms"] = (
+        float(row["route_boundary_engine_switch_overhead_est_ns"]) / 1e6
+    )
+    row["route_boundary_copy_overhead_est_ms"] = float(row["route_boundary_copy_overhead_est_ns"]) / 1e6
+    row["route_boundary_sync_overhead_est_ms"] = float(row["route_boundary_sync_overhead_est_ns"]) / 1e6
+    row["route_boundary_component_sum_est_ms"] = float(row["route_boundary_component_sum_est_ns"]) / 1e6
+    row["route_boundary_overhead_est_ms"] = float(row["route_boundary_overhead_est_ns"]) / 1e6
+    row["route_zero_copy_eligible"] = bool(route.get("zero_copy_eligible", False))
     return row
 
 
@@ -358,6 +397,60 @@ def main() -> None:
         default=0.35,
         help="Maximum allowed estimated boundary overhead (ms) for conv->attn rows.",
     )
+    parser.add_argument(
+        "--require-boundary-reason-coverage",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Fail when boundary reason-code coverage is below threshold on conv->attn interop rows.",
+    )
+    parser.add_argument(
+        "--min-boundary-reason-coverage-pct",
+        type=float,
+        default=100.0,
+        help="Minimum required reason-code coverage percentage for conv->attn interop rows.",
+    )
+    parser.add_argument(
+        "--require-boundary-component-budgets",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Fail when upload/switch/copy/sync boundary component budgets are exceeded.",
+    )
+    parser.add_argument(
+        "--max-boundary-upload-overhead-ms",
+        type=float,
+        default=0.12,
+        help="Maximum allowed upload component overhead (ms) for conv->attn interop rows.",
+    )
+    parser.add_argument(
+        "--max-boundary-engine-switch-overhead-ms",
+        type=float,
+        default=0.10,
+        help="Maximum allowed engine-switch component overhead (ms) for conv->attn interop rows.",
+    )
+    parser.add_argument(
+        "--max-boundary-copy-overhead-ms",
+        type=float,
+        default=0.20,
+        help="Maximum allowed copy component overhead (ms) for conv->attn interop rows.",
+    )
+    parser.add_argument(
+        "--max-boundary-sync-overhead-ms",
+        type=float,
+        default=0.08,
+        help="Maximum allowed sync component overhead (ms) for conv->attn interop rows.",
+    )
+    parser.add_argument(
+        "--require-zero-copy-fallback-reason-coverage",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Fail when zero-copy eligible rows that still copy are missing boundary reason codes.",
+    )
+    parser.add_argument(
+        "--min-zero-copy-fallback-reason-coverage-pct",
+        type=float,
+        default=100.0,
+        help="Minimum reason-code coverage for zero-copy-eligible rows that fell back to copy.",
+    )
     args = parser.parse_args()
 
     random.seed(args.seed)
@@ -468,24 +561,12 @@ def main() -> None:
         )
         _set_engine("lightning")
         light_route = _conv_attn_route_report(x=x_pipe, w=w_pipe, b=b_pipe, seq=seq, dim=dim, device=device)
-        pure["route_boundary_switch_count"] = int(light_route.get("boundary_switch_count", 0))
-        pure["route_boundary_copy_mode"] = str(light_route.get("boundary_copy_mode", "n/a"))
-        pure["route_boundary_reason_code"] = str(light_route.get("boundary_reason_code", "n/a"))
-        pure["route_boundary_copy_bytes_estimate"] = float(light_route.get("boundary_copy_bytes_estimate", 0))
-        pure["route_boundary_overhead_est_ns"] = float(light_route.get("boundary_overhead_est_ns", 0))
-        pure["route_boundary_overhead_est_ms"] = float(pure["route_boundary_overhead_est_ns"]) / 1e6
-        pure["route_zero_copy_eligible"] = bool(light_route.get("zero_copy_eligible", False))
+        _apply_route_fields(pure, light_route)
         if _torch_available():
             _set_engine("torch")
             torch_route = _conv_attn_route_report(x=x_pipe, w=w_pipe, b=b_pipe, seq=seq, dim=dim, device=device)
             _set_engine("lightning")
-            interop["route_boundary_switch_count"] = int(torch_route.get("boundary_switch_count", 0))
-            interop["route_boundary_copy_mode"] = str(torch_route.get("boundary_copy_mode", "n/a"))
-            interop["route_boundary_reason_code"] = str(torch_route.get("boundary_reason_code", "n/a"))
-            interop["route_boundary_copy_bytes_estimate"] = float(torch_route.get("boundary_copy_bytes_estimate", 0))
-            interop["route_boundary_overhead_est_ns"] = float(torch_route.get("boundary_overhead_est_ns", 0))
-            interop["route_boundary_overhead_est_ms"] = float(interop["route_boundary_overhead_est_ns"]) / 1e6
-            interop["route_zero_copy_eligible"] = bool(torch_route.get("zero_copy_eligible", False))
+            _apply_route_fields(interop, torch_route)
         pure_rows.append(pure)
         interop_rows.append(interop)
 
@@ -509,7 +590,18 @@ def main() -> None:
         "route_boundary_switch_count",
         "route_boundary_copy_mode",
         "route_boundary_reason_code",
+        "route_boundary_copy_required",
         "route_boundary_copy_bytes_estimate",
+        "route_boundary_upload_overhead_est_ns",
+        "route_boundary_upload_overhead_est_ms",
+        "route_boundary_engine_switch_overhead_est_ns",
+        "route_boundary_engine_switch_overhead_est_ms",
+        "route_boundary_copy_overhead_est_ns",
+        "route_boundary_copy_overhead_est_ms",
+        "route_boundary_sync_overhead_est_ns",
+        "route_boundary_sync_overhead_est_ms",
+        "route_boundary_component_sum_est_ns",
+        "route_boundary_component_sum_est_ms",
         "route_boundary_overhead_est_ns",
         "route_boundary_overhead_est_ms",
         "route_zero_copy_eligible",
@@ -534,7 +626,18 @@ def main() -> None:
         "route_boundary_switch_count",
         "route_boundary_copy_mode",
         "route_boundary_reason_code",
+        "route_boundary_copy_required",
         "route_boundary_copy_bytes_estimate",
+        "route_boundary_upload_overhead_est_ns",
+        "route_boundary_upload_overhead_est_ms",
+        "route_boundary_engine_switch_overhead_est_ns",
+        "route_boundary_engine_switch_overhead_est_ms",
+        "route_boundary_copy_overhead_est_ns",
+        "route_boundary_copy_overhead_est_ms",
+        "route_boundary_sync_overhead_est_ns",
+        "route_boundary_sync_overhead_est_ms",
+        "route_boundary_component_sum_est_ns",
+        "route_boundary_component_sum_est_ms",
         "route_boundary_overhead_est_ns",
         "route_boundary_overhead_est_ms",
         "route_zero_copy_eligible",
@@ -547,6 +650,80 @@ def main() -> None:
 
     _save_csv(pure_csv_path, pure_rows, pure_fields)
     _save_csv(interop_csv_path, interop_rows, interop_fields)
+
+    boundary_rows = [
+        r
+        for r in interop_rows
+        if str(r.get("bench", "")) == "conv_attention_torchstrong_nchw" and str(r.get("status", "")).lower() == "ok"
+    ]
+    boundary_reason_rows = [
+        r for r in boundary_rows if str(r.get("route_boundary_reason_code", "")).strip().lower() not in {"", "n/a"}
+    ]
+    if boundary_rows:
+        boundary_reason_coverage_pct = (100.0 * float(len(boundary_reason_rows))) / float(len(boundary_rows))
+    else:
+        boundary_reason_coverage_pct = 100.0
+    boundary_max_overhead_ms = 0.0
+    boundary_max_upload_overhead_ms = 0.0
+    boundary_max_engine_switch_overhead_ms = 0.0
+    boundary_max_copy_overhead_ms = 0.0
+    boundary_max_sync_overhead_ms = 0.0
+    for row in boundary_rows:
+        value = float(row.get("route_boundary_overhead_est_ms", float("nan")))
+        if math.isfinite(value):
+            boundary_max_overhead_ms = max(boundary_max_overhead_ms, value)
+        v_upload = float(row.get("route_boundary_upload_overhead_est_ms", float("nan")))
+        if math.isfinite(v_upload):
+            boundary_max_upload_overhead_ms = max(boundary_max_upload_overhead_ms, v_upload)
+        v_switch = float(row.get("route_boundary_engine_switch_overhead_est_ms", float("nan")))
+        if math.isfinite(v_switch):
+            boundary_max_engine_switch_overhead_ms = max(boundary_max_engine_switch_overhead_ms, v_switch)
+        v_copy = float(row.get("route_boundary_copy_overhead_est_ms", float("nan")))
+        if math.isfinite(v_copy):
+            boundary_max_copy_overhead_ms = max(boundary_max_copy_overhead_ms, v_copy)
+        v_sync = float(row.get("route_boundary_sync_overhead_est_ms", float("nan")))
+        if math.isfinite(v_sync):
+            boundary_max_sync_overhead_ms = max(boundary_max_sync_overhead_ms, v_sync)
+
+    zero_copy_rows = [r for r in boundary_rows if bool(r.get("route_zero_copy_eligible", False))]
+    fallback_copy_rows = [r for r in boundary_rows if str(r.get("route_boundary_copy_mode", "")).strip().lower() == "fallback_copy"]
+    if boundary_rows:
+        zero_copy_share_pct = (100.0 * float(len(zero_copy_rows))) / float(len(boundary_rows))
+    else:
+        zero_copy_share_pct = 0.0
+
+    zero_copy_fallback_rows = [
+        r
+        for r in boundary_rows
+        if bool(r.get("route_zero_copy_eligible", False))
+        and str(r.get("route_boundary_copy_mode", "")).strip().lower() != "zero_copy"
+    ]
+    zero_copy_fallback_reason_rows = [
+        r
+        for r in zero_copy_fallback_rows
+        if str(r.get("route_boundary_reason_code", "")).strip().lower() not in {"", "n/a", "none"}
+    ]
+    if zero_copy_fallback_rows:
+        zero_copy_fallback_reason_coverage_pct = (
+            100.0 * float(len(zero_copy_fallback_reason_rows)) / float(len(zero_copy_fallback_rows))
+        )
+    else:
+        zero_copy_fallback_reason_coverage_pct = 100.0
+
+    component_sum_mismatch_rows = []
+    for row in boundary_rows:
+        total_ns = float(row.get("route_boundary_overhead_est_ns", float("nan")))
+        component_ns = float(row.get("route_boundary_component_sum_est_ns", float("nan")))
+        if not (math.isfinite(total_ns) and math.isfinite(component_ns)):
+            continue
+        if abs(total_ns - component_ns) > 1.0:
+            component_sum_mismatch_rows.append(
+                {
+                    "shape": str(row.get("shape", "")),
+                    "total_ns": total_ns,
+                    "component_ns": component_ns,
+                }
+            )
 
     meta = {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -562,6 +739,17 @@ def main() -> None:
         "seed": args.seed,
         "warmup": args.warmup,
         "iters": args.iters,
+        "interop_boundary_reason_coverage_pct": float(boundary_reason_coverage_pct),
+        "interop_boundary_max_overhead_ms": float(boundary_max_overhead_ms),
+        "interop_boundary_max_upload_overhead_ms": float(boundary_max_upload_overhead_ms),
+        "interop_boundary_max_engine_switch_overhead_ms": float(boundary_max_engine_switch_overhead_ms),
+        "interop_boundary_max_copy_overhead_ms": float(boundary_max_copy_overhead_ms),
+        "interop_boundary_max_sync_overhead_ms": float(boundary_max_sync_overhead_ms),
+        "interop_boundary_zero_copy_rows": int(len(zero_copy_rows)),
+        "interop_boundary_fallback_copy_rows": int(len(fallback_copy_rows)),
+        "interop_boundary_zero_copy_share_pct": float(zero_copy_share_pct),
+        "interop_zero_copy_fallback_reason_coverage_pct": float(zero_copy_fallback_reason_coverage_pct),
+        "interop_boundary_component_sum_mismatch_count": int(len(component_sum_mismatch_rows)),
     }
 
     _save_json(pure_json_path, {"meta": meta, "rows": pure_rows})
@@ -570,6 +758,11 @@ def main() -> None:
     print(
         f"backend={meta['lc_backend']} device={device} torch_available={meta['torch_available']} "
         f"engine_api_setter={meta['engine_api']['has_lc_api_set_engine']} trace_available={meta['trace_available']}"
+    )
+    print(
+        f"interop_boundary_reason_coverage_pct={meta['interop_boundary_reason_coverage_pct']:.2f} "
+        f"interop_boundary_max_overhead_ms={meta['interop_boundary_max_overhead_ms']:.6f} "
+        f"component_mismatch_count={meta['interop_boundary_component_sum_mismatch_count']}"
     )
     print(f"saved: {pure_csv_path}")
     print(f"saved: {pure_json_path}")
@@ -615,6 +808,61 @@ def main() -> None:
             for shape, value in offenders:
                 print(f"boundary-overhead-budget-fail: shape={shape} estimated_overhead_ms={value:.6f}")
             raise SystemExit(7)
+
+    if args.require_boundary_reason_coverage:
+        observed = float(boundary_reason_coverage_pct)
+        target = float(args.min_boundary_reason_coverage_pct)
+        if observed + 1.0e-9 < target:
+            print(
+                f"boundary-reason-coverage-fail: observed={observed:.2f}% target={target:.2f}% "
+                f"covered={len(boundary_reason_rows)} total={len(boundary_rows)}"
+            )
+            raise SystemExit(8)
+
+    if args.require_boundary_component_budgets:
+        offenders = []
+        for row in interop_rows:
+            if str(row.get("bench", "")) != "conv_attention_torchstrong_nchw":
+                continue
+            shape = str(row.get("shape", ""))
+            pairs = [
+                ("upload", float(row.get("route_boundary_upload_overhead_est_ms", float("nan"))), float(args.max_boundary_upload_overhead_ms)),
+                (
+                    "engine_switch",
+                    float(row.get("route_boundary_engine_switch_overhead_est_ms", float("nan"))),
+                    float(args.max_boundary_engine_switch_overhead_ms),
+                ),
+                ("copy", float(row.get("route_boundary_copy_overhead_est_ms", float("nan"))), float(args.max_boundary_copy_overhead_ms)),
+                ("sync", float(row.get("route_boundary_sync_overhead_est_ms", float("nan"))), float(args.max_boundary_sync_overhead_ms)),
+            ]
+            for component, observed, budget in pairs:
+                if math.isfinite(observed) and observed > budget:
+                    offenders.append((shape, component, observed, budget))
+        if offenders:
+            for shape, component, observed, budget in offenders:
+                print(
+                    f"boundary-component-budget-fail: shape={shape} component={component} "
+                    f"observed_ms={observed:.6f} budget_ms={budget:.6f}"
+                )
+            raise SystemExit(9)
+
+    if component_sum_mismatch_rows:
+        for item in component_sum_mismatch_rows:
+            print(
+                "boundary-component-sum-mismatch: "
+                f"shape={item['shape']} total_ns={item['total_ns']:.1f} component_ns={item['component_ns']:.1f}"
+            )
+        raise SystemExit(10)
+
+    if args.require_zero_copy_fallback_reason_coverage:
+        observed = float(zero_copy_fallback_reason_coverage_pct)
+        target = float(args.min_zero_copy_fallback_reason_coverage_pct)
+        if observed + 1.0e-9 < target:
+            print(
+                f"zero-copy-fallback-reason-coverage-fail: observed={observed:.2f}% target={target:.2f}% "
+                f"covered={len(zero_copy_fallback_reason_rows)} total={len(zero_copy_fallback_rows)}"
+            )
+            raise SystemExit(11)
 
 
 if __name__ == "__main__":

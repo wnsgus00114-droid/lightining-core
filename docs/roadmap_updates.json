@@ -1,5 +1,41 @@
 [
   {
+    "id": "2026-04-11-benchmark-completed-v0-3-4-interop-boundary-budget-v2-with-upload-switch-copy-sync-decomposition-and-per-component-budget-gates",
+    "date": "2026-04-11",
+    "milestone": "M-E",
+    "area": "benchmark",
+    "title": "Completed v0.3.4 interop boundary budget v2 with upload/switch/copy/sync decomposition and per-component budget gates.",
+    "status": "completed",
+    "source": "local"
+  },
+  {
+    "id": "2026-04-11-python-completed-v0-3-3-tensorflow-bridge-prototype-with-deterministic-fallback-mapping-and-graceful-missing-runtime-shim",
+    "date": "2026-04-11",
+    "milestone": "M-E",
+    "area": "python",
+    "title": "Completed v0.3.3 TensorFlow bridge prototype with deterministic fallback mapping and graceful missing-runtime shim.",
+    "status": "completed",
+    "source": "local"
+  },
+  {
+    "id": "2026-04-11-graph-hardened-fusion-explain-coverage-with-normalized-reason-code-fields-and-ci-release-gate-enforcement",
+    "date": "2026-04-11",
+    "milestone": "M-C",
+    "area": "graph",
+    "title": "Hardened fusion explain coverage with normalized reason-code fields and CI/release gate enforcement.",
+    "status": "completed",
+    "source": "local"
+  },
+  {
+    "id": "2026-04-11-release-bumped-public-baseline-to-v0-3-4-and-synced-release-metadata-across-readme-roadmap-contracts-release-notes",
+    "date": "2026-04-11",
+    "milestone": "M-A",
+    "area": "release",
+    "title": "Bumped public baseline to v0.3.4 and synced release metadata across README/ROADMAP/contracts/release notes.",
+    "status": "completed",
+    "source": "local"
+  },
+  {
     "id": "2026-04-09-docs-published-detailed-phase-c-kickoff-roadmap-queue-v0-2-8-v0-2-17-with-deliverables-and-acceptance-gates",
     "date": "2026-04-09",
     "milestone": "M-C",

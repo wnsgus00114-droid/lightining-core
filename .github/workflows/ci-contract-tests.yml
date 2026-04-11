@@ -25,6 +25,7 @@ jobs:
           python3 scripts/generate_phase_b_contract_docs.py --check
           python3 scripts/check_phase_b_contract_sync.py
           python3 scripts/check_phase_c_contract_sync.py
+          python3 scripts/sync_release_metadata.py --check
           python3 scripts/generate_roadmap_history.py --check
           python3 scripts/generate_api_reference_docs.py --check
           python3 scripts/check_docs_links.py README.md docs
@@ -66,6 +67,9 @@ jobs:
           python3 tests/test_python_autograd_bootstrap_smoke.py
           python3 tests/test_python_autograd_v1_smoke.py
           python3 tests/test_python_model_runner_alpha_smoke.py
+          python3 tests/test_python_model_runner_beta_artifact_smoke.py
+          python3 tests/test_python_tf_bridge_smoke.py
+          python3 tests/test_python_tf_interop_artifact_smoke.py
           python3 tests/test_python_interop_boundary_smoke.py
           python3 tests/test_python_graph_validation_report_smoke.py
           python3 tests/test_python_operator_onboarding_smoke.py
@@ -95,11 +99,15 @@ jobs:
           echo "- python smoke: tests/test_python_autograd_bootstrap_smoke.py" >> "$GITHUB_STEP_SUMMARY"
           echo "- python smoke: tests/test_python_autograd_v1_smoke.py" >> "$GITHUB_STEP_SUMMARY"
           echo "- python smoke: tests/test_python_model_runner_alpha_smoke.py" >> "$GITHUB_STEP_SUMMARY"
+          echo "- python smoke: tests/test_python_model_runner_beta_artifact_smoke.py" >> "$GITHUB_STEP_SUMMARY"
+          echo "- python smoke: tests/test_python_tf_bridge_smoke.py" >> "$GITHUB_STEP_SUMMARY"
+          echo "- python smoke: tests/test_python_tf_interop_artifact_smoke.py" >> "$GITHUB_STEP_SUMMARY"
           echo "- python smoke: tests/test_python_interop_boundary_smoke.py" >> "$GITHUB_STEP_SUMMARY"
           echo "- python smoke: tests/test_python_graph_validation_report_smoke.py" >> "$GITHUB_STEP_SUMMARY"
           echo "- python smoke: tests/test_python_operator_onboarding_smoke.py" >> "$GITHUB_STEP_SUMMARY"
           echo "- python smoke: tests/test_python_phase_b_exit_audit_smoke.py" >> "$GITHUB_STEP_SUMMARY"
           echo "- python smoke: tests/test_python_phase_c_exit_audit_smoke.py" >> "$GITHUB_STEP_SUMMARY"
+          echo "- release metadata sync check: scripts/sync_release_metadata.py --check" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload CTest artifacts
         if: always()

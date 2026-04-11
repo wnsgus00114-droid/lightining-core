@@ -25,6 +25,7 @@ def main() -> None:
         graph_json = td_p / "graph.json"
         fusion_json = td_p / "fusion.json"
         interop_json = td_p / "interop.json"
+        tf_interop_json = td_p / "tf_interop.json"
         model_json = td_p / "model_runner.json"
         cost_json = td_p / "cost.json"
         contract_json = td_p / "phase_c_contract.json"
@@ -38,15 +39,42 @@ def main() -> None:
         roadmap.write_text("Version context: v0.3.0-rc0\n", encoding="utf-8")
 
         graph_json.write_text(
-            json.dumps({"summary": {"host_dispatch_reduction_rate_pct": 50.0}, "rows": []}, indent=2),
+            json.dumps(
+                {
+                    "summary": {"host_dispatch_reduction_rate_pct": 50.0},
+                    "rows": [
+                        {
+                            "bench": "matmul_matrix_sub",
+                            "status": "ok",
+                            "allclose": True,
+                            "graph_fallback_per_iter": 0.0,
+                            "graph_plan_fallback_groups": 0,
+                            "graph_plan_fallback_reason_codes": "none",
+                        }
+                    ],
+                },
+                indent=2,
+            ),
             encoding="utf-8",
         )
         fusion_json.write_text(
             json.dumps(
                 {
                     "rows": [
-                        {"bench": "conv_relu_eligible", "status": "ok", "fusion_applied": True, "fusion_reason": "cost_model_accept"},
-                        {"bench": "matmul_bias_relu_eligible", "status": "ok", "fusion_applied": True, "fusion_reason": "cost_model_accept"},
+                        {
+                            "bench": "conv_relu_eligible",
+                            "status": "ok",
+                            "fusion_applied": True,
+                            "fusion_reason": "cost_model_accept",
+                            "allclose": True,
+                        },
+                        {
+                            "bench": "matmul_bias_relu_eligible",
+                            "status": "ok",
+                            "fusion_applied": True,
+                            "fusion_reason": "cost_model_accept",
+                            "allclose": True,
+                        },
                     ]
                 },
                 indent=2,
@@ -54,12 +82,48 @@ def main() -> None:
             encoding="utf-8",
         )
         interop_json.write_text(
-            json.dumps({"rows": [{"bench": "attention", "status": "ok", "interop_over_pure": 1.05}]}, indent=2),
+            json.dumps(
+                {
+                    "rows": [
+                        {"bench": "attention", "status": "ok", "interop_over_pure": 1.05},
+                        {
+                            "bench": "conv_attention_torchstrong_nchw",
+                            "status": "ok",
+                            "interop_over_pure": 1.08,
+                            "route_boundary_switch_count": 1,
+                            "route_boundary_reason_code": "interop_engine_boundary_switch",
+                            "route_boundary_overhead_est_ms": 0.10,
+                        },
+                    ]
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        tf_interop_json.write_text(
+            json.dumps(
+                {
+                    "rows": [
+                        {
+                            "bench": "tiny_transformer_runner_tf_bridge",
+                            "status": "ok",
+                            "route_boundary_reason_code": "tf_runner_graph_policy_forced_eager",
+                        }
+                    ]
+                },
+                indent=2,
+            ),
             encoding="utf-8",
         )
         model_json.write_text(
             json.dumps(
-                {"rows": [{"mode": "eager", "status": "ok"}, {"mode": "graph", "status": "ok"}, {"mode": "interop", "status": "ok"}]},
+                {
+                    "rows": [
+                        {"mode": "eager", "status": "ok", "allclose_vs_eager": True},
+                        {"mode": "graph", "status": "ok", "allclose_vs_eager": True},
+                        {"mode": "interop", "status": "ok", "allclose_vs_eager": True},
+                    ]
+                },
                 indent=2,
             ),
             encoding="utf-8",
@@ -88,7 +152,11 @@ def main() -> None:
                             "min_fusion_coverage_pct": 50.0,
                             "min_cost_explain_coverage_pct": 80.0,
                             "min_host_dispatch_reduction_rate_pct": 25.0,
+                            "min_accuracy_consistency_pct": 80.0,
+                            "min_fallback_reason_coverage_pct": 100.0,
                             "max_median_interop_over_pure": 1.30,
+                            "min_interop_boundary_reason_coverage_pct": 100.0,
+                            "max_interop_boundary_overhead_ms": 0.35,
                             "min_model_runner_mode_success_rate_pct": 66.0,
                         }
                     }
@@ -109,6 +177,8 @@ def main() -> None:
             str(fusion_json),
             "--engine-interop-json",
             str(interop_json),
+            "--tf-interop-json",
+            str(tf_interop_json),
             "--model-runner-json",
             str(model_json),
             "--cost-calibration-json",
@@ -131,6 +201,8 @@ def main() -> None:
             "--require-artifacts",
             "--artifact",
             str(dummy),
+            "--artifact",
+            str(tf_interop_json),
             "--require-pass",
         ]
         proc = subprocess.run(cmd, cwd=str(repo_root), capture_output=True, text=True)
@@ -138,10 +210,10 @@ def main() -> None:
         payload = json.loads(out_json.read_text(encoding="utf-8"))
         _require(bool(payload.get("phase_c_success_metrics_pass", False)), "phase C success metrics must pass")
         _require(bool(payload.get("overall_pass", False)), "overall_pass must be true")
+        _require(str(payload.get("artifact_bundle", {}).get("artifact_manifest_sha256", "")) != "", "manifest hash missing")
 
     print("python phase_c_exit_audit smoke: ok")
 
 
 if __name__ == "__main__":
     main()
-

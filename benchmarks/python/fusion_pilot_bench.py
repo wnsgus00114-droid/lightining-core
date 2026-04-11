@@ -25,6 +25,14 @@ import numpy as np
 import lightning_core as lc
 
 
+def _normalize_reason_code(value: object, *, fallback: str) -> str:
+    token = str(value).strip().lower()
+    if token in {"", "n/a", "none"}:
+        return fallback
+    token = token.replace(" ", "_").replace("-", "_")
+    return token
+
+
 def _median_ms(fn, warmup: int, iters: int) -> float:
     for _ in range(warmup):
         fn()
@@ -285,11 +293,31 @@ def _run_case(
         "max_rel_diff": float(np.max(rel_diff)) if rel_diff.size else 0.0,
         "fusion_applied": bool(decision_enabled and decision_enabled.get("fused", False)),
         "fusion_reason": str(decision_enabled.get("reason", "n/a")) if decision_enabled else "n/a",
+        "fusion_reason_code": _normalize_reason_code(
+            decision_enabled.get("reason", "n/a") if decision_enabled else "n/a",
+            fallback="fusion_reason_missing",
+        ),
         "fusion_disabled_reason": str(decision_disabled.get("reason", "n/a")) if decision_disabled else "n/a",
+        "fusion_disabled_reason_code": _normalize_reason_code(
+            decision_disabled.get("reason", "n/a") if decision_disabled else "n/a",
+            fallback="fusion_disabled_reason_missing",
+        ),
         "cost_model_reject_reason": str(decision_cost_reject.get("reason", "n/a")) if decision_cost_reject else "n/a",
+        "cost_model_reject_reason_code": _normalize_reason_code(
+            decision_cost_reject.get("reason", "n/a") if decision_cost_reject else "n/a",
+            fallback="cost_model_reject_reason_missing",
+        ),
         "estimated_speedup": float(decision_enabled.get("estimated_speedup", float("nan"))) if decision_enabled else float("nan"),
+        "explain_reason_code_present": False,
         "note": "",
     }
+    row["explain_reason_code_present"] = bool(
+        str(row["fusion_reason_code"]).strip().lower() not in {"", "n/a", "none", "fusion_reason_missing"}
+        and str(row["fusion_disabled_reason_code"]).strip().lower()
+        not in {"", "n/a", "none", "fusion_disabled_reason_missing"}
+        and str(row["cost_model_reject_reason_code"]).strip().lower()
+        not in {"", "n/a", "none", "cost_model_reject_reason_missing"}
+    )
 
     detail = {
         "row": row,
@@ -317,9 +345,13 @@ def _unsupported_row(pattern: str, bench: str, shape: str, device: str, reason: 
         "max_rel_diff": float("nan"),
         "fusion_applied": False,
         "fusion_reason": "n/a",
+        "fusion_reason_code": "fusion_reason_missing",
         "fusion_disabled_reason": "n/a",
+        "fusion_disabled_reason_code": "fusion_disabled_reason_missing",
         "cost_model_reject_reason": "n/a",
+        "cost_model_reject_reason_code": "cost_model_reject_reason_missing",
         "estimated_speedup": float("nan"),
+        "explain_reason_code_present": False,
         "note": reason,
     }
     return row, {"row": row, "error": reason}
@@ -342,9 +374,13 @@ def _write_csv(path: Path, rows: list[dict]) -> None:
         "max_rel_diff",
         "fusion_applied",
         "fusion_reason",
+        "fusion_reason_code",
         "fusion_disabled_reason",
+        "fusion_disabled_reason_code",
         "cost_model_reject_reason",
+        "cost_model_reject_reason_code",
         "estimated_speedup",
+        "explain_reason_code_present",
         "note",
     ]
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -357,14 +393,17 @@ def _write_csv(path: Path, rows: list[dict]) -> None:
 def _summary(rows: list[dict]) -> dict:
     ok_rows = [r for r in rows if r["status"] == "ok"]
     ratios = [float(r["fused_over_unfused"]) for r in ok_rows if math.isfinite(float(r["fused_over_unfused"]))]
+    explain_ok = [r for r in ok_rows if bool(r.get("explain_reason_code_present", False))]
     by_pattern: dict[str, dict] = {}
     for pattern in sorted(set(r["pattern"] for r in rows)):
         sub = [r for r in ok_rows if r["pattern"] == pattern]
         sub_ratios = [float(r["fused_over_unfused"]) for r in sub if math.isfinite(float(r["fused_over_unfused"]))]
+        sub_explain = [r for r in sub if bool(r.get("explain_reason_code_present", False))]
         by_pattern[pattern] = {
             "ok_cases": len(sub),
             "fusion_applied_cases": sum(1 for r in sub if bool(r.get("fusion_applied", False))),
             "median_fused_over_unfused": float(median(sub_ratios)) if sub_ratios else float("nan"),
+            "explain_reason_code_coverage_pct": (100.0 * float(len(sub_explain)) / float(len(sub))) if sub else 100.0,
         }
     return {
         "total_cases": len(rows),
@@ -373,6 +412,7 @@ def _summary(rows: list[dict]) -> dict:
         "fusion_applied_cases": sum(1 for r in ok_rows if bool(r.get("fusion_applied", False))),
         "allclose_ok_cases": sum(1 for r in ok_rows if bool(r.get("allclose", False))),
         "median_fused_over_unfused": float(median(ratios)) if ratios else float("nan"),
+        "explain_reason_code_coverage_pct": (100.0 * float(len(explain_ok)) / float(len(ok_rows))) if ok_rows else 100.0,
         "patterns": by_pattern,
     }
 
@@ -399,6 +439,7 @@ def _to_markdown(
         f"perf gate thresholds: conv<={conv_threshold:.3f}x, matmul<={matmul_threshold:.3f}x, "
         f"attention<={attention_threshold:.3f}x"
     )
+    lines.append(f"- explain reason-code coverage: {summary.get('explain_reason_code_coverage_pct', 0.0):.2f}%")
     lines.append("")
     lines.append("| pattern | bench | status | fused (ms) | unfused (ms) | fused/unfused | fusion_applied | reason | est speedup |")
     lines.append("| --- | --- | --- | ---: | ---: | ---: | --- | --- | ---: |")
@@ -449,6 +490,18 @@ def main() -> None:
         action=argparse.BooleanOptionalAction,
         default=False,
         help="Exit non-zero when no case succeeds.",
+    )
+    p.add_argument(
+        "--require-explain-reason-coverage",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Fail when explain reason-code coverage is below threshold on ok rows.",
+    )
+    p.add_argument(
+        "--min-explain-reason-coverage-pct",
+        type=float,
+        default=100.0,
+        help="Minimum explain reason-code coverage percentage required for ok rows.",
     )
     args = p.parse_args()
 
@@ -573,6 +626,12 @@ def main() -> None:
             threshold = attention_threshold
         if ratio > threshold:
             raise SystemExit(4)
+
+    if args.require_explain_reason_coverage:
+        observed = float(summary.get("explain_reason_code_coverage_pct", 0.0))
+        target = float(args.min_explain_reason_coverage_pct)
+        if observed + 1.0e-9 < target:
+            raise SystemExit(5)
 
 
 if __name__ == "__main__":
