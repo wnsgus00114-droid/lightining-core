@@ -33,6 +33,23 @@ def main() -> int:
     root = Path(__file__).resolve().parents[1]
     contract = json.loads((root / args.contract_json).read_text(encoding="utf-8"))
     constants = dict(contract.get("ci_constants", {}).get("phase_c_exit_audit", {}))
+    required_constants = (
+        "min_fusion_coverage_pct",
+        "min_cost_explain_coverage_pct",
+        "min_fusion_reason_code_coverage_pct",
+        "min_host_dispatch_reduction_rate_pct",
+        "max_dispatch_overhead_p95_per_iter",
+        "require_dispatch_overhead_p95_trend_nonincreasing",
+        "min_accuracy_consistency_pct",
+        "min_fallback_reason_coverage_pct",
+        "min_conv_e2e_improvement_pct",
+        "min_attn_e2e_improvement_pct",
+        "min_ffn_e2e_improvement_pct",
+        "max_median_interop_over_pure",
+        "min_model_runner_mode_success_rate_pct",
+    )
+    for key in required_constants:
+        _require(key in constants, f"[phase_c_contract_sync] missing ci constant '{key}' in {args.contract_json}")
 
     for wf in args.workflow:
         wf_path = root / wf
@@ -40,18 +57,13 @@ def main() -> int:
         label = str(wf)
         _require_contains(text, "phase_c_exit_audit.py", file_label=label)
         _require_contains(text, "docs/phase_c_engine_contract.json", file_label=label)
+        _require_contains(text, "LC_PHASE_C_CONTRACT_JSON", file_label=label)
         _require_contains(text, "phase_c_exit_audit.json", file_label=label)
         _require_contains(text, "phase_c_exit_candidate_bundle.json", file_label=label)
-        # Ensure threshold constants are represented to avoid doc/CI drift.
-        for key in (
-            "min_fusion_coverage_pct",
-            "min_cost_explain_coverage_pct",
-            "min_host_dispatch_reduction_rate_pct",
-            "max_median_interop_over_pure",
-            "min_model_runner_mode_success_rate_pct",
-        ):
-            if key in constants:
-                _require_contains(text, key.split("_", 1)[0], file_label=label)
+        _require_contains(text, "--require-artifacts", file_label=label)
+        _require_contains(text, "--require-pass", file_label=label)
+        if bool(constants.get("require_dispatch_overhead_p95_trend_nonincreasing", False)):
+            _require_contains(text, "--prior-audit-json", file_label=label)
 
     print(
         json.dumps(
@@ -68,4 +80,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

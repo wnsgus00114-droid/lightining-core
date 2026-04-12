@@ -59,7 +59,9 @@ def main() -> None:
             "replay_iters",
             "seed",
             "runner_config_schema",
+            "runner_contract_manifest",
             "checkpoint_compatibility_matrix",
+            "runner_checkpoint_compatibility_matrix",
             "rows",
         }
         for k in required_top:
@@ -67,6 +69,11 @@ def main() -> None:
 
         rows = list(payload.get("rows", []))
         _require(bool(rows), "rows should not be empty")
+        _require(str(payload.get("artifact_schema_version", "")) == "model_runner_artifact_v3", "artifact schema v3 required")
+        _require(
+            str(payload.get("runner_contract_manifest", {}).get("freeze_id", "")) == "v0.4.0-rc0",
+            "runner contract freeze id mismatch",
+        )
         row_fields = set(payload.get("artifact_schema", {}).get("row_fields", []))
         for i, row in enumerate(rows):
             missing = sorted([k for k in row_fields if k not in row])
@@ -74,13 +81,15 @@ def main() -> None:
             if str(row.get("status", "")).lower() == "ok":
                 _require(bool(row.get("replay_deterministic", False)), f"row[{i}] replay_deterministic must be true")
                 _require(str(row.get("fallback_reason_code", "")) != "", f"row[{i}] fallback reason code missing")
+                _require(str(row.get("runner_contract_schema_hash", "")) != "", f"row[{i}] runner contract hash missing")
 
         matrix_rows = list(payload.get("checkpoint_compatibility_matrix", {}).get("rows", []))
         _require(bool(matrix_rows), "checkpoint compatibility matrix rows must not be empty")
+        runner_matrix_rows = list(payload.get("runner_checkpoint_compatibility_matrix", {}).get("rows", []))
+        _require(bool(runner_matrix_rows), "runner checkpoint compatibility matrix rows must not be empty")
 
     print("python model runner beta artifact smoke: ok")
 
 
 if __name__ == "__main__":
     main()
-

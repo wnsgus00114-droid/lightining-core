@@ -13,7 +13,7 @@
 
 # 3. One-line Summary
 Lightning Core is a macOS-first, Metal-backed runtime that provides low-level control (resident IO, policy routing, fused paths) with easy Python APIs.
-Current public release: **v0.3.4** (2026-04-11).
+Current public release: **v0.4.7** (2026-04-12).
 
 # 4. Abstract
 Lightning Core targets high-iteration experimentation on Apple Silicon by combining:
@@ -608,7 +608,14 @@ print("graph fallback reason:", graph_meta["fallback_reason_code"])
 print(np.allclose(y_graph, y_eager, atol=1e-4, rtol=1e-4))
 
 cfg = lc_api.validate_runner_config(
-    {"mode": "graph", "device": "auto", "seed": 20260410, "layout": "seq_dmodel_2d", "dtype": "float32"},
+    {
+        "mode": "graph",
+        "device": "auto",
+        "seed": 20260410,
+        "layout": "seq_dmodel_2d",
+        "dtype": "float32",
+        "route_policy": {"conv": "auto", "attention": "auto", "graph": "auto"},
+    },
     strict=True,
 )
 print(cfg["normalized"])
@@ -632,6 +639,14 @@ except Exception:
     pass
 ```
 
+`lc-run` CLI (inference / training / benchmark + repro pack):
+
+```bash
+lc-run infer --mode graph --device cpu --out-json benchmarks/reports/ci/lc_run_infer.json
+lc-run train --steps 5 --lr 0.03 --out-json benchmarks/reports/ci/lc_run_train.json
+lc-run bench --device cpu --warmup 2 --iters 8 --out-json benchmarks/reports/ci/lc_run_bench.json
+```
+
 # 27. Benchmark Overview
 Lightning Core benchmark docs are now **Python-first** for reproducibility and copy-paste usage.
 
@@ -641,9 +656,13 @@ Primary public benchmark path:
 - `benchmarks/python/engine_split_bench.py` (pure-LC vs interop split report + timeline bottleneck grouping on the same API surface)
 - `benchmarks/python/fusion_pilot_bench.py` (fusion v3: conv+relu + matmul+bias+relu + attention+proj with cost-model explain report)
 - `benchmarks/python/model_runner_alpha_bench.py` (tiny transformer runner beta-contract benchmark: replay/schema/checkpoint-matrix fields)
+- `benchmarks/python/torch_runner_adapter_bench.py` (Torch adapter GA: boundary reason coverage + overhead budget gate)
+- `benchmarks/python/tf_runner_adapter_bench.py` (TF adapter beta: tensorflow/numpy-shim dual-path + artifact schema gate)
+- `benchmarks/python/model_runner_variance_gate.py` (runner stability gate: trimmed suite CV threshold)
 - `benchmarks/python/cost_model_v2_calibration.py` (profile-signature keyed cost calibration with reproducible JSON/MD output)
 - `benchmarks/python/phase_b_exit_audit.py` (ROADMAP 11.2 success-metric audit + release-candidate evidence bundle generation)
 - `benchmarks/python/phase_c_exit_audit.py` (Phase C exit audit: fusion/cost/perf/interop trend bundle + rc-lock gate)
+- `benchmarks/python/phase_d_exit_audit.py` (Phase D exit audit: adapter coverage + quickstart <=50 lines + runner variance gate bundle)
 - `benchmarks/large_gemm_auto_sweep.py` (large GEMM policy sweep)
 - `benchmarks/generate_cross_suite_summary.py` (cross-suite summary report)
 
@@ -4968,7 +4987,7 @@ docs/                           # quickstart/advanced/contributor docs
 ```
 
 # 35. Roadmap
-Roadmap baseline is now aligned to **v0.3.4** and tracked in detail in [ROADMAP.md](ROADMAP.md).
+Roadmap baseline is now aligned to **v0.4.7** and tracked in detail in [ROADMAP.md](ROADMAP.md).
 
 Immediate replan (2026-04-01, roadmap-aligned):
 1. [completed] Complete backend abstraction split (compute/memory/sync/profiler) and lock public docs/examples.
@@ -5023,6 +5042,14 @@ Next detailed roadmap (post-v0.3.4 transition, planned):
 46. [completed] fusion/cost explain coverage hardening: normalized reason-code fields for fuse/unfused/cost-reject paths with coverage-ready artifacts.
 47. [completed] phase-c performance evidence expansion: audit now reports conv/attention/ffn E2E evidence fields and dispatch overhead p95 trend snapshot.
 48. [completed] phase-c exit audit bundle hardening: artifact manifest hash lock + TF interop audit input + expanded boundary evidence fields.
+49. [completed] v0.4.0-rc0 runner contract freeze: fixed runner input schema + schema-hash/freeze-id manifest + artifact schema v3 hard-gate.
+50. [completed] v0.4.1 tiny transformer runner beta: `embedding->attention->ffn->logits` single API path for `eager/graph/interop` with parity smoke.
+51. [completed] v0.4.2 training surface v1: multi-step autograd loop with optimizer step, grad-clip, loss-scale, and hooks.
+52. [completed] v0.4.3 checkpoint IO v2: runner/model state + optimizer state + manifest saved in `lc_checkpoint_v2` with cross-version load smoke.
+53. [completed] v0.4.4 torch engine adapter GA: runner `nn.Module` wrapper formalized with boundary telemetry + overhead budget fields and reason-coverage gate artifact.
+54. [completed] v0.4.5 tensorflow engine adapter beta: model-level TF runner adapter path (`tensorflow`/`numpy_shim`) with schema regression + dual-runtime smoke.
+55. [completed] v0.4.6 runner CLI + repro pack: `lc-run infer/train/bench` with command/env/artifact manifest auto-emission.
+56. [completed] v0.4.7 phase D exit audit: quickstart <=50 lines + inference/training example presence + runner CV<=2% audit bundle and contract gate wiring.
 
 Roadmap progress history is auto-generated from:
 - `docs/roadmap_updates.json`
@@ -5315,4 +5342,4 @@ Community feedback channels we actively monitor:
 
 Lightning Core is stable enough for experimentation and benchmarking, while APIs and internals continue to evolve quickly.
 Visibility update: repository topics and benchmark discoverability documentation are actively maintained.
-Current release train: **v0.3.4**.
+Current release train: **v0.4.7**.

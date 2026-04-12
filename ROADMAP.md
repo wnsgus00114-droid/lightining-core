@@ -1,6 +1,6 @@
 # Lightning Core Roadmap
 
-Version context: v0.3.4 (2026-04-11)
+Version context: v0.4.7 (2026-04-12)
 
 ## 1) North Star
 
@@ -20,7 +20,7 @@ Lightning Core started as a macOS Apple-Silicon performance runtime. The long-te
 - Keep API ergonomics improvements performance-safe by default.
 - Keep deprecation policy explicit; no silent API behavior changes.
 
-## 3) Current Baseline (v0.3.4)
+## 3) Current Baseline (v0.4.7)
 
 - Public package on PyPI/TestPyPI.
 - C++ core + Python bindings for runtime/tensor/ops/attention/integrated APIs.
@@ -406,6 +406,30 @@ Each milestone tracks:
 45. [completed] Phase C exit audit bundle hardening (M-F docs/ci)
    - deliverable: `phase_c_exit_audit` adds required-artifact manifest hash, TF interop input support, and expanded interop boundary metrics.
    - acceptance: bundle carries deterministic manifest-hash evidence and remains hard-gate ready for release candidates.
+46. [completed] v0.4.0-rc0 runner contract freeze (M-D model/ci)
+   - deliverable: runner input schema (`mode/device/seed/layout/dtype/route_policy`) frozen with hash/freeze-id manifest and artifact schema v3.
+   - acceptance: schema-drift smoke fails on missing/unknown fields and CI runs freeze hard-gate tests.
+47. [completed] v0.4.1 tiny transformer runner beta (M-D model/benchmark)
+   - deliverable: single API path now supports `embedding->attention->ffn->logits` for `eager/graph/interop` with identical interface.
+   - acceptance: one-command benchmark emits reproducible artifact v3 and parity smoke passes for runner modes.
+48. [completed] v0.4.2 training surface v1 (M-D autograd/test)
+   - deliverable: multi-step training loop with optimizer step, grad-clip norm, loss-scale, and per-step hooks.
+   - acceptance: gradient parity smoke + loss-decrease multi-step smoke pass in Python hard-gate tests.
+49. [completed] v0.4.3 checkpoint IO v2 runner manifest (M-D checkpoint/test)
+   - deliverable: model/runner graph-state + optimizer-state + metadata manifest persisted in `lc_checkpoint_v2` with compat matrix.
+   - acceptance: cross-version load smoke (`v1/v1.1/v1.2/v2`) passes and runner checkpoint compatibility matrix is published.
+50. [completed] v0.4.4 Torch engine adapter GA (M-E torch/benchmark)
+   - deliverable: `nn.Module`-style runner wrapper formalized with always-on boundary telemetry, budget fields, and reason-code coverage fields.
+   - acceptance: torch-runner adapter artifacts enforce 100% reason coverage and boundary budget pass-rate gates.
+51. [completed] v0.4.5 TensorFlow engine adapter beta (M-E tf/benchmark)
+   - deliverable: `keras.Layer` runner path expanded to model-level adapter API with tensorflow/numpy-shim dual-runtime path.
+   - acceptance: TF runner adapter smoke + artifact schema regression gate pass for installed/missing runtime paths.
+52. [completed] v0.4.6 runner CLI + repro pack (M-D cli/docs)
+   - deliverable: `lc-run` CLI supports `infer/train/bench` and always emits reproducibility manifest (`command/env/artifact hash`).
+   - acceptance: quickstart copy-paste command paths generate deterministic JSON + repro-pack artifacts.
+53. [completed] v0.4.7 phase D exit audit (M-F audit/ci/docs)
+   - deliverable: phase-D audit bundle with quickstart <=50-line check, inference/training example presence, and runner variance (`CV<=2%`) hard gate.
+   - acceptance: `phase_d_exit_audit` JSON/MD/bundle artifacts are generated in CI/release workflows with contract-sync checks.
 
 Progress update history is auto-generated from:
 
@@ -551,7 +575,7 @@ Progress update history is auto-generated from:
 
 <!-- AUTO-ROADMAP-HISTORY:END -->
 
-## 11) Release-Train Detail (v0.3.4 -> v1.0)
+## 11) Release-Train Detail (v0.4.7 -> v1.0)
 
 ## 11.1 2026 Q2 (v0.1.32 ~ v0.2.0): Runtime Contracts [completed]
 

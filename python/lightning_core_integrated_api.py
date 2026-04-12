@@ -28,14 +28,18 @@ _CHECKPOINT_META_KEY = "__lc_checkpoint_meta__"
 _CHECKPOINT_FORMAT = "lc_checkpoint_v1"
 _CHECKPOINT_FORMAT_V11 = "lc_checkpoint_v1_1"
 _CHECKPOINT_FORMAT_V12 = "lc_checkpoint_v1_2"
+_CHECKPOINT_FORMAT_V2 = "lc_checkpoint_v2"
 _CHECKPOINT_INTEGRITY_SIGNATURE = "lc_integrity_sha256_v1"
-_RUNNER_SCHEMA_VERSION = "runner_beta_contract_v1"
-_RUNNER_ARTIFACT_SCHEMA_VERSION = "model_runner_artifact_v2"
+_RUNNER_SCHEMA_VERSION = "runner_contract_v2"
+_RUNNER_CONTRACT_FREEZE_ID = "v0.4.0-rc0"
+_RUNNER_ARTIFACT_SCHEMA_VERSION = "model_runner_artifact_v3"
+_TORCH_RUNNER_ADAPTER_SCHEMA_VERSION = "torch_runner_adapter_v2"
+_TF_RUNNER_ADAPTER_SCHEMA_VERSION = "tf_runner_adapter_v2"
 _VALID_RUNNER_MODES = {"eager", "graph", "interop"}
 _VALID_RUNNER_DEVICES = {"auto", "metal", "cpu", "cuda"}
 _VALID_RUNNER_LAYOUTS = {"seq_dmodel_2d"}
 _VALID_RUNNER_DTYPES = {"float32"}
-_VALID_CHECKPOINT_FORMATS = [_CHECKPOINT_FORMAT, _CHECKPOINT_FORMAT_V11, _CHECKPOINT_FORMAT_V12]
+_VALID_CHECKPOINT_FORMATS = [_CHECKPOINT_FORMAT, _CHECKPOINT_FORMAT_V11, _CHECKPOINT_FORMAT_V12, _CHECKPOINT_FORMAT_V2]
 _TORCH_BRIDGE_BOUNDARY_REASON_CODES = {
     "none",
     "interop_torch_tensor_boundary_copy",
@@ -55,6 +59,8 @@ _RUNNER_FALLBACK_REASON_CODES = {
     "runner_graph_execute_failed",
     "runner_interop_policy_forced_lightning",
 }
+_DEFAULT_TORCH_ADAPTER_OVERHEAD_BUDGET_MS = 5.0
+_DEFAULT_TF_ADAPTER_OVERHEAD_BUDGET_MS = 5.0
 
 
 class CheckpointValidationError(ValueError):
@@ -196,12 +202,11 @@ def validate_route_policy(route_policy: Any, *, strict: bool = False) -> dict[st
     }
 
 
-def runner_config_schema() -> dict[str, Any]:
-    """Return fixed runner config schema for deterministic beta contracts."""
+def _runner_config_schema_core() -> dict[str, Any]:
     return {
-        "schema_version": _RUNNER_SCHEMA_VERSION,
         "type": "object",
-        "required": ["mode", "device", "seed", "layout", "dtype"],
+        "required": ["mode", "device", "seed", "layout", "dtype", "route_policy"],
+        "additionalProperties": False,
         "properties": {
             "mode": {"type": "string", "enum": sorted(_VALID_RUNNER_MODES)},
             "device": {"type": "string", "enum": sorted(_VALID_RUNNER_DEVICES)},
@@ -211,6 +216,7 @@ def runner_config_schema() -> dict[str, Any]:
             "route_policy": {
                 "type": "object",
                 "required": ["conv", "attention", "graph"],
+                "additionalProperties": False,
                 "properties": {
                     "conv": {"type": "string", "enum": sorted(_VALID_ROUTE_ENGINES)},
                     "attention": {"type": "string", "enum": sorted(_VALID_ROUTE_ENGINES)},
@@ -218,6 +224,127 @@ def runner_config_schema() -> dict[str, Any]:
                 },
             },
         },
+    }
+
+
+def runner_contract_manifest() -> dict[str, Any]:
+    """v0.4.0-rc0 freeze manifest for runner input contract."""
+    schema = _runner_config_schema_core()
+    schema_hash = hashlib.sha256(
+        json.dumps(schema, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return {
+        "schema_version": _RUNNER_SCHEMA_VERSION,
+        "freeze_id": _RUNNER_CONTRACT_FREEZE_ID,
+        "schema_hash_sha256": schema_hash,
+        "schema": schema,
+    }
+
+
+def runner_config_schema() -> dict[str, Any]:
+    """Return frozen runner config schema (v0.4.0-rc0)."""
+    manifest = runner_contract_manifest()
+    payload = dict(manifest.get("schema", {}))
+    payload["schema_version"] = str(manifest.get("schema_version", _RUNNER_SCHEMA_VERSION))
+    payload["freeze_id"] = str(manifest.get("freeze_id", _RUNNER_CONTRACT_FREEZE_ID))
+    payload["schema_hash_sha256"] = str(manifest.get("schema_hash_sha256", ""))
+    return payload
+
+
+def runner_artifact_schema() -> dict[str, Any]:
+    """Return fixed artifact schema for model runner benchmark outputs."""
+    row_fields = [
+        "suite",
+        "mode",
+        "status",
+        "device",
+        "layout",
+        "dtype",
+        "seed",
+        "input_kind",
+        "seq_len",
+        "d_model",
+        "d_ff",
+        "vocab_size",
+        "logits_dim",
+        "latency_ms",
+        "mode_over_eager",
+        "allclose_vs_eager",
+        "replay_deterministic",
+        "replay_max_abs_diff",
+        "requested_mode",
+        "resolved_mode",
+        "resolved_engine",
+        "fallback_reason_code",
+        "runner_contract_freeze_id",
+        "runner_contract_schema_hash",
+        "route_policy_json",
+        "note",
+    ]
+    return {
+        "schema_version": _RUNNER_ARTIFACT_SCHEMA_VERSION,
+        "row_fields": row_fields,
+        "runner_modes": ["eager", "graph", "interop"],
+        "schema_contract": "model_runner_contract_v3",
+    }
+
+
+def torch_runner_adapter_schema() -> dict[str, Any]:
+    """Contract for Torch runner adapter telemetry + gate fields."""
+    return {
+        "schema_version": _TORCH_RUNNER_ADAPTER_SCHEMA_VERSION,
+        "mode_values": sorted(_VALID_RUNNER_MODES),
+        "boundary_reason_codes": sorted(_TORCH_BRIDGE_BOUNDARY_REASON_CODES),
+        "runner_fallback_reason_codes": sorted(_RUNNER_FALLBACK_REASON_CODES),
+        "required_telemetry_fields": [
+            "schema_version",
+            "requested_mode",
+            "resolved_mode",
+            "resolved_engine",
+            "runner_fallback_reason_code",
+            "boundary_reason_code",
+            "boundary_copy_mode",
+            "boundary_copy_bytes_estimate",
+            "boundary_overhead_est_ns",
+            "boundary_overhead_est_ms",
+            "boundary_overhead_budget_ms",
+            "boundary_overhead_budget_pass",
+            "reason_code_covered",
+            "zero_copy_eligible",
+            "route_policy",
+            "runtime",
+        ],
+        "default_overhead_budget_ms": float(_DEFAULT_TORCH_ADAPTER_OVERHEAD_BUDGET_MS),
+    }
+
+
+def tf_runner_adapter_schema() -> dict[str, Any]:
+    """Contract for TF runner adapter telemetry + artifact fields."""
+    return {
+        "schema_version": _TF_RUNNER_ADAPTER_SCHEMA_VERSION,
+        "mode_values": sorted(_VALID_RUNNER_MODES),
+        "boundary_reason_codes": sorted(_TF_BRIDGE_REASON_CODES),
+        "runner_fallback_reason_codes": sorted(_RUNNER_FALLBACK_REASON_CODES),
+        "required_telemetry_fields": [
+            "schema_version",
+            "requested_mode",
+            "resolved_mode",
+            "resolved_engine",
+            "runner_fallback_reason_code",
+            "boundary_reason_code",
+            "boundary_copy_mode",
+            "boundary_copy_bytes_estimate",
+            "boundary_overhead_est_ns",
+            "boundary_overhead_est_ms",
+            "boundary_overhead_budget_ms",
+            "boundary_overhead_budget_pass",
+            "reason_code_covered",
+            "zero_copy_eligible",
+            "route_policy",
+            "runtime",
+        ],
+        "default_overhead_budget_ms": float(_DEFAULT_TF_ADAPTER_OVERHEAD_BUDGET_MS),
+        "runtime_values": ["tensorflow", "numpy_shim"],
     }
 
 
@@ -245,6 +372,23 @@ def validate_runner_config(config: Any, *, strict: bool = False) -> dict[str, An
 
     if not isinstance(config, dict):
         return _fail("runner_config_invalid_type", "config must be dict", {"type": type(config).__name__})
+
+    allowed_keys = {"mode", "device", "seed", "layout", "dtype", "route_policy"}
+    received_keys = {str(k).strip().lower() for k in config.keys()}
+    missing_keys = sorted(allowed_keys - received_keys)
+    if missing_keys:
+        return _fail(
+            "runner_config_missing_required_fields",
+            "runner config missing required fields",
+            {"missing_fields": missing_keys},
+        )
+    unknown_keys = sorted(received_keys - allowed_keys)
+    if unknown_keys:
+        return _fail(
+            "runner_config_unknown_fields",
+            "runner config contains unknown fields",
+            {"unknown_fields": unknown_keys, "allowed_fields": sorted(allowed_keys)},
+        )
 
     mode = str(config.get("mode", "")).strip().lower()
     if mode not in _VALID_RUNNER_MODES:
@@ -308,7 +452,7 @@ def validate_runner_config(config: Any, *, strict: bool = False) -> dict[str, An
 
 
 def checkpoint_compatibility_matrix() -> dict[str, Any]:
-    """Return fixed checkpoint format compatibility matrix for runner/reporting."""
+    """Return fixed checkpoint format compatibility matrix for generic checkpoint APIs."""
     rows: list[dict[str, Any]] = []
     formats = list(_VALID_CHECKPOINT_FORMATS)
     for fmt in formats:
@@ -319,13 +463,35 @@ def checkpoint_compatibility_matrix() -> dict[str, Any]:
                 "load_checkpoint_supported": fmt in formats,
                 "load_model_checkpoint_supported": fmt in formats,
                 "validate_checkpoint_supported": fmt in formats,
-                "forward_compatible_to_latest": fmt in {_CHECKPOINT_FORMAT, _CHECKPOINT_FORMAT_V11, _CHECKPOINT_FORMAT_V12},
+                "forward_compatible_to_latest": fmt in {_CHECKPOINT_FORMAT, _CHECKPOINT_FORMAT_V11, _CHECKPOINT_FORMAT_V12, _CHECKPOINT_FORMAT_V2},
             }
         )
     return {
-        "schema_version": "checkpoint_compat_matrix_v1",
+        "schema_version": "checkpoint_compat_matrix_v2",
         "latest_write_format": _CHECKPOINT_FORMAT_V12,
         "supported_formats": formats,
+        "rows": rows,
+    }
+
+
+def runner_checkpoint_compatibility_matrix() -> dict[str, Any]:
+    """Return runner/model-level checkpoint compatibility matrix (v2 manifest aware)."""
+    rows: list[dict[str, Any]] = []
+    for fmt in list(_VALID_CHECKPOINT_FORMATS):
+        rows.append(
+            {
+                "format": fmt,
+                "save_runner_checkpoint_supported": fmt == _CHECKPOINT_FORMAT_V2,
+                "load_runner_checkpoint_supported": fmt in {_CHECKPOINT_FORMAT, _CHECKPOINT_FORMAT_V11, _CHECKPOINT_FORMAT_V12, _CHECKPOINT_FORMAT_V2},
+                "load_optimizer_state_supported": fmt == _CHECKPOINT_FORMAT_V2,
+                "runner_manifest_supported": fmt == _CHECKPOINT_FORMAT_V2,
+                "backward_compatible_with_v12_loader": fmt in {_CHECKPOINT_FORMAT, _CHECKPOINT_FORMAT_V11, _CHECKPOINT_FORMAT_V12, _CHECKPOINT_FORMAT_V2},
+            }
+        )
+    return {
+        "schema_version": "runner_checkpoint_compat_matrix_v2",
+        "latest_write_format": _CHECKPOINT_FORMAT_V2,
+        "supported_formats": list(_VALID_CHECKPOINT_FORMATS),
         "rows": rows,
     }
 
@@ -554,18 +720,23 @@ def _strip_state_prefix(state: dict[str, Any], prefix: str) -> dict[str, Any]:
 def _checkpoint_integrity_meta(
     *,
     format_name: str,
+    format_version: str = "1.2",
     flat_state: dict[str, np.ndarray],
     metadata: dict[str, Any] | None = None,
     model_class: str = "",
     compat_read: list[str] | None = None,
+    compat_write: list[str] | None = None,
 ) -> dict[str, Any]:
     tensor_manifest = _build_tensor_manifest(flat_state)
     tensor_hashes = {k: v["sha256"] for k, v in tensor_manifest.items()}
     manifest_hash = _manifest_hash(tensor_manifest)
     payload = {
         "format": str(format_name),
-        "format_version": "1.2",
-        "compat_read": list(compat_read or [_CHECKPOINT_FORMAT, _CHECKPOINT_FORMAT_V11, _CHECKPOINT_FORMAT_V12]),
+        "format_version": str(format_version),
+        "compat_read": list(
+            compat_read or [_CHECKPOINT_FORMAT, _CHECKPOINT_FORMAT_V11, _CHECKPOINT_FORMAT_V12, _CHECKPOINT_FORMAT_V2]
+        ),
+        "compat_write": list(compat_write or [_CHECKPOINT_FORMAT_V12]),
         "saved_at_utc": datetime.now(timezone.utc).isoformat(),
         "engine": get_backend(),
         "model_class": str(model_class),
@@ -635,7 +806,7 @@ def validate_checkpoint(
                 )
             fmt = str(meta.get("format", ""))
             if expected_formats is None:
-                expected = {_CHECKPOINT_FORMAT, _CHECKPOINT_FORMAT_V11, _CHECKPOINT_FORMAT_V12}
+                expected = {_CHECKPOINT_FORMAT, _CHECKPOINT_FORMAT_V11, _CHECKPOINT_FORMAT_V12, _CHECKPOINT_FORMAT_V2}
             else:
                 expected = {str(x) for x in expected_formats}
             if fmt and fmt not in expected:
@@ -946,6 +1117,146 @@ def load_model_checkpoint(
     }
 
 
+def _checkpoint_state_from_obj(obj: Any, *, label: str) -> dict[str, Any]:
+    if obj is None:
+        return {}
+    if isinstance(obj, dict):
+        return dict(obj)
+    state_fn = getattr(obj, "state_dict", None)
+    if callable(state_fn):
+        state = state_fn()
+        if not isinstance(state, dict):
+            raise TypeError(f"{label}.state_dict() must return dict")
+        return dict(state)
+    raise TypeError(f"{label} must be dict or object implementing state_dict()")
+
+
+def save_runner_checkpoint_v2(
+    path: str | os.PathLike[str],
+    runner: Any,
+    *,
+    optimizer_state: Any | None = None,
+    metadata: dict[str, Any] | None = None,
+    graph_manifest: dict[str, Any] | None = None,
+    compressed: bool = True,
+) -> str:
+    """Save runner/model-level checkpoint in v2 manifest format."""
+    runner_state = _checkpoint_state_from_obj(runner, label="runner")
+    optimizer_raw = _checkpoint_state_from_obj(optimizer_state, label="optimizer_state")
+
+    flat_runner = _flatten_checkpoint_state(runner_state, prefix="runner")
+    flat_optimizer = _flatten_checkpoint_state(optimizer_raw, prefix="optimizer")
+    flat_state = dict(flat_runner)
+    flat_state.update(flat_optimizer)
+
+    if graph_manifest is None:
+        graph_manifest = {
+            "schema_version": "runner_graph_manifest_v1",
+            "seq_len": int(getattr(runner, "seq_len", 0)),
+            "d_model": int(getattr(runner, "d_model", 0)),
+            "d_ff": int(getattr(runner, "d_ff", 0)),
+            "vocab_size": int(getattr(runner, "vocab_size", 0)),
+            "layout": str(getattr(runner, "layout", "seq_dmodel_2d")),
+            "dtype": str(getattr(runner, "dtype", "float32")),
+        }
+
+    manifest = {
+        "schema_version": "runner_checkpoint_manifest_v2",
+        "runner_contract": runner_contract_manifest(),
+        "graph_manifest": dict(graph_manifest),
+        "state_prefixes": {"runner": "runner", "optimizer": "optimizer"},
+        "runner_state_keys": sorted(flat_runner.keys()),
+        "optimizer_state_keys": sorted(flat_optimizer.keys()),
+        "optimizer_present": bool(flat_optimizer),
+    }
+
+    user_meta = dict(metadata or {})
+    user_meta["runner_checkpoint_manifest_v2"] = manifest
+
+    meta_payload = _checkpoint_integrity_meta(
+        format_name=_CHECKPOINT_FORMAT_V2,
+        format_version="2.0",
+        flat_state=flat_state,
+        metadata=user_meta,
+        model_class=getattr(runner, "__class__", type("Runner", (), {})).__name__,
+        compat_read=[_CHECKPOINT_FORMAT, _CHECKPOINT_FORMAT_V11, _CHECKPOINT_FORMAT_V12, _CHECKPOINT_FORMAT_V2],
+        compat_write=[_CHECKPOINT_FORMAT_V2],
+    )
+
+    save_dict: dict[str, np.ndarray] = dict(flat_state)
+    save_dict[_CHECKPOINT_META_KEY] = _checkpoint_meta_array(meta_payload)
+    save_path = os.fspath(path)
+    if compressed:
+        np.savez_compressed(save_path, **save_dict)
+    else:
+        np.savez(save_path, **save_dict)
+    return save_path
+
+
+def load_runner_checkpoint(
+    path: str | os.PathLike[str],
+    *,
+    into_runner: Any | None = None,
+    optimizer_into: Any | None = None,
+    strict: bool = True,
+    validate: bool = True,
+) -> dict[str, Any]:
+    """Load runner checkpoint across v1/v1.1/v1.2/v2 formats."""
+    payload = load_checkpoint(path, into=None, strict=strict, validate=validate)
+    meta = dict(payload.get("meta", {}))
+    state = dict(payload.get("state", {}))
+    fmt = str(meta.get("format", ""))
+    if fmt and fmt not in {_CHECKPOINT_FORMAT, _CHECKPOINT_FORMAT_V11, _CHECKPOINT_FORMAT_V12, _CHECKPOINT_FORMAT_V2}:
+        raise ValueError(f"unsupported checkpoint format: {fmt}")
+
+    runner_state = _strip_state_prefix(state, "runner")
+    if not runner_state:
+        runner_state = _strip_state_prefix(state, "model")
+    if not runner_state:
+        runner_state = dict(state)
+    optimizer_state = _strip_state_prefix(state, "optimizer")
+
+    user_meta = dict(meta.get("user_metadata", {})) if isinstance(meta.get("user_metadata", {}), dict) else {}
+    manifest = dict(user_meta.get("runner_checkpoint_manifest_v2", {})) if isinstance(user_meta.get("runner_checkpoint_manifest_v2", {}), dict) else {}
+    if not manifest:
+        manifest = {
+            "schema_version": "runner_checkpoint_manifest_v2",
+            "compat_mode": "legacy_v1",
+            "runner_contract": runner_contract_manifest(),
+            "runner_state_keys": sorted(runner_state.keys()),
+            "optimizer_state_keys": sorted(optimizer_state.keys()),
+            "optimizer_present": bool(optimizer_state),
+        }
+
+    if into_runner is not None:
+        load_fn = getattr(into_runner, "load_state_dict", None)
+        if not callable(load_fn):
+            raise TypeError("into_runner must implement load_state_dict(state, strict=...)")
+        load_fn(runner_state, strict=bool(strict))
+
+    if optimizer_into is not None:
+        opt_load = getattr(optimizer_into, "load_state_dict", None)
+        if callable(opt_load):
+            try:
+                opt_load(optimizer_state, strict=bool(strict))
+            except TypeError:
+                opt_load(optimizer_state)
+        elif isinstance(optimizer_into, dict):
+            optimizer_into.clear()
+            optimizer_into.update(optimizer_state)
+        else:
+            raise TypeError("optimizer_into must be dict or implement load_state_dict()")
+
+    return {
+        "path": payload.get("path"),
+        "meta": meta,
+        "format": fmt,
+        "manifest": manifest,
+        "runner_state": runner_state,
+        "optimizer_state": optimizer_state,
+    }
+
+
 class Linear:
     def __init__(self, in_features: int, out_features: int, bias: bool = True):
         self.in_features = int(in_features)
@@ -1069,16 +1380,26 @@ class _EngineScope:
 
 
 class TinyTransformerRunner:
-    """Model-runner beta: tiny transformer-ish block with deterministic contracts."""
+    """Tiny transformer runner beta: embedding -> attention -> FFN -> logits."""
 
-    def __init__(self, *, seq_len: int = 48, d_model: int = 48, d_ff: int = 128, seed: int = 20260410):
+    def __init__(
+        self,
+        *,
+        seq_len: int = 48,
+        d_model: int = 48,
+        d_ff: int = 128,
+        vocab_size: int = 256,
+        seed: int = 20260410,
+    ):
         self.seq_len = int(seq_len)
         self.d_model = int(d_model)
         self.d_ff = int(d_ff)
+        self.vocab_size = int(vocab_size)
         self.seed = int(seed)
         self.layout = "seq_dmodel_2d"
         self.dtype = "float32"
         rng = np.random.default_rng(self.seed)
+        self.w_embed = (rng.standard_normal((self.vocab_size, self.d_model)) * 0.03).astype(np.float32)
         self.wq = (rng.standard_normal((self.d_model, self.d_model)) * 0.05).astype(np.float32)
         self.wk = (rng.standard_normal((self.d_model, self.d_model)) * 0.05).astype(np.float32)
         self.wv = (rng.standard_normal((self.d_model, self.d_model)) * 0.05).astype(np.float32)
@@ -1087,6 +1408,7 @@ class TinyTransformerRunner:
         self.b1 = np.zeros((1, self.d_ff), dtype=np.float32)
         self.w2 = (rng.standard_normal((self.d_ff, self.d_model)) * 0.04).astype(np.float32)
         self.b2 = np.zeros((1, self.d_model), dtype=np.float32)
+        self.w_logits = (rng.standard_normal((self.d_model, self.vocab_size)) * 0.03).astype(np.float32)
         self._graph_bundle: dict[str, Any] | None = None
 
     def state_dict(self, prefix: str = "") -> dict[str, np.ndarray]:
@@ -1095,6 +1417,8 @@ class TinyTransformerRunner:
             f"{key}seq_len": np.asarray([self.seq_len], dtype=np.int32),
             f"{key}d_model": np.asarray([self.d_model], dtype=np.int32),
             f"{key}d_ff": np.asarray([self.d_ff], dtype=np.int32),
+            f"{key}vocab_size": np.asarray([self.vocab_size], dtype=np.int32),
+            f"{key}w_embed": np.ascontiguousarray(self.w_embed),
             f"{key}wq": np.ascontiguousarray(self.wq),
             f"{key}wk": np.ascontiguousarray(self.wk),
             f"{key}wv": np.ascontiguousarray(self.wv),
@@ -1103,11 +1427,23 @@ class TinyTransformerRunner:
             f"{key}b1": np.ascontiguousarray(self.b1),
             f"{key}w2": np.ascontiguousarray(self.w2),
             f"{key}b2": np.ascontiguousarray(self.b2),
+            f"{key}w_logits": np.ascontiguousarray(self.w_logits),
         }
 
     def load_state_dict(self, state: dict[str, Any], strict: bool = True, prefix: str = "") -> None:
         key = (str(prefix).rstrip(".") + ".") if prefix else ""
+        legacy_optional = {"vocab_size", "w_embed", "w_logits"}
+        for field in ("seq_len", "d_model", "d_ff", "vocab_size"):
+            fk = f"{key}{field}"
+            if fk in state:
+                vv = np.asarray(state[fk]).reshape(-1)
+                if vv.size > 0:
+                    setattr(self, field, int(vv[0]))
+            elif strict and field not in legacy_optional:
+                raise KeyError(f"missing key: {fk}")
+
         mapping = {
+            "w_embed": (self.vocab_size, self.d_model),
             "wq": (self.d_model, self.d_model),
             "wk": (self.d_model, self.d_model),
             "wv": (self.d_model, self.d_model),
@@ -1116,19 +1452,12 @@ class TinyTransformerRunner:
             "b1": (1, self.d_ff),
             "w2": (self.d_ff, self.d_model),
             "b2": (1, self.d_model),
+            "w_logits": (self.d_model, self.vocab_size),
         }
-        for field in ("seq_len", "d_model", "d_ff"):
-            fk = f"{key}{field}"
-            if fk in state:
-                vv = np.asarray(state[fk]).reshape(-1)
-                if vv.size > 0:
-                    setattr(self, field, int(vv[0]))
-            elif strict:
-                raise KeyError(f"missing key: {fk}")
         for name, shape in mapping.items():
             sk = f"{key}{name}"
             if sk not in state:
-                if strict:
+                if strict and name not in legacy_optional:
                     raise KeyError(f"missing key: {sk}")
                 continue
             arr = np.asarray(state[sk], dtype=np.float32)
@@ -1137,7 +1466,35 @@ class TinyTransformerRunner:
             setattr(self, name, np.ascontiguousarray(arr))
         self._graph_bundle = None
 
-    def _forward_eager(self, x_arr: np.ndarray, *, device: str) -> np.ndarray:
+    def _embed_tokens(self, token_ids: Any) -> tuple[np.ndarray, np.ndarray]:
+        ids = np.asarray(token_ids)
+        if ids.ndim == 1 and ids.shape[0] == self.seq_len:
+            flat = ids.reshape(-1)
+        elif ids.ndim == 2 and ids.shape == (1, self.seq_len):
+            flat = ids.reshape(-1)
+        elif ids.ndim == 2 and ids.shape == (self.seq_len, 1):
+            flat = ids.reshape(-1)
+        else:
+            raise ValueError(
+                f"token id input shape must be ({self.seq_len},), (1,{self.seq_len}) or ({self.seq_len},1)"
+            )
+        token_i64 = np.asarray(flat, dtype=np.int64)
+        token_i64 = np.mod(token_i64, max(self.vocab_size, 1))
+        emb = np.asarray(self.w_embed[token_i64], dtype=np.float32).reshape(self.seq_len, self.d_model)
+        return emb, token_i64
+
+    def _prepare_runner_input(self, x: Any) -> tuple[np.ndarray, str]:
+        arr = np.asarray(x)
+        if arr.shape == (self.seq_len, self.d_model):
+            return np.asarray(arr, dtype=np.float32), "embedding_features"
+        if arr.ndim in {1, 2}:
+            emb, _ = self._embed_tokens(arr)
+            return emb, "token_ids"
+        raise ValueError(
+            f"input must be embedding features {(self.seq_len, self.d_model)} or token ids with seq_len={self.seq_len}"
+        )
+
+    def _forward_hidden_eager(self, x_arr: np.ndarray, *, device: str) -> np.ndarray:
         q = lightning_matmul(x_arr, self.wq, device=device)
         k = lightning_matmul(x_arr, self.wk, device=device)
         v = lightning_matmul(x_arr, self.wv, device=device)
@@ -1147,6 +1504,10 @@ class TinyTransformerRunner:
         h = np.maximum(h, 0.0).astype(np.float32, copy=False)
         y = lightning_matmul(h, self.w2, device=device) + self.b2
         return np.asarray(y, dtype=np.float32)
+
+    def _project_logits(self, hidden: np.ndarray, *, device: str) -> np.ndarray:
+        logits = lightning_matmul(hidden, self.w_logits, device=device)
+        return np.asarray(logits, dtype=np.float32)
 
     def _build_graph_bundle(self) -> dict[str, Any]:
         if self._graph_bundle is not None:
@@ -1164,7 +1525,6 @@ class TinyTransformerRunner:
         ids["b1"] = g.add_tensor([self.seq_len, self.d_ff], dtype="float32", name="b1", constant=True)
         ids["w2"] = g.add_tensor([self.d_ff, self.d_model], dtype="float32", name="w2", constant=True)
         ids["b2"] = g.add_tensor([self.seq_len, self.d_model], dtype="float32", name="b2", constant=True)
-
         ids["q"] = g.add_tensor([self.seq_len, self.d_model], dtype="float32", name="q")
         ids["k"] = g.add_tensor([self.seq_len, self.d_model], dtype="float32", name="k")
         ids["v"] = g.add_tensor([self.seq_len, self.d_model], dtype="float32", name="v")
@@ -1175,7 +1535,6 @@ class TinyTransformerRunner:
         ids["ff1r"] = g.add_tensor([self.seq_len, self.d_ff], dtype="float32", name="ff1r")
         ids["ff2"] = g.add_tensor([self.seq_len, self.d_model], dtype="float32", name="ff2")
         ids["out"] = g.add_tensor([self.seq_len, self.d_model], dtype="float32", name="out")
-
         g.add_node("matmul", [ids["x"], ids["wq"]], [ids["q"]])
         g.add_node("matmul", [ids["x"], ids["wk"]], [ids["k"]])
         g.add_node("matmul", [ids["x"], ids["wv"]], [ids["v"]])
@@ -1190,7 +1549,7 @@ class TinyTransformerRunner:
         self._graph_bundle = {"graph": g, "ids": ids}
         return self._graph_bundle
 
-    def _forward_graph(self, x_arr: np.ndarray, *, device: str) -> np.ndarray:
+    def _forward_hidden_graph(self, x_arr: np.ndarray, *, device: str) -> np.ndarray:
         bundle = self._build_graph_bundle()
         g = bundle["graph"]
         ids = bundle["ids"]
@@ -1219,6 +1578,7 @@ class TinyTransformerRunner:
         return np.asarray(values[ids["out"]], dtype=np.float32).reshape(self.seq_len, self.d_model)
 
     def config_contract(self, *, mode: str, device: str, route_policy: dict[str, Any] | None = None) -> dict[str, Any]:
+        rp = route_policy if route_policy is not None else {"conv": "auto", "attention": "auto", "graph": "auto"}
         return validate_runner_config(
             {
                 "mode": mode,
@@ -1226,7 +1586,7 @@ class TinyTransformerRunner:
                 "seed": int(self.seed),
                 "layout": self.layout,
                 "dtype": self.dtype,
-                "route_policy": route_policy,
+                "route_policy": rp,
             },
             strict=True,
         )
@@ -1249,9 +1609,7 @@ class TinyTransformerRunner:
         mode_s = str(mode).strip().lower()
         if mode_s not in _VALID_RUNNER_MODES:
             raise ValueError("mode must be one of: eager, graph, interop")
-        x_arr = np.asarray(x, dtype=np.float32)
-        if x_arr.shape != (self.seq_len, self.d_model):
-            raise ValueError(f"input shape must be {(self.seq_len, self.d_model)}")
+        x_arr, input_kind = self._prepare_runner_input(x)
         contract = self.config_contract(mode=mode_s, device=device, route_policy=route_policy)
         rp = dict(contract.get("normalized", {}).get("route_policy", {"conv": "auto", "attention": "auto", "graph": "auto"}))
 
@@ -1283,23 +1641,27 @@ class TinyTransformerRunner:
 
         if resolved_mode == "graph":
             try:
-                y, resolved_engine = self._run_with_engine(
-                    "lightning", device=device, fn=lambda: self._forward_graph(x_arr, device=device)
+                hidden, resolved_engine = self._run_with_engine(
+                    "lightning", device=device, fn=lambda: self._forward_hidden_graph(x_arr, device=device)
                 )
             except Exception as exc:
                 resolved_mode = "eager"
                 fallback_reason = "runner_graph_execute_failed"
                 fallback_message = str(exc)
-                y, resolved_engine = self._run_with_engine(
-                    run_engine, device=device, fn=lambda: self._forward_eager(x_arr, device=device)
+                hidden, resolved_engine = self._run_with_engine(
+                    run_engine, device=device, fn=lambda: self._forward_hidden_eager(x_arr, device=device)
                 )
         else:
-            y, resolved_engine = self._run_with_engine(
-                run_engine, device=device, fn=lambda: self._forward_eager(x_arr, device=device)
+            hidden, resolved_engine = self._run_with_engine(
+                run_engine, device=device, fn=lambda: self._forward_hidden_eager(x_arr, device=device)
             )
 
+        logits = np.asarray(self._project_logits(hidden, device=device), dtype=np.float32)
+        contract_manifest = runner_contract_manifest()
         meta = {
             "schema_version": _RUNNER_SCHEMA_VERSION,
+            "runner_contract_freeze_id": _RUNNER_CONTRACT_FREEZE_ID,
+            "runner_contract_schema_hash": str(contract_manifest.get("schema_hash_sha256", "")),
             "requested_mode": requested_mode,
             "resolved_mode": resolved_mode,
             "requested_device": str(device),
@@ -1309,12 +1671,35 @@ class TinyTransformerRunner:
             "seed": int(self.seed),
             "layout": self.layout,
             "dtype": self.dtype,
+            "input_kind": str(input_kind),
+            "seq_len": int(self.seq_len),
+            "d_model": int(self.d_model),
+            "d_ff": int(self.d_ff),
+            "vocab_size": int(self.vocab_size),
+            "logits_dim": int(self.vocab_size),
             "route_policy": rp,
             "supported_fallback_reason_codes": sorted(_RUNNER_FALLBACK_REASON_CODES),
         }
         if return_metadata:
-            return y, meta
-        return y
+            return logits, meta
+        return logits
+
+    def run_tokens(
+        self,
+        token_ids: Any,
+        *,
+        mode: str = "eager",
+        device: str = "auto",
+        route_policy: dict[str, Any] | None = None,
+        return_metadata: bool = False,
+    ) -> np.ndarray | tuple[np.ndarray, dict[str, Any]]:
+        return self.run(
+            token_ids,
+            mode=mode,
+            device=device,
+            route_policy=route_policy,
+            return_metadata=return_metadata,
+        )
 
 
 def runner_replay_report(
@@ -1360,21 +1745,32 @@ def create_torch_module_wrapper(
     mode: str = "eager",
     device: str = "auto",
     route_policy: dict[str, Any] | None = None,
+    overhead_budget_ms: float = _DEFAULT_TORCH_ADAPTER_OVERHEAD_BUDGET_MS,
+    torch_module: Any | None = None,
 ):
-    torch, _ = _import_torch()
+    torch = torch_module
+    if torch is None:
+        torch, _ = _import_torch()
     if torch is None:
         raise RuntimeError("torch is not available")
     route_validation = validate_route_policy(route_policy, strict=True)
     route_norm = dict(route_validation.get("normalized", {"conv": "auto", "attention": "auto", "graph": "auto"}))
+    budget_ms = float(overhead_budget_ms)
+    if (not np.isfinite(budget_ms)) or budget_ms <= 0.0:
+        raise ValueError("overhead_budget_ms must be a positive finite value")
 
     class LightningCoreTorchModule(torch.nn.Module):  # type: ignore[name-defined]
         def __init__(self, model_runner: TinyTransformerRunner):
             super().__init__()
             self.model_runner = model_runner
             self._last_telemetry: dict[str, Any] = {
-                "schema_version": "torch_bridge_telemetry_v1",
+                "schema_version": _TORCH_RUNNER_ADAPTER_SCHEMA_VERSION,
                 "boundary_reason_code": "none",
                 "boundary_copy_mode": "zero_copy",
+                "boundary_overhead_budget_ms": float(budget_ms),
+                "boundary_overhead_budget_pass": True,
+                "reason_code_covered": True,
+                "runtime": "torch",
             }
 
         def last_telemetry(self) -> dict[str, Any]:
@@ -1383,7 +1779,11 @@ def create_torch_module_wrapper(
         def forward(self, x):  # type: ignore[override]
             t0 = time.perf_counter_ns()
             x_cpu = x.detach().to("cpu").contiguous()
-            x_np = x_cpu.numpy().astype(np.float32, copy=False)
+            x_np_raw = x_cpu.numpy()
+            if np.issubdtype(x_np_raw.dtype, np.integer):
+                x_np = np.asarray(x_np_raw, dtype=np.int64)
+            else:
+                x_np = np.asarray(x_np_raw, dtype=np.float32)
             t1 = time.perf_counter_ns()
             y_np, run_meta = self.model_runner.run(
                 x_np,
@@ -1393,32 +1793,50 @@ def create_torch_module_wrapper(
                 return_metadata=True,
             )
             t2 = time.perf_counter_ns()
-            out = torch.as_tensor(y_np, dtype=x.dtype, device=x.device)
+            out_dtype = getattr(torch, "float32", None)
+            if out_dtype is None:
+                out_dtype = x.dtype
+            out = torch.as_tensor(y_np, dtype=out_dtype, device=x.device)
             t3 = time.perf_counter_ns()
 
-            zero_copy_eligible = bool(x.device.type == "cpu" and x.dtype == torch.float32 and bool(x.is_contiguous()))
+            torch_int64 = getattr(torch, "int64", None)
+            torch_float32 = getattr(torch, "float32", None)
+            zero_copy_dtype_ok = bool((torch_float32 is not None and x.dtype == torch_float32) or (torch_int64 is not None and x.dtype == torch_int64))
+            zero_copy_eligible = bool(x.device.type == "cpu" and zero_copy_dtype_ok and bool(x.is_contiguous()))
             boundary_reason = "none" if zero_copy_eligible else "interop_torch_tensor_boundary_copy"
             copy_mode = "zero_copy" if zero_copy_eligible else "fallback_copy"
             copy_bytes = 0 if zero_copy_eligible else int(np.asarray(x_np).nbytes + np.asarray(y_np).nbytes)
             boundary_overhead_ns = int((t1 - t0) + (t3 - t2))
+            boundary_overhead_ms = float(boundary_overhead_ns / 1e6)
             if boundary_reason not in _TORCH_BRIDGE_BOUNDARY_REASON_CODES:
                 boundary_reason = "interop_torch_tensor_boundary_copy"
+            runner_reason = str(run_meta.get("fallback_reason_code", "none"))
+            reason_covered = bool(
+                boundary_reason in _TORCH_BRIDGE_BOUNDARY_REASON_CODES
+                and runner_reason in _RUNNER_FALLBACK_REASON_CODES
+            )
+            budget_pass = bool(boundary_overhead_ms <= budget_ms + 1.0e-12)
 
             self._last_telemetry = {
-                "schema_version": "torch_bridge_telemetry_v1",
+                "schema_version": _TORCH_RUNNER_ADAPTER_SCHEMA_VERSION,
                 "requested_mode": str(mode),
                 "resolved_mode": str(run_meta.get("resolved_mode", mode)),
                 "resolved_engine": str(run_meta.get("resolved_engine", "unknown")),
-                "runner_fallback_reason_code": str(run_meta.get("fallback_reason_code", "none")),
+                "runner_fallback_reason_code": runner_reason,
                 "boundary_reason_code": boundary_reason,
                 "boundary_copy_mode": copy_mode,
                 "boundary_copy_bytes_estimate": int(copy_bytes),
                 "boundary_overhead_est_ns": int(boundary_overhead_ns),
-                "boundary_overhead_est_ms": float(boundary_overhead_ns / 1e6),
+                "boundary_overhead_est_ms": float(boundary_overhead_ms),
+                "boundary_overhead_budget_ms": float(budget_ms),
+                "boundary_overhead_budget_pass": bool(budget_pass),
+                "reason_code_covered": bool(reason_covered),
                 "zero_copy_eligible": bool(zero_copy_eligible),
+                "input_kind": str(run_meta.get("input_kind", "unknown")),
                 "route_policy": dict(route_norm),
                 "supported_boundary_reason_codes": sorted(_TORCH_BRIDGE_BOUNDARY_REASON_CODES),
                 "supported_runner_fallback_reason_codes": sorted(_RUNNER_FALLBACK_REASON_CODES),
+                "runtime": "torch",
             }
             return out
 
@@ -1432,9 +1850,13 @@ def get_torch_wrapper_telemetry(module: Any) -> dict[str, Any]:
         if isinstance(out, dict):
             return dict(out)
     return {
-        "schema_version": "torch_bridge_telemetry_v1",
+        "schema_version": _TORCH_RUNNER_ADAPTER_SCHEMA_VERSION,
         "boundary_reason_code": "none",
         "boundary_copy_mode": "zero_copy",
+        "boundary_overhead_budget_ms": float(_DEFAULT_TORCH_ADAPTER_OVERHEAD_BUDGET_MS),
+        "boundary_overhead_budget_pass": True,
+        "reason_code_covered": True,
+        "runtime": "torch",
     }
 
 
@@ -1453,12 +1875,16 @@ def _map_tf_runner_fallback_reason(reason_code: Any) -> str:
 
 def _tf_telemetry_default() -> dict[str, Any]:
     return {
-        "schema_version": "tf_bridge_telemetry_v1",
+        "schema_version": _TF_RUNNER_ADAPTER_SCHEMA_VERSION,
         "boundary_reason_code": "tf_runtime_unavailable",
         "boundary_copy_mode": "fallback_copy",
+        "boundary_overhead_budget_ms": float(_DEFAULT_TF_ADAPTER_OVERHEAD_BUDGET_MS),
+        "boundary_overhead_budget_pass": True,
+        "reason_code_covered": True,
         "zero_copy_eligible": False,
         "supported_boundary_reason_codes": sorted(_TF_BRIDGE_REASON_CODES),
         "supported_runner_fallback_reason_codes": sorted(_RUNNER_FALLBACK_REASON_CODES),
+        "runtime": "numpy_shim",
     }
 
 
@@ -1470,10 +1896,14 @@ def create_tf_keras_layer_wrapper(
     route_policy: dict[str, Any] | None = None,
     prefer_tensorflow_runtime: bool = True,
     allow_missing_runtime: bool = True,
+    overhead_budget_ms: float = _DEFAULT_TF_ADAPTER_OVERHEAD_BUDGET_MS,
     tensorflow_module: Any | None = None,
 ):
     route_validation = validate_route_policy(route_policy, strict=True)
     route_norm = dict(route_validation.get("normalized", {"conv": "auto", "attention": "auto", "graph": "auto"}))
+    budget_ms = float(overhead_budget_ms)
+    if (not np.isfinite(budget_ms)) or budget_ms <= 0.0:
+        raise ValueError("overhead_budget_ms must be a positive finite value")
     tf = tensorflow_module
     if tf is None and bool(prefer_tensorflow_runtime):
         try:
@@ -1510,10 +1940,15 @@ def create_tf_keras_layer_wrapper(
             bridge_reason = "tf_runtime_unavailable" if runner_reason == "none" else runner_reason
             copy_bytes = int(np.asarray(x_np).nbytes + np.asarray(out).nbytes)
             boundary_overhead_ns = int((t1 - t0) + (t3 - t2))
+            boundary_overhead_ms = float(boundary_overhead_ns / 1e6)
             if bridge_reason not in _TF_BRIDGE_REASON_CODES:
                 bridge_reason = "tf_runner_unknown_fallback"
+            reason_covered = bool(
+                bridge_reason in _TF_BRIDGE_REASON_CODES
+                and str(run_meta.get("fallback_reason_code", "none")) in _RUNNER_FALLBACK_REASON_CODES
+            )
             self._last_telemetry = {
-                "schema_version": "tf_bridge_telemetry_v1",
+                "schema_version": _TF_RUNNER_ADAPTER_SCHEMA_VERSION,
                 "requested_mode": str(mode),
                 "resolved_mode": str(run_meta.get("resolved_mode", mode)),
                 "resolved_engine": str(run_meta.get("resolved_engine", "unknown")),
@@ -1522,8 +1957,12 @@ def create_tf_keras_layer_wrapper(
                 "boundary_copy_mode": "fallback_copy",
                 "boundary_copy_bytes_estimate": int(copy_bytes),
                 "boundary_overhead_est_ns": int(boundary_overhead_ns),
-                "boundary_overhead_est_ms": float(boundary_overhead_ns / 1e6),
+                "boundary_overhead_est_ms": float(boundary_overhead_ms),
+                "boundary_overhead_budget_ms": float(budget_ms),
+                "boundary_overhead_budget_pass": bool(boundary_overhead_ms <= budget_ms + 1.0e-12),
+                "reason_code_covered": bool(reason_covered),
                 "zero_copy_eligible": False,
+                "input_kind": str(run_meta.get("input_kind", "unknown")),
                 "route_policy": dict(route_norm),
                 "supported_boundary_reason_codes": sorted(_TF_BRIDGE_REASON_CODES),
                 "supported_runner_fallback_reason_codes": sorted(_RUNNER_FALLBACK_REASON_CODES),
@@ -1567,10 +2006,15 @@ def create_tf_keras_layer_wrapper(
             bridge_reason = runner_reason if runner_reason != "none" else "tf_tensor_boundary_copy"
             copy_bytes = int(np.asarray(x_np).nbytes + np.asarray(y_np).nbytes)
             boundary_overhead_ns = int((t1 - t0) + (t3 - t2))
+            boundary_overhead_ms = float(boundary_overhead_ns / 1e6)
             if bridge_reason not in _TF_BRIDGE_REASON_CODES:
                 bridge_reason = "tf_runner_unknown_fallback"
+            reason_covered = bool(
+                bridge_reason in _TF_BRIDGE_REASON_CODES
+                and str(run_meta.get("fallback_reason_code", "none")) in _RUNNER_FALLBACK_REASON_CODES
+            )
             self._last_telemetry = {
-                "schema_version": "tf_bridge_telemetry_v1",
+                "schema_version": _TF_RUNNER_ADAPTER_SCHEMA_VERSION,
                 "requested_mode": str(mode),
                 "resolved_mode": str(run_meta.get("resolved_mode", mode)),
                 "resolved_engine": str(run_meta.get("resolved_engine", "unknown")),
@@ -1579,8 +2023,12 @@ def create_tf_keras_layer_wrapper(
                 "boundary_copy_mode": "fallback_copy",
                 "boundary_copy_bytes_estimate": int(copy_bytes),
                 "boundary_overhead_est_ns": int(boundary_overhead_ns),
-                "boundary_overhead_est_ms": float(boundary_overhead_ns / 1e6),
+                "boundary_overhead_est_ms": float(boundary_overhead_ms),
+                "boundary_overhead_budget_ms": float(budget_ms),
+                "boundary_overhead_budget_pass": bool(boundary_overhead_ms <= budget_ms + 1.0e-12),
+                "reason_code_covered": bool(reason_covered),
                 "zero_copy_eligible": False,
+                "input_kind": str(run_meta.get("input_kind", "unknown")),
                 "route_policy": dict(route_norm),
                 "supported_boundary_reason_codes": sorted(_TF_BRIDGE_REASON_CODES),
                 "supported_runner_fallback_reason_codes": sorted(_RUNNER_FALLBACK_REASON_CODES),
@@ -1598,6 +2046,75 @@ def get_tf_wrapper_telemetry(module: Any) -> dict[str, Any]:
         if isinstance(out, dict):
             return dict(out)
     return _tf_telemetry_default()
+
+
+def create_tf_model_runner_adapter(
+    runner: TinyTransformerRunner,
+    *,
+    mode: str = "eager",
+    device: str = "auto",
+    route_policy: dict[str, Any] | None = None,
+    prefer_tensorflow_runtime: bool = True,
+    allow_missing_runtime: bool = True,
+    overhead_budget_ms: float = _DEFAULT_TF_ADAPTER_OVERHEAD_BUDGET_MS,
+    tensorflow_module: Any | None = None,
+):
+    """Model-level TF adapter wrapping runner inference + telemetry surfaces."""
+    layer = create_tf_keras_layer_wrapper(
+        runner,
+        mode=mode,
+        device=device,
+        route_policy=route_policy,
+        prefer_tensorflow_runtime=prefer_tensorflow_runtime,
+        allow_missing_runtime=allow_missing_runtime,
+        overhead_budget_ms=overhead_budget_ms,
+        tensorflow_module=tensorflow_module,
+    )
+
+    class TFRunnerModelAdapter:
+        def __init__(self, model_runner: TinyTransformerRunner, keras_layer: Any):
+            self.runner = model_runner
+            self.layer = keras_layer
+            self.mode = str(mode)
+            self.device = str(device)
+            self.route_policy = validate_route_policy(route_policy, strict=True).get(
+                "normalized",
+                {"conv": "auto", "attention": "auto", "graph": "auto"},
+            )
+
+        def infer(self, inputs: Any):
+            return self.layer(inputs)
+
+        def run(self, inputs: Any):
+            return self.infer(inputs)
+
+        def benchmark(self, inputs: Any, *, warmup: int = 4, iters: int = 20) -> dict[str, Any]:
+            warm_i = max(0, int(warmup))
+            iter_i = max(1, int(iters))
+            for _ in range(warm_i):
+                self.infer(inputs)
+            samples: list[float] = []
+            for _ in range(iter_i):
+                t0 = time.perf_counter_ns()
+                self.infer(inputs)
+                t1 = time.perf_counter_ns()
+                samples.append((t1 - t0) / 1e6)
+            samples_sorted = sorted(samples)
+            med = float(samples_sorted[len(samples_sorted) // 2]) if samples_sorted else float("nan")
+            return {
+                "schema_version": "tf_runner_model_bench_v1",
+                "warmup": warm_i,
+                "iters": iter_i,
+                "median_ms": med,
+                "min_ms": float(min(samples_sorted)) if samples_sorted else float("nan"),
+                "max_ms": float(max(samples_sorted)) if samples_sorted else float("nan"),
+                "telemetry": get_tf_wrapper_telemetry(self.layer),
+            }
+
+        def last_telemetry(self) -> dict[str, Any]:
+            return get_tf_wrapper_telemetry(self.layer)
+
+    return TFRunnerModelAdapter(runner, layer)
 
 
 def _sum_to_shape(grad: np.ndarray, shape: tuple[int, ...]) -> np.ndarray:
@@ -1964,12 +2481,134 @@ def ag_zero_grad(params: list[AutoTensor]) -> None:
         p.zero_grad()
 
 
-def ag_sgd_step(params: list[AutoTensor], *, lr: float) -> None:
-    lr_f = float(lr)
+def ag_grad_norm(params: list[AutoTensor], *, loss_scale: float = 1.0) -> float:
+    scale = float(loss_scale)
+    if not np.isfinite(scale) or scale <= 0.0:
+        raise ValueError("loss_scale must be positive finite")
+    total = 0.0
     for p in params:
         if p.grad is None:
             continue
-        p.data = np.asarray(p.data - lr_f * p.grad, dtype=np.float32)
+        g = np.asarray(p.grad, dtype=np.float32) / scale
+        total += float(np.sum(g * g))
+    return float(np.sqrt(max(total, 0.0)))
+
+
+def ag_clip_grad_norm(params: list[AutoTensor], *, max_norm: float, loss_scale: float = 1.0) -> dict[str, Any]:
+    max_norm_f = float(max_norm)
+    if not np.isfinite(max_norm_f) or max_norm_f <= 0.0:
+        raise ValueError("max_norm must be positive finite")
+    total_norm = ag_grad_norm(params, loss_scale=loss_scale)
+    clip_coef = 1.0
+    if total_norm > max_norm_f:
+        clip_coef = float(max_norm_f / (total_norm + 1.0e-12))
+    return {
+        "total_norm": float(total_norm),
+        "max_norm": float(max_norm_f),
+        "clip_coef": float(clip_coef),
+        "clipped": bool(clip_coef < 1.0),
+    }
+
+
+def ag_sgd_step(
+    params: list[AutoTensor],
+    *,
+    lr: float,
+    loss_scale: float = 1.0,
+    grad_clip_norm: float | None = None,
+) -> dict[str, Any]:
+    lr_f = float(lr)
+    scale = float(loss_scale)
+    if not np.isfinite(scale) or scale <= 0.0:
+        raise ValueError("loss_scale must be positive finite")
+    clip_coef = 1.0
+    total_norm = ag_grad_norm(params, loss_scale=scale)
+    if grad_clip_norm is not None:
+        clip_info = ag_clip_grad_norm(params, max_norm=float(grad_clip_norm), loss_scale=scale)
+        clip_coef = float(clip_info["clip_coef"])
+
+    updated = 0
+    for p in params:
+        if p.grad is None:
+            continue
+        g = np.asarray(p.grad, dtype=np.float32) / scale
+        if clip_coef < 1.0:
+            g = g * clip_coef
+        p.data = np.asarray(p.data - lr_f * g, dtype=np.float32)
+        updated += 1
+    return {
+        "optimizer": "sgd",
+        "lr": float(lr_f),
+        "loss_scale": float(scale),
+        "grad_clip_norm": None if grad_clip_norm is None else float(grad_clip_norm),
+        "clip_coef": float(clip_coef),
+        "global_grad_norm": float(total_norm),
+        "updated_params": int(updated),
+    }
+
+
+def autograd_train_loop(
+    model: Any,
+    x: Any,
+    y: Any,
+    *,
+    steps: int = 4,
+    lr: float = 1.0e-2,
+    grad_clip_norm: float | None = None,
+    loss_scale: float = 1.0,
+    hooks: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if int(steps) <= 0:
+        raise ValueError("steps must be >= 1")
+    params_fn = getattr(model, "parameters", None)
+    fwd_fn = getattr(model, "forward", None)
+    if not callable(params_fn) or not callable(fwd_fn):
+        raise TypeError("model must expose parameters() and forward()")
+    params = list(params_fn())
+    callbacks = dict(hooks or {})
+
+    losses: list[float] = []
+    step_summaries: list[dict[str, Any]] = []
+    for step_idx in range(int(steps)):
+        if callable(callbacks.get("on_step_begin")):
+            callbacks["on_step_begin"]({"step": int(step_idx), "num_params": len(params)})
+        ag_zero_grad(params)
+        pred = fwd_fn(x)
+        target = _as_tensor(y)
+        if not isinstance(pred, AutoTensor):
+            pred = _as_tensor(pred)
+        if pred.data.shape != target.data.shape:
+            raise ValueError("autograd_train_loop target shape mismatch")
+        loss = ag_mse_loss(pred, target)
+        loss.backward(np.asarray([float(loss_scale)], dtype=np.float32))
+        if callable(callbacks.get("on_after_backward")):
+            callbacks["on_after_backward"](
+                {
+                    "step": int(step_idx),
+                    "loss": float(loss.data.reshape(-1)[0]),
+                    "global_grad_norm": float(ag_grad_norm(params, loss_scale=float(loss_scale))),
+                }
+            )
+        step_info = ag_sgd_step(
+            params,
+            lr=float(lr),
+            loss_scale=float(loss_scale),
+            grad_clip_norm=grad_clip_norm,
+        )
+        step_info["step"] = int(step_idx)
+        step_info["loss"] = float(loss.data.reshape(-1)[0])
+        losses.append(float(step_info["loss"]))
+        step_summaries.append(step_info)
+        if callable(callbacks.get("on_after_step")):
+            callbacks["on_after_step"](dict(step_info))
+
+    return {
+        "schema_version": "autograd_training_surface_v1",
+        "steps": int(steps),
+        "losses": losses,
+        "step_summaries": step_summaries,
+        "loss_decreased": bool(losses[-1] <= losses[0] + 1.0e-6) if losses else False,
+    }
 
 
 class TinyAutogradMLP:
@@ -1993,12 +2632,35 @@ class TinyAutogradMLP:
         h = ag_relu(ag_add(ag_matmul(tx, self.w1), self.b1))
         return ag_add(ag_matmul(h, self.w2), self.b2)
 
-    def train_step(self, x: Any, y: Any, *, lr: float = 1e-2) -> float:
+    def train_step(
+        self,
+        x: Any,
+        y: Any,
+        *,
+        lr: float = 1.0e-2,
+        grad_clip_norm: float | None = None,
+        loss_scale: float = 1.0,
+        hooks: dict[str, Any] | None = None,
+    ) -> float:
         ag_zero_grad(self.parameters())
         pred = self.forward(x)
         loss = ag_mse_loss(pred, y)
-        loss.backward()
-        ag_sgd_step(self.parameters(), lr=float(lr))
+        loss.backward(np.asarray([float(loss_scale)], dtype=np.float32))
+        if hooks and callable(hooks.get("on_after_backward")):
+            hooks["on_after_backward"](
+                {
+                    "loss": float(loss.data.reshape(-1)[0]),
+                    "global_grad_norm": float(ag_grad_norm(self.parameters(), loss_scale=float(loss_scale))),
+                }
+            )
+        step_info = ag_sgd_step(
+            self.parameters(),
+            lr=float(lr),
+            loss_scale=float(loss_scale),
+            grad_clip_norm=grad_clip_norm,
+        )
+        if hooks and callable(hooks.get("on_after_step")):
+            hooks["on_after_step"](dict(step_info))
         return float(loss.data.reshape(-1)[0])
 
 
@@ -2024,15 +2686,38 @@ class TinyAutogradConvAttention:
         proj = ag_add(ag_matmul(attn, self.w_proj), self.b_proj)
         return proj
 
-    def train_step(self, x: Any, y: Any, *, lr: float = 1.0e-2) -> float:
+    def train_step(
+        self,
+        x: Any,
+        y: Any,
+        *,
+        lr: float = 1.0e-2,
+        grad_clip_norm: float | None = None,
+        loss_scale: float = 1.0,
+        hooks: dict[str, Any] | None = None,
+    ) -> float:
         ag_zero_grad(self.parameters())
         pred = self.forward(x)
         target = _as_tensor(y)
         if pred.data.shape != target.data.shape:
             raise ValueError("TinyAutogradConvAttention target shape mismatch")
         loss = ag_mse_loss(pred, target)
-        loss.backward()
-        ag_sgd_step(self.parameters(), lr=float(lr))
+        loss.backward(np.asarray([float(loss_scale)], dtype=np.float32))
+        if hooks and callable(hooks.get("on_after_backward")):
+            hooks["on_after_backward"](
+                {
+                    "loss": float(loss.data.reshape(-1)[0]),
+                    "global_grad_norm": float(ag_grad_norm(self.parameters(), loss_scale=float(loss_scale))),
+                }
+            )
+        step_info = ag_sgd_step(
+            self.parameters(),
+            lr=float(lr),
+            loss_scale=float(loss_scale),
+            grad_clip_norm=grad_clip_norm,
+        )
+        if hooks and callable(hooks.get("on_after_step")):
+            hooks["on_after_step"](dict(step_info))
         return float(loss.data.reshape(-1)[0])
 
 
@@ -3552,14 +4237,22 @@ def _install_lc_api_engine_bridge() -> bool:
         api.save_model_checkpoint = save_model_checkpoint
         api.load_model_checkpoint = load_model_checkpoint
         api.checkpoint_compatibility_matrix = checkpoint_compatibility_matrix
+        api.runner_checkpoint_compatibility_matrix = runner_checkpoint_compatibility_matrix
+        api.save_runner_checkpoint_v2 = save_runner_checkpoint_v2
+        api.load_runner_checkpoint = load_runner_checkpoint
         api.validate_route_policy = validate_route_policy
         api.validate_runner_config = validate_runner_config
         api.runner_config_schema = runner_config_schema
+        api.runner_contract_manifest = runner_contract_manifest
+        api.runner_artifact_schema = runner_artifact_schema
+        api.torch_runner_adapter_schema = torch_runner_adapter_schema
+        api.tf_runner_adapter_schema = tf_runner_adapter_schema
         api.runner_replay_report = runner_replay_report
         api.TinyTransformerRunner = TinyTransformerRunner
         api.create_torch_module_wrapper = create_torch_module_wrapper
         api.get_torch_wrapper_telemetry = get_torch_wrapper_telemetry
         api.create_tf_keras_layer_wrapper = create_tf_keras_layer_wrapper
+        api.create_tf_model_runner_adapter = create_tf_model_runner_adapter
         api.get_tf_wrapper_telemetry = get_tf_wrapper_telemetry
 
         def _api_conv_relu_nchw(

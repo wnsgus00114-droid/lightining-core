@@ -32,6 +32,7 @@ def main() -> None:
         out_json = td_p / "phase_c_exit_audit.json"
         out_md = td_p / "phase_c_exit_audit.md"
         bundle_json = td_p / "phase_c_exit_candidate_bundle.json"
+        prior_audit_json = td_p / "phase_c_exit_audit_prior.json"
         readme = td_p / "README.md"
         roadmap = td_p / "ROADMAP.md"
 
@@ -47,6 +48,16 @@ def main() -> None:
                             "bench": "matmul_matrix_sub",
                             "status": "ok",
                             "allclose": True,
+                            "dispatch_delta_per_iter": -0.25,
+                            "graph_fallback_per_iter": 0.0,
+                            "graph_plan_fallback_groups": 0,
+                            "graph_plan_fallback_reason_codes": "none",
+                        },
+                        {
+                            "bench": "conv_chain",
+                            "status": "ok",
+                            "allclose": True,
+                            "dispatch_delta_per_iter": 0.0,
                             "graph_fallback_per_iter": 0.0,
                             "graph_plan_fallback_groups": 0,
                             "graph_plan_fallback_reason_codes": "none",
@@ -64,15 +75,27 @@ def main() -> None:
                         {
                             "bench": "conv_relu_eligible",
                             "status": "ok",
+                            "pattern": "conv_relu_v1",
                             "fusion_applied": True,
                             "fusion_reason": "cost_model_accept",
+                            "fusion_reason_code": "cost_model_accept",
+                            "fusion_disabled_reason_code": "fusion_disabled_not_requested",
+                            "cost_model_reject_reason_code": "cost_model_not_requested",
+                            "fused_ms": 0.80,
+                            "unfused_ms": 1.00,
                             "allclose": True,
                         },
                         {
-                            "bench": "matmul_bias_relu_eligible",
+                            "bench": "attention_proj_eligible",
                             "status": "ok",
+                            "pattern": "attention_proj_v1",
                             "fusion_applied": True,
                             "fusion_reason": "cost_model_accept",
+                            "fusion_reason_code": "cost_model_accept",
+                            "fusion_disabled_reason_code": "fusion_disabled_not_requested",
+                            "cost_model_reject_reason_code": "cost_model_not_requested",
+                            "fused_ms": 0.78,
+                            "unfused_ms": 1.00,
                             "allclose": True,
                         },
                     ]
@@ -119,10 +142,21 @@ def main() -> None:
             json.dumps(
                 {
                     "rows": [
-                        {"mode": "eager", "status": "ok", "allclose_vs_eager": True},
-                        {"mode": "graph", "status": "ok", "allclose_vs_eager": True},
-                        {"mode": "interop", "status": "ok", "allclose_vs_eager": True},
+                        {"mode": "eager", "status": "ok", "allclose_vs_eager": True, "latency_ms": 1.00},
+                        {"mode": "graph", "status": "ok", "allclose_vs_eager": True, "latency_ms": 0.95},
+                        {"mode": "interop", "status": "ok", "allclose_vs_eager": True, "latency_ms": 1.07},
                     ]
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        prior_audit_json.write_text(
+            json.dumps(
+                {
+                    "metrics": {
+                        "dispatch_overhead_p95_per_iter": {"observed": 0.05}
+                    }
                 },
                 indent=2,
             ),
@@ -152,8 +186,13 @@ def main() -> None:
                             "min_fusion_coverage_pct": 50.0,
                             "min_cost_explain_coverage_pct": 80.0,
                             "min_host_dispatch_reduction_rate_pct": 25.0,
+                            "max_dispatch_overhead_p95_per_iter": 0.0,
+                            "require_dispatch_overhead_p95_trend_nonincreasing": True,
                             "min_accuracy_consistency_pct": 80.0,
                             "min_fallback_reason_coverage_pct": 100.0,
+                            "min_conv_e2e_improvement_pct": 0.0,
+                            "min_attn_e2e_improvement_pct": 0.0,
+                            "min_ffn_e2e_improvement_pct": 0.0,
                             "max_median_interop_over_pure": 1.30,
                             "min_interop_boundary_reason_coverage_pct": 100.0,
                             "max_interop_boundary_overhead_ms": 0.35,
@@ -185,6 +224,8 @@ def main() -> None:
             str(cost_json),
             "--contract-json",
             str(contract_json),
+            "--prior-audit-json",
+            str(prior_audit_json),
             "--out-json",
             str(out_json),
             "--out-md",

@@ -478,7 +478,7 @@ def main() -> int:
             dispatch_overhead_p95_trend_nonincreasing_pct,
             100.0,
             greater_is_better=True,
-            applicable=bool(require_dispatch_p95_trend),
+            applicable=bool(require_dispatch_p95_trend and len(dispatch_series) >= 2),
         ),
         "accuracy_consistency_pct": _metric(
             "accuracy_consistency_pct", accuracy_consistency_pct, min_accuracy, greater_is_better=True
@@ -612,6 +612,12 @@ def main() -> int:
             "cost_calibration_json": str(args.cost_calibration_json) if args.cost_calibration_json else "",
             "contract_json": str(args.contract_json),
             "prior_audit_json": [str(x) for x in args.prior_audit_json],
+        },
+        "trend_context": {
+            "dispatch_overhead_p95_series": dispatch_series,
+            "dispatch_overhead_p95_series_count": len(dispatch_series),
+            "dispatch_overhead_p95_trend_gate_requested": bool(require_dispatch_p95_trend),
+            "dispatch_overhead_p95_trend_gate_applicable": bool(require_dispatch_p95_trend and len(dispatch_series) >= 2),
         },
         "docs_sync": docs_sync,
         "artifact_bundle": artifact_bundle,

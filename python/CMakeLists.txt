@@ -73,8 +73,12 @@ if(pybind11_FOUND)
   target_link_libraries(lightning_core PRIVATE lightning_core::lightning_core)
   target_include_directories(lightning_core PRIVATE ${CMAKE_SOURCE_DIR}/include)
   install(TARGETS lightning_core LIBRARY DESTINATION .)
-  # Ship Python-level integrated convenience helpers with the wheel.
-  install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/lightning_core_integrated_api.py DESTINATION .)
+  # Ship Python-level integrated convenience helpers and CLI entrypoint with the wheel.
+  install(FILES
+    ${CMAKE_CURRENT_SOURCE_DIR}/lightning_core_integrated_api.py
+    ${CMAKE_CURRENT_SOURCE_DIR}/lc_run.py
+    DESTINATION .
+  )
   message(STATUS "pybind11 found. Python module target enabled.")
 else()
   if(DEFINED SKBUILD)

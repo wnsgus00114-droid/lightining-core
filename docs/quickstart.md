@@ -70,3 +70,42 @@ Lightning Core is currently an optimization-focused runtime prototype, not a ful
 ## 8) Next
 
 For deeper tuning, benchmarking, model-family wrappers, and release workflows, see [docs/advanced.md](advanced.md).
+
+## 9) End-to-End Runner (<=50 lines)
+
+```python
+import numpy as np
+import lightning_core_integrated_api as lc_api
+
+seed = 20260411
+np.random.seed(seed)
+
+# Inference: single API for eager/graph/interop
+runner = lc_api.TinyTransformerRunner(
+    seq_len=48,
+    d_model=48,
+    d_ff=128,
+    vocab_size=256,
+    seed=seed,
+)
+tokens = np.random.randint(0, 256, size=(48,), dtype=np.int64)
+logits_graph, meta = runner.run(tokens, mode="graph", device="cpu", return_metadata=True)
+logits_eager = runner.run(tokens, mode="eager", device="cpu")
+print("graph fallback:", meta["fallback_reason_code"])
+print("parity:", np.allclose(logits_graph, logits_eager, atol=1e-4, rtol=1e-4))
+
+# Training: multi-step + grad clip + loss scale
+train_model = lc_api.TinyAutogradMLP(8, 16, 4, seed=seed)
+x = np.random.randn(32, 8).astype(np.float32)
+y = np.random.randn(32, 4).astype(np.float32)
+report = lc_api.autograd_train_loop(
+    train_model,
+    x,
+    y,
+    steps=5,
+    lr=3e-2,
+    grad_clip_norm=1.0,
+    loss_scale=2.0,
+)
+print("losses:", report["losses"])
+```

@@ -37,8 +37,13 @@
       "min_cost_explain_coverage_pct": 80.0,
       "min_fusion_reason_code_coverage_pct": 100.0,
       "min_host_dispatch_reduction_rate_pct": 25.0,
+      "max_dispatch_overhead_p95_per_iter": 0.0,
+      "require_dispatch_overhead_p95_trend_nonincreasing": true,
       "min_accuracy_consistency_pct": 80.0,
       "min_fallback_reason_coverage_pct": 100.0,
+      "min_conv_e2e_improvement_pct": -100.0,
+      "min_attn_e2e_improvement_pct": -100.0,
+      "min_ffn_e2e_improvement_pct": -100.0,
       "max_median_interop_over_pure": 1.35,
       "min_interop_boundary_reason_coverage_pct": 100.0,
       "max_interop_boundary_overhead_ms": 0.35,
@@ -51,6 +56,6 @@
       "min_model_runner_mode_success_rate_pct": 66.0
     }
   },
-  "release_baseline_version": "v0.3.4",
-  "release_baseline_date": "2026-04-11"
+  "release_baseline_version": "v0.4.7",
+  "release_baseline_date": "2026-04-12"
 }

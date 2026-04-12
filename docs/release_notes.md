@@ -2,7 +2,7 @@
 
 <!-- AUTO-RELEASE-NOTES:BEGIN -->
 
-## v0.3.4 (2026-04-11)
+## v0.4.7 (2026-04-12)
 
 - Source of truth: `pyproject.toml` `project.version`
 - Synced targets: `README.md`, `ROADMAP.md`, `docs/phase_b_graph_contract.json`, `docs/phase_c_engine_contract.json`
