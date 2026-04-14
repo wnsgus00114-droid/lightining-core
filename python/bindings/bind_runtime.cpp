@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <unordered_map>
 
+#include "lightning_core/apple_ml.hpp"
+
 namespace {
 
 lc::runtime::SyncMode parseSyncMode(const std::string& mode) {
@@ -68,6 +70,14 @@ py::dict toBackendInterfaceContractDict(const lc::runtime::BackendInterfaceContr
   profiler["driver_tag"] = contract.profiler.driver_tag;
   out["profiler"] = profiler;
 
+  return out;
+}
+
+py::dict statusReportDict(lc::runtime::Status status, double avg_ms) {
+  py::dict out;
+  out["ok"] = (status == lc::runtime::Status::kSuccess);
+  out["status"] = lc::runtime::getErrorString(status);
+  out["avg_ms"] = avg_ms;
   return out;
 }
 
@@ -518,4 +528,30 @@ void bindRuntime(py::module_& m) {
         py::arg("group_sort_by") = "total_delta_next_ns",
         py::arg("group_descending") = true,
         py::arg("hotspot_top_k") = 8);
+
+  m.def("coreml_inference_benchmark",
+        [](const std::string& model_path, std::size_t n, int iters) {
+          double avg_ms = -1.0;
+          const auto st = lc::apple::benchmarkCoreMLInference(model_path, n, iters, &avg_ms);
+          return statusReportDict(st, avg_ms);
+        },
+        py::arg("model_path"),
+        py::arg("n") = 1024,
+        py::arg("iters") = 10);
+  m.def("mpsgraph_vector_add_benchmark",
+        [](std::size_t n, int iters) {
+          double avg_ms = -1.0;
+          const auto st = lc::apple::benchmarkMpsGraphVectorAdd(n, iters, &avg_ms);
+          return statusReportDict(st, avg_ms);
+        },
+        py::arg("n") = 1024,
+        py::arg("iters") = 10);
+  m.def("mpsgraph_train_step_benchmark",
+        [](std::size_t n, int iters) {
+          double avg_ms = -1.0;
+          const auto st = lc::apple::benchmarkMpsGraphTrainStep(n, iters, &avg_ms);
+          return statusReportDict(st, avg_ms);
+        },
+        py::arg("n") = 1024,
+        py::arg("iters") = 10);
 }

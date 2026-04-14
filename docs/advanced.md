@@ -58,6 +58,8 @@ The docs workflow now regenerates API references and validates markdown links be
 
 ```bash
 python3 scripts/generate_capability_docs.py
+python3 scripts/generate_phase_e_contract_docs.py
+python3 scripts/generate_import_export_matrix_docs.py
 python3 scripts/generate_roadmap_history.py
 python3 scripts/generate_api_reference_docs.py
 python3 scripts/check_docs_links.py README.md docs
@@ -67,6 +69,11 @@ Generated API reference outputs:
 
 - [docs/reference/python_api_generated.md](reference/python_api_generated.md)
 - [docs/reference/cpp_api_generated.md](reference/cpp_api_generated.md)
+
+Generated interop contract outputs:
+
+- [docs/phase_e_contracts.md](phase_e_contracts.md)
+- [docs/import_export_matrix.md](import_export_matrix.md)
 
 ## Benchmark Suite
 

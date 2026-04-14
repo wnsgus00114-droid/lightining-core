@@ -1,0 +1,85 @@
+{
+  "schema_version": "interop_import_export_matrix_v1",
+  "generated_at_utc": "2026-04-14T00:00:00+00:00",
+  "source": "static_docs_seed",
+  "rows": [
+    {
+      "bridge": "lightning",
+      "runtime_available": true,
+      "import_kind": "numpy_ndarray",
+      "export_kind": "numpy_ndarray",
+      "dtypes": ["float32", "int64(token_ids)"],
+      "layout": ["seq_dmodel_2d", "nchw_4d"],
+      "shape_constraints": "ops-specific (validated at runtime)",
+      "zero_copy": "no",
+      "fallback_reason_codes": ["none"]
+    },
+    {
+      "bridge": "torch",
+      "runtime_available": false,
+      "import_kind": "torch.Tensor",
+      "export_kind": "torch.Tensor",
+      "dtypes": ["float32", "int64(token_ids)"],
+      "layout": ["contiguous tensor preferred"],
+      "shape_constraints": "runner/adapter contract validated",
+      "zero_copy": "eligible on cpu+contiguous+dtype-match",
+      "fallback_reason_codes": ["none", "interop_torch_tensor_boundary_copy"]
+    },
+    {
+      "bridge": "tensorflow",
+      "runtime_available": false,
+      "import_kind": "tf.Tensor or numpy shim",
+      "export_kind": "tf.Tensor or numpy shim",
+      "dtypes": ["float32", "int64(token_ids)"],
+      "layout": ["tensor/ndarray contiguous preferred"],
+      "shape_constraints": "runner/adapter contract validated",
+      "zero_copy": "no",
+      "fallback_reason_codes": [
+        "none",
+        "tf_runtime_unavailable",
+        "tf_tensor_boundary_copy",
+        "tf_runner_graph_policy_forced_eager",
+        "tf_runner_graph_execute_failed",
+        "tf_runner_interop_policy_forced_lightning",
+        "tf_runner_unknown_fallback"
+      ]
+    },
+    {
+      "bridge": "coreml",
+      "runtime_available": true,
+      "import_kind": "runner input + optional .mlmodel/.mlmodelc path",
+      "export_kind": "runner output numpy + coreml benchmark report",
+      "dtypes": ["float32", "int64(token_ids)->runner preprocess"],
+      "layout": ["seq_dmodel_2d"],
+      "shape_constraints": "alpha adapter; benchmark bridge path",
+      "zero_copy": "eligible on float32 contiguous inputs",
+      "fallback_reason_codes": [
+        "none",
+        "coreml_runtime_unavailable",
+        "coreml_model_path_missing",
+        "coreml_inference_failed",
+        "coreml_tensor_boundary_copy",
+        "coreml_runner_graph_policy_forced_eager",
+        "coreml_runner_unknown_fallback"
+      ]
+    },
+    {
+      "bridge": "mlx",
+      "runtime_available": false,
+      "import_kind": "mlx.core array (or numpy shim)",
+      "export_kind": "numpy (and optional mlx bridge path)",
+      "dtypes": ["float32", "int64(token_ids)->runner preprocess"],
+      "layout": ["seq_dmodel_2d"],
+      "shape_constraints": "alpha adapter; runtime optional",
+      "zero_copy": "eligible on float32 contiguous inputs",
+      "fallback_reason_codes": [
+        "none",
+        "mlx_runtime_unavailable",
+        "mlx_tensor_boundary_copy",
+        "mlx_bridge_execute_failed",
+        "mlx_runner_graph_policy_forced_eager",
+        "mlx_runner_unknown_fallback"
+      ]
+    }
+  ]
+}

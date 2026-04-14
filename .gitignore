@@ -1,5 +1,8 @@
 # Build artifacts
 build/
+build-*/
+build_*/
+build_lc/
 dist/
 *.egg-info/
 
@@ -12,6 +15,14 @@ __pycache__/
 
 # Runtime/benchmark local caches
 .lightning_core_*.csv
+
+# Local benchmark artifacts
+benchmarks/reports/ci/*.local.*
+benchmarks/reports/ci/local_*
+benchmarks/reports/ci/tmp_*
+benchmarks/reports/ci/version_sync_report.local.*
+benchmarks/reports/local_*/
+benchmarks/reports/releases/
 
 # VS Code
 .vscode/

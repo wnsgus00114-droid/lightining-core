@@ -1,6 +1,6 @@
 # Lightning Core Roadmap
 
-Version context: v0.4.7 (2026-04-12)
+Version context: v0.5.6 (2026-04-14)
 
 ## 1) North Star
 
@@ -20,14 +20,14 @@ Lightning Core started as a macOS Apple-Silicon performance runtime. The long-te
 - Keep API ergonomics improvements performance-safe by default.
 - Keep deprecation policy explicit; no silent API behavior changes.
 
-## 3) Current Baseline (v0.4.7)
+## 3) Current Baseline (v0.5.6)
 
 - Public package on PyPI/TestPyPI.
 - C++ core + Python bindings for runtime/tensor/ops/attention/integrated APIs.
 - Resident execution and policy-based IO control.
 - Public benchmark source and quick benchmark script.
 - Legacy `cudajun` forwarding headers removed; canonical namespace is `lightning_core`.
-- `lc.api` engine bridge (`set_engine/get_engine`) is stabilized for `lightning/torch/auto` on the same API surface.
+- `lc.api` engine bridge (`set_engine/get_engine`) is stabilized on one API surface for `lightning/torch/tf/coreml/mlx/auto`.
 - Graph plan summary API + fixed host-dispatch evidence fields are available in graph/eager benchmark artifacts.
 - Fusion pass-3 includes `attention_forward + projection(matmul)` rule-based pattern with explain report coverage.
 - Checkpoint IO v1.2 integrity includes model-level save/load helpers, tensor/manifest hash validation, and structured diagnostics.
@@ -430,6 +430,30 @@ Each milestone tracks:
 53. [completed] v0.4.7 phase D exit audit (M-F audit/ci/docs)
    - deliverable: phase-D audit bundle with quickstart <=50-line check, inference/training example presence, and runner variance (`CV<=2%`) hard gate.
    - acceptance: `phase_d_exit_audit` JSON/MD/bundle artifacts are generated in CI/release workflows with contract-sync checks.
+54. [completed] v0.4.8 stabilization patch (M-A runtime/docs/test)
+   - deliverable: tune-cache v2 header/version management for matmul/attention + docs-pages metadata sync + local artifact cleanup policy.
+   - acceptance: worktree-local artifact policy is codified in `.gitignore` and tune-cache format regression smoke (`test_python_tune_cache_format_smoke.py`) is wired into CI.
+55. [completed] v0.5.0 phase E contract freeze (M-E docs/ci)
+   - deliverable: `docs/engine_federation_contract.json` promoted to source-of-truth with engine/reason/budget constants and CI sync checker.
+   - acceptance: workflow contract checks hard-fail on docs/CI drift via `check_phase_e_contract_sync.py`.
+56. [completed] v0.5.1 CoreML engine adapter alpha (M-E python/benchmark)
+   - deliverable: CoreML runtime bridge exposed to Python runner adapter with deterministic fallback telemetry/reason codes.
+   - acceptance: CoreML adapter benchmark emits fixed CSV/JSON/MD schema and smoke tests validate runtime-missing/model-missing deterministic paths.
+57. [completed] v0.5.2 MLX bridge alpha (M-E python/benchmark)
+   - deliverable: MLX runner adapter with runtime-optional bridge path and reason-coded fallback/copy telemetry.
+   - acceptance: MLX benchmark + smoke tests enforce reason-code coverage and artifact schema stability.
+58. [completed] v0.5.3 engine federation policy v2 (M-E runtime/benchmark)
+   - deliverable: unified federation schema (`lightning/torch/tf/coreml/mlx/auto`) and bridge telemetry contract surfaces in `lc.api`.
+   - acceptance: route-policy schema/bridge schema/version surfaces are queryable and benchmarked across adapters.
+59. [completed] v0.5.4 import/export compatibility matrix automation (M-E docs/tooling)
+   - deliverable: auto-generated import/export capability matrix (`README + docs`) from `docs/import_export_compatibility_matrix.json`.
+   - acceptance: CI/docs workflows enforce matrix sync (`generate_import_export_matrix_docs.py --check`) and link checks pass.
+60. [completed] v0.5.5 interop perf gate 강화 (M-E benchmark/ci)
+   - deliverable: `interop_perf_gate_v2.py` aggregates bridge-level reason coverage + overhead decomposition into fixed release evidence.
+   - acceptance: release/CI workflows hard-gate reason/explain coverage and boundary overhead budgets with structured JSON/MD outputs.
+61. [completed] v0.5.6 phase E exit audit (M-F audit/ci/docs)
+   - deliverable: `phase_e_exit_audit.py` + candidate bundle manifest with matrix-sync/docs-sync/artifact-hash evidence lock.
+   - acceptance: Phase E exit audit is wired into benchmark/release workflows as a hard gate.
 
 Progress update history is auto-generated from:
 
@@ -575,7 +599,7 @@ Progress update history is auto-generated from:
 
 <!-- AUTO-ROADMAP-HISTORY:END -->
 
-## 11) Release-Train Detail (v0.4.7 -> v1.0)
+## 11) Release-Train Detail (v0.5.6 -> v1.0)
 
 ## 11.1 2026 Q2 (v0.1.32 ~ v0.2.0): Runtime Contracts [completed]
 

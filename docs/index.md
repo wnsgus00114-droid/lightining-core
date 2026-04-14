@@ -9,6 +9,8 @@ Use one of the paths below depending on your goal.
 | Install / First Run | [Quickstart: Install](quickstart.md#1-install) | Set up, build, import, and run your first checks quickly. |
 | Performance / Tuning | [Advanced: Benchmark Suite](advanced.md#benchmark-suite) | Benchmark, tune runtime/session behavior, and inspect profiles. |
 | Capability / Environment Contracts | [Capability Matrix](capability_matrix.md) | Check runtime backend capability surfaces and validated test environments. |
+| Interop Contracts | [Phase E Contracts](phase_e_contracts.md) | Inspect engine-federation reason-code/budget constants used by CI gates. |
+| Import/Export Scope | [Import/Export Matrix](import_export_matrix.md) | See supported bridge import/export/dtype/layout/shape constraints in one table. |
 | API Surface Navigation | [API Index](api_index.md) | Jump directly to Python/C++/C API entry points and source links. |
 | Generated API Reference | [Python API (Generated)](reference/python_api_generated.md) | Auto-generated symbol inventory for pybind module functions/classes. |
 | Contribute / Code Changes | [Contributor: Validation Checklist](contributor.md#5-validation-checklist-before-commit) | Follow contribution workflow, naming rules, and validation steps. |

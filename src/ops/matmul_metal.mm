@@ -25,6 +25,10 @@ namespace lightning_core::detail {
 namespace {
 
 constexpr uint32_t kMatMulMaxAsyncInflight = 256;
+constexpr const char* kTuneCacheHeaderTag = "#lc_tune_cache";
+constexpr uint32_t kTuneCacheFormatVersion = 2;
+constexpr uint32_t kTuneCacheMinSupportedVersion = 1;
+constexpr uint32_t kTuneCacheMaxSupportedVersion = 2;
 
 struct MatMulTuneKey {
   uint32_t m = 0;
@@ -132,6 +136,35 @@ std::string resolveMatMulTuneCachePath() {
     return std::string(env);
   }
   return std::string(".lightning_core_matmul_tune_cache.csv");
+}
+
+std::vector<std::string> splitCsvColumns(const std::string& line) {
+  std::stringstream ss(line);
+  std::string tok;
+  std::vector<std::string> cols;
+  while (std::getline(ss, tok, ',')) {
+    cols.push_back(tok);
+  }
+  return cols;
+}
+
+bool parseTuneCacheHeaderVersion(
+    const std::vector<std::string>& cols,
+    const char* expected_kind,
+    uint32_t* version_out) {
+  if (version_out == nullptr || expected_kind == nullptr) {
+    return false;
+  }
+  if (cols.size() != 3 || cols[0] != kTuneCacheHeaderTag || cols[1] != expected_kind) {
+    return false;
+  }
+  try {
+    const uint32_t version = static_cast<uint32_t>(std::stoul(cols[2]));
+    *version_out = version;
+    return true;
+  } catch (...) {
+    return false;
+  }
 }
 
 enum class MatMulSmallBatchMode {
@@ -389,6 +422,8 @@ void saveMatMulTuneCacheIfDirty(MetalMatMulContext& ctx) {
   if (!ofs.is_open()) {
     return;
   }
+  ofs << kTuneCacheHeaderTag << ",matmul," << kTuneCacheFormatVersion << "\n";
+  ofs << "#columns,m,k,n,best_tile,use_mps,use_vec2_kernel\n";
   for (const auto& kv : ctx.tune_cache) {
     ofs << kv.first.m << "," << kv.first.k << "," << kv.first.n << "," << kv.second.best_tile << ","
       << static_cast<unsigned>(kv.second.use_mps ? 1 : 0) << ","
@@ -408,6 +443,8 @@ void saveMatMulSmallTuneCacheIfDirty(MetalMatMulContext& ctx) {
   if (!ofs.is_open()) {
     return;
   }
+  ofs << kTuneCacheHeaderTag << ",matmul_small," << kTuneCacheFormatVersion << "\n";
+  ofs << "#columns,m,k,n,use_small_kernel\n";
   for (const auto& kv : ctx.small_tune_cache) {
     ofs << kv.first.m << "," << kv.first.k << "," << kv.first.n << ","
         << static_cast<unsigned>(kv.second.use_small_kernel ? 1 : 0) << "\n";
@@ -429,18 +466,35 @@ void loadMatMulTuneCacheIfNeeded(MetalMatMulContext& ctx) {
     return;
   }
 
+  bool strict_layout_v2 = false;
+  bool unsupported_header = false;
   std::string line;
   while (std::getline(ifs, line)) {
     if (line.empty()) {
       continue;
     }
-    std::stringstream ss(line);
-    std::string tok;
-    std::vector<std::string> cols;
-    while (std::getline(ss, tok, ',')) {
-      cols.push_back(tok);
+    std::vector<std::string> cols = splitCsvColumns(line);
+    if (cols.empty()) {
+      continue;
     }
-    if (cols.size() != 5 && cols.size() != 6) {
+    if (!cols[0].empty() && cols[0][0] == '#') {
+      if (cols[0] == kTuneCacheHeaderTag) {
+        uint32_t version = 0;
+        if (!parseTuneCacheHeaderVersion(cols, "matmul", &version) ||
+            version < kTuneCacheMinSupportedVersion ||
+            version > kTuneCacheMaxSupportedVersion) {
+          unsupported_header = true;
+          break;
+        }
+        strict_layout_v2 = (version >= 2);
+      }
+      continue;
+    }
+    if (strict_layout_v2) {
+      if (cols.size() != 6) {
+        continue;
+      }
+    } else if (cols.size() != 5 && cols.size() != 6) {
       continue;
     }
     try {
@@ -457,6 +511,9 @@ void loadMatMulTuneCacheIfNeeded(MetalMatMulContext& ctx) {
       // Ignore malformed lines.
     }
   }
+  if (unsupported_header) {
+    ctx.tune_cache.clear();
+  }
 }
 
 void loadMatMulSmallTuneCacheIfNeeded(MetalMatMulContext& ctx) {
@@ -471,18 +528,35 @@ void loadMatMulSmallTuneCacheIfNeeded(MetalMatMulContext& ctx) {
     return;
   }
 
+  bool strict_layout_v2 = false;
+  bool unsupported_header = false;
   std::string line;
   while (std::getline(ifs, line)) {
     if (line.empty()) {
       continue;
     }
-    std::stringstream ss(line);
-    std::string tok;
-    std::vector<std::string> cols;
-    while (std::getline(ss, tok, ',')) {
-      cols.push_back(tok);
+    std::vector<std::string> cols = splitCsvColumns(line);
+    if (cols.empty()) {
+      continue;
     }
-    if (cols.size() != 4) {
+    if (!cols[0].empty() && cols[0][0] == '#') {
+      if (cols[0] == kTuneCacheHeaderTag) {
+        uint32_t version = 0;
+        if (!parseTuneCacheHeaderVersion(cols, "matmul_small", &version) ||
+            version < kTuneCacheMinSupportedVersion ||
+            version > kTuneCacheMaxSupportedVersion) {
+          unsupported_header = true;
+          break;
+        }
+        strict_layout_v2 = (version >= 2);
+      }
+      continue;
+    }
+    if (strict_layout_v2) {
+      if (cols.size() != 4) {
+        continue;
+      }
+    } else if (cols.size() != 4) {
       continue;
     }
     try {
@@ -496,6 +570,9 @@ void loadMatMulSmallTuneCacheIfNeeded(MetalMatMulContext& ctx) {
     } catch (...) {
       // Ignore malformed lines.
     }
+  }
+  if (unsupported_header) {
+    ctx.small_tune_cache.clear();
   }
 }
 

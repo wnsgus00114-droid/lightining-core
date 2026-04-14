@@ -1,0 +1,63 @@
+{
+  "contract_version": "phase_e_v0.5.x_lock",
+  "as_of_date": "2026-04-14",
+  "scope": "Phase E engine federation contracts for torch/tf/coreml/mlx bridges, compatibility matrix, and interop audit gates.",
+  "engine_values": [
+    "lightning",
+    "torch",
+    "tf",
+    "coreml",
+    "mlx",
+    "auto"
+  ],
+  "route_policy_keys": [
+    "conv",
+    "attention",
+    "graph"
+  ],
+  "torch_reason_codes": [
+    "none",
+    "interop_torch_tensor_boundary_copy"
+  ],
+  "tf_reason_codes": [
+    "none",
+    "tf_runtime_unavailable",
+    "tf_tensor_boundary_copy",
+    "tf_runner_graph_policy_forced_eager",
+    "tf_runner_graph_execute_failed",
+    "tf_runner_interop_policy_forced_lightning",
+    "tf_runner_unknown_fallback"
+  ],
+  "coreml_reason_codes": [
+    "none",
+    "coreml_runtime_unavailable",
+    "coreml_model_path_missing",
+    "coreml_inference_failed",
+    "coreml_tensor_boundary_copy",
+    "coreml_runner_graph_policy_forced_eager",
+    "coreml_runner_unknown_fallback"
+  ],
+  "mlx_reason_codes": [
+    "none",
+    "mlx_runtime_unavailable",
+    "mlx_tensor_boundary_copy",
+    "mlx_bridge_execute_failed",
+    "mlx_runner_graph_policy_forced_eager",
+    "mlx_runner_unknown_fallback"
+  ],
+  "ci_constants": {
+    "phase_e_exit_audit": {
+      "min_torch_reason_coverage_pct": 100.0,
+      "min_tf_reason_coverage_pct": 100.0,
+      "min_coreml_reason_coverage_pct": 100.0,
+      "min_mlx_reason_coverage_pct": 100.0,
+      "min_federation_reason_coverage_pct": 100.0,
+      "max_boundary_overhead_ms": 6.0,
+      "require_import_export_matrix_sync": true,
+      "require_roundtrip_artifacts": true,
+      "min_perf_explain_coverage_pct": 100.0
+    }
+  },
+  "release_baseline_version": "v0.5.6",
+  "release_baseline_date": "2026-04-14"
+}

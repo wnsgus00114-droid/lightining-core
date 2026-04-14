@@ -18,8 +18,8 @@ _ATTN_SESSION_CACHE: OrderedDict[tuple[int, int, bool, str], Any] = OrderedDict(
 _CACHE_LOCK = Lock()
 _BACKEND_LOCK = Lock()
 _BACKEND_ENGINE = "lightning"
-_VALID_ENGINES = {"lightning", "torch", "auto"}
-_VALID_ROUTE_ENGINES = {"lightning", "torch", "auto"}
+_VALID_ENGINES = {"lightning", "torch", "tf", "coreml", "mlx", "auto"}
+_VALID_ROUTE_ENGINES = {"lightning", "torch", "tf", "coreml", "mlx", "auto"}
 _VALID_ROUTE_POLICY_KEYS = {"conv", "attention", "graph"}
 _LC_API_BRIDGE_LOCK = Lock()
 _LC_API_BRIDGE_INSTALLED = False
@@ -35,6 +35,9 @@ _RUNNER_CONTRACT_FREEZE_ID = "v0.4.0-rc0"
 _RUNNER_ARTIFACT_SCHEMA_VERSION = "model_runner_artifact_v3"
 _TORCH_RUNNER_ADAPTER_SCHEMA_VERSION = "torch_runner_adapter_v2"
 _TF_RUNNER_ADAPTER_SCHEMA_VERSION = "tf_runner_adapter_v2"
+_COREML_RUNNER_ADAPTER_SCHEMA_VERSION = "coreml_runner_adapter_v1"
+_MLX_RUNNER_ADAPTER_SCHEMA_VERSION = "mlx_runner_adapter_v1"
+_ENGINE_FEDERATION_POLICY_SCHEMA_VERSION = "engine_federation_policy_v2"
 _VALID_RUNNER_MODES = {"eager", "graph", "interop"}
 _VALID_RUNNER_DEVICES = {"auto", "metal", "cpu", "cuda"}
 _VALID_RUNNER_LAYOUTS = {"seq_dmodel_2d"}
@@ -53,6 +56,23 @@ _TF_BRIDGE_REASON_CODES = {
     "tf_runner_interop_policy_forced_lightning",
     "tf_runner_unknown_fallback",
 }
+_COREML_BRIDGE_REASON_CODES = {
+    "none",
+    "coreml_runtime_unavailable",
+    "coreml_model_path_missing",
+    "coreml_inference_failed",
+    "coreml_tensor_boundary_copy",
+    "coreml_runner_graph_policy_forced_eager",
+    "coreml_runner_unknown_fallback",
+}
+_MLX_BRIDGE_REASON_CODES = {
+    "none",
+    "mlx_runtime_unavailable",
+    "mlx_tensor_boundary_copy",
+    "mlx_bridge_execute_failed",
+    "mlx_runner_graph_policy_forced_eager",
+    "mlx_runner_unknown_fallback",
+}
 _RUNNER_FALLBACK_REASON_CODES = {
     "none",
     "runner_graph_policy_forced_eager",
@@ -61,6 +81,8 @@ _RUNNER_FALLBACK_REASON_CODES = {
 }
 _DEFAULT_TORCH_ADAPTER_OVERHEAD_BUDGET_MS = 5.0
 _DEFAULT_TF_ADAPTER_OVERHEAD_BUDGET_MS = 5.0
+_DEFAULT_COREML_ADAPTER_OVERHEAD_BUDGET_MS = 8.0
+_DEFAULT_MLX_ADAPTER_OVERHEAD_BUDGET_MS = 5.0
 
 
 class CheckpointValidationError(ValueError):
@@ -91,6 +113,28 @@ def _import_torch():
         return None, None
 
 
+def _import_tensorflow():
+    try:
+        import tensorflow as tf
+
+        return tf
+    except Exception:
+        return None
+
+
+def _import_mlx():
+    try:
+        import mlx.core as mx
+
+        return mx
+    except Exception:
+        return None
+
+
+def _coreml_runtime_available() -> bool:
+    return hasattr(lc, "coreml_inference_benchmark") and callable(getattr(lc, "coreml_inference_benchmark"))
+
+
 def _torch_device_for(device: str) -> str:
     torch, _ = _import_torch()
     if torch is None:
@@ -109,6 +153,12 @@ def _resolve_engine(device: str) -> str:
         return "lightning"
     if configured == "torch":
         return "torch"
+    if configured == "tf":
+        return "tf" if _import_tensorflow() is not None else "lightning"
+    if configured == "coreml":
+        return "coreml" if _coreml_runtime_available() else "lightning"
+    if configured == "mlx":
+        return "mlx" if _import_mlx() is not None else "lightning"
 
     # auto mode: prefer lightning-core when the requested device is natively available.
     if device == "metal" and hasattr(lc, "metal_available") and lc.metal_available():
@@ -119,7 +169,15 @@ def _resolve_engine(device: str) -> str:
         return "lightning"
 
     torch, _ = _import_torch()
-    return "torch" if torch is not None else "lightning"
+    if torch is not None:
+        return "torch"
+    if _import_tensorflow() is not None:
+        return "tf"
+    if _import_mlx() is not None:
+        return "mlx"
+    if _coreml_runtime_available():
+        return "coreml"
+    return "lightning"
 
 
 def _normalize_route_engine(value: Any, *, field: str) -> str:
@@ -348,6 +406,157 @@ def tf_runner_adapter_schema() -> dict[str, Any]:
     }
 
 
+def coreml_runner_adapter_schema() -> dict[str, Any]:
+    """Contract for CoreML runner adapter telemetry + artifact fields."""
+    return {
+        "schema_version": _COREML_RUNNER_ADAPTER_SCHEMA_VERSION,
+        "mode_values": sorted(_VALID_RUNNER_MODES),
+        "boundary_reason_codes": sorted(_COREML_BRIDGE_REASON_CODES),
+        "runner_fallback_reason_codes": sorted(_RUNNER_FALLBACK_REASON_CODES),
+        "required_telemetry_fields": [
+            "schema_version",
+            "requested_mode",
+            "resolved_mode",
+            "resolved_engine",
+            "runner_fallback_reason_code",
+            "boundary_reason_code",
+            "boundary_copy_mode",
+            "boundary_copy_bytes_estimate",
+            "boundary_overhead_est_ns",
+            "boundary_overhead_est_ms",
+            "boundary_overhead_budget_ms",
+            "boundary_overhead_budget_pass",
+            "reason_code_covered",
+            "zero_copy_eligible",
+            "route_policy",
+            "runtime",
+        ],
+        "runtime_values": ["coreml", "numpy_shim"],
+        "default_overhead_budget_ms": float(_DEFAULT_COREML_ADAPTER_OVERHEAD_BUDGET_MS),
+    }
+
+
+def mlx_runner_adapter_schema() -> dict[str, Any]:
+    """Contract for MLX runner adapter telemetry + artifact fields."""
+    return {
+        "schema_version": _MLX_RUNNER_ADAPTER_SCHEMA_VERSION,
+        "mode_values": sorted(_VALID_RUNNER_MODES),
+        "boundary_reason_codes": sorted(_MLX_BRIDGE_REASON_CODES),
+        "runner_fallback_reason_codes": sorted(_RUNNER_FALLBACK_REASON_CODES),
+        "required_telemetry_fields": [
+            "schema_version",
+            "requested_mode",
+            "resolved_mode",
+            "resolved_engine",
+            "runner_fallback_reason_code",
+            "boundary_reason_code",
+            "boundary_copy_mode",
+            "boundary_copy_bytes_estimate",
+            "boundary_overhead_est_ns",
+            "boundary_overhead_est_ms",
+            "boundary_overhead_budget_ms",
+            "boundary_overhead_budget_pass",
+            "reason_code_covered",
+            "zero_copy_eligible",
+            "route_policy",
+            "runtime",
+        ],
+        "runtime_values": ["mlx", "numpy_shim"],
+        "default_overhead_budget_ms": float(_DEFAULT_MLX_ADAPTER_OVERHEAD_BUDGET_MS),
+    }
+
+
+def engine_federation_policy_schema() -> dict[str, Any]:
+    """Engine federation policy v2 contract constants."""
+    return {
+        "schema_version": _ENGINE_FEDERATION_POLICY_SCHEMA_VERSION,
+        "engines": sorted(_VALID_ENGINES),
+        "route_policy_keys": sorted(_VALID_ROUTE_POLICY_KEYS),
+        "route_engines": sorted(_VALID_ROUTE_ENGINES),
+        "runner_modes": sorted(_VALID_RUNNER_MODES),
+        "bridge_schema_versions": {
+            "torch": _TORCH_RUNNER_ADAPTER_SCHEMA_VERSION,
+            "tf": _TF_RUNNER_ADAPTER_SCHEMA_VERSION,
+            "coreml": _COREML_RUNNER_ADAPTER_SCHEMA_VERSION,
+            "mlx": _MLX_RUNNER_ADAPTER_SCHEMA_VERSION,
+        },
+        "default_overhead_budget_ms": {
+            "torch": float(_DEFAULT_TORCH_ADAPTER_OVERHEAD_BUDGET_MS),
+            "tf": float(_DEFAULT_TF_ADAPTER_OVERHEAD_BUDGET_MS),
+            "coreml": float(_DEFAULT_COREML_ADAPTER_OVERHEAD_BUDGET_MS),
+            "mlx": float(_DEFAULT_MLX_ADAPTER_OVERHEAD_BUDGET_MS),
+        },
+    }
+
+
+def import_export_compatibility_matrix() -> dict[str, Any]:
+    """Auto-generated compatibility matrix source for interop import/export docs."""
+    torch, _ = _import_torch()
+    mlx_mod = _import_mlx()
+    rows = [
+        {
+            "bridge": "lightning",
+            "runtime_available": True,
+            "import_kind": "numpy_ndarray",
+            "export_kind": "numpy_ndarray",
+            "dtypes": ["float32", "int64(token_ids)"],
+            "layout": ["seq_dmodel_2d", "nchw_4d"],
+            "shape_constraints": "ops-specific (validated at runtime)",
+            "zero_copy": "no",
+            "fallback_reason_codes": ["none"],
+        },
+        {
+            "bridge": "torch",
+            "runtime_available": bool(torch is not None),
+            "import_kind": "torch.Tensor",
+            "export_kind": "torch.Tensor",
+            "dtypes": ["float32", "int64(token_ids)"],
+            "layout": ["contiguous tensor preferred"],
+            "shape_constraints": "runner/adapter contract validated",
+            "zero_copy": "eligible on cpu+contiguous+dtype-match",
+            "fallback_reason_codes": sorted(_TORCH_BRIDGE_BOUNDARY_REASON_CODES),
+        },
+        {
+            "bridge": "tensorflow",
+            "runtime_available": bool(_import_tensorflow() is not None),
+            "import_kind": "tf.Tensor or numpy shim",
+            "export_kind": "tf.Tensor or numpy shim",
+            "dtypes": ["float32", "int64(token_ids)"],
+            "layout": ["tensor/ndarray contiguous preferred"],
+            "shape_constraints": "runner/adapter contract validated",
+            "zero_copy": "no",
+            "fallback_reason_codes": sorted(_TF_BRIDGE_REASON_CODES),
+        },
+        {
+            "bridge": "coreml",
+            "runtime_available": bool(_coreml_runtime_available()),
+            "import_kind": "runner input + optional .mlmodel/.mlmodelc path",
+            "export_kind": "runner output numpy + coreml benchmark report",
+            "dtypes": ["float32", "int64(token_ids)->runner preprocess"],
+            "layout": ["seq_dmodel_2d"],
+            "shape_constraints": "alpha adapter; benchmark bridge path",
+            "zero_copy": "eligible on float32 contiguous inputs",
+            "fallback_reason_codes": sorted(_COREML_BRIDGE_REASON_CODES),
+        },
+        {
+            "bridge": "mlx",
+            "runtime_available": bool(mlx_mod is not None),
+            "import_kind": "mlx.core array (or numpy shim)",
+            "export_kind": "numpy (and optional mlx bridge path)",
+            "dtypes": ["float32", "int64(token_ids)->runner preprocess"],
+            "layout": ["seq_dmodel_2d"],
+            "shape_constraints": "alpha adapter; runtime optional",
+            "zero_copy": "eligible on float32 contiguous inputs",
+            "fallback_reason_codes": sorted(_MLX_BRIDGE_REASON_CODES),
+        },
+    ]
+    return {
+        "schema_version": "interop_import_export_matrix_v1",
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "rows": rows,
+    }
+
+
 def validate_runner_config(config: Any, *, strict: bool = False) -> dict[str, Any]:
     """Validate runner input/config contract with structured reason codes."""
 
@@ -504,6 +713,15 @@ def _resolve_engine_preference(device: str, preference: str) -> tuple[str, str]:
         torch, _ = _import_torch()
         if torch is None:
             return "lightning", "torch_unavailable_fallback"
+    if pref == "tf":
+        if _import_tensorflow() is None:
+            return "lightning", "tf_unavailable_fallback"
+    if pref == "coreml":
+        if not _coreml_runtime_available():
+            return "lightning", "coreml_unavailable_fallback"
+    if pref == "mlx":
+        if _import_mlx() is None:
+            return "lightning", "mlx_unavailable_fallback"
     return pref, "requested"
 
 
@@ -595,11 +813,17 @@ def _as_out_f32_c_no_copy(out: Any) -> np.ndarray:
 def set_backend(name: str) -> None:
     name_l = str(name).strip().lower()
     if name_l not in _VALID_ENGINES:
-        raise ValueError("backend engine must be one of: lightning, torch, auto")
+        raise ValueError("backend engine must be one of: lightning, torch, tf, coreml, mlx, auto")
     if name_l == "torch":
         torch, _ = _import_torch()
         if torch is None:
             raise RuntimeError("torch backend requested but torch is not installed")
+    if name_l == "tf" and _import_tensorflow() is None:
+        raise RuntimeError("tf backend requested but tensorflow is not installed")
+    if name_l == "coreml" and not _coreml_runtime_available():
+        raise RuntimeError("coreml backend requested but coreml runtime bridge is unavailable")
+    if name_l == "mlx" and _import_mlx() is None:
+        raise RuntimeError("mlx backend requested but mlx is not installed")
     global _BACKEND_ENGINE
     with _BACKEND_LOCK:
         _BACKEND_ENGINE = name_l
@@ -1619,25 +1843,26 @@ class TinyTransformerRunner:
         fallback_message = ""
         graph_pref = str(rp.get("graph", "auto"))
         attention_pref = str(rp.get("attention", "auto"))
+        graph_engine, graph_note = _resolve_engine_preference(device, graph_pref)
+        attention_engine, attention_note = _resolve_engine_preference(device, attention_pref)
 
         run_engine = get_backend()
         if requested_mode == "graph":
             run_engine = "lightning"
-            if graph_pref == "torch":
+            if graph_engine != "lightning":
                 resolved_mode = "eager"
-                run_engine = "torch"
+                run_engine = graph_engine
                 fallback_reason = "runner_graph_policy_forced_eager"
-                fallback_message = "route_policy.graph=torch forces eager path"
+                fallback_message = f"route_policy.graph={graph_pref} forces eager path ({graph_note})"
         elif requested_mode == "interop":
             resolved_mode = "eager"
-            run_engine = "torch"
-            if attention_pref == "lightning":
-                run_engine = "lightning"
+            run_engine = attention_engine if attention_engine != "auto" else "torch"
+            if attention_engine == "lightning":
                 fallback_reason = "runner_interop_policy_forced_lightning"
                 fallback_message = "route_policy.attention=lightning overrides interop default torch engine"
         else:
-            if attention_pref in {"lightning", "torch"}:
-                run_engine = attention_pref
+            if attention_engine in {"lightning", "torch", "tf", "coreml", "mlx"}:
+                run_engine = attention_engine
 
         if resolved_mode == "graph":
             try:
@@ -2115,6 +2340,358 @@ def create_tf_model_runner_adapter(
             return get_tf_wrapper_telemetry(self.layer)
 
     return TFRunnerModelAdapter(runner, layer)
+
+
+def _map_coreml_runner_fallback_reason(reason_code: Any) -> str:
+    token = str(reason_code).strip().lower()
+    if token in {"", "none"}:
+        return "none"
+    if token == "runner_graph_policy_forced_eager":
+        return "coreml_runner_graph_policy_forced_eager"
+    return "coreml_runner_unknown_fallback"
+
+
+def _map_mlx_runner_fallback_reason(reason_code: Any) -> str:
+    token = str(reason_code).strip().lower()
+    if token in {"", "none"}:
+        return "none"
+    if token == "runner_graph_policy_forced_eager":
+        return "mlx_runner_graph_policy_forced_eager"
+    return "mlx_runner_unknown_fallback"
+
+
+def _coreml_telemetry_default() -> dict[str, Any]:
+    return {
+        "schema_version": _COREML_RUNNER_ADAPTER_SCHEMA_VERSION,
+        "requested_mode": "eager",
+        "resolved_mode": "eager",
+        "resolved_engine": "lightning",
+        "runner_fallback_reason_code": "none",
+        "boundary_reason_code": "coreml_runtime_unavailable",
+        "boundary_copy_mode": "fallback_copy",
+        "boundary_copy_bytes_estimate": 0,
+        "boundary_overhead_est_ns": 0,
+        "boundary_overhead_est_ms": 0.0,
+        "boundary_overhead_budget_ms": float(_DEFAULT_COREML_ADAPTER_OVERHEAD_BUDGET_MS),
+        "boundary_overhead_budget_pass": True,
+        "reason_code_covered": True,
+        "zero_copy_eligible": False,
+        "supported_boundary_reason_codes": sorted(_COREML_BRIDGE_REASON_CODES),
+        "supported_runner_fallback_reason_codes": sorted(_RUNNER_FALLBACK_REASON_CODES),
+        "runtime": "numpy_shim",
+    }
+
+
+def create_coreml_model_runner_adapter(
+    runner: TinyTransformerRunner,
+    *,
+    mode: str = "eager",
+    device: str = "auto",
+    route_policy: dict[str, Any] | None = None,
+    coreml_model_path: str | None = None,
+    allow_missing_runtime: bool = True,
+    enable_coreml_runtime: bool = True,
+    overhead_budget_ms: float = _DEFAULT_COREML_ADAPTER_OVERHEAD_BUDGET_MS,
+    benchmark_n: int = 1024,
+    benchmark_iters: int = 1,
+):
+    """CoreML engine adapter alpha (runner-level).
+
+    Alpha contract: output numerics are produced by the LC runner path while
+    CoreML bridge execution/availability is captured through deterministic
+    telemetry and reason codes.
+    """
+    route_validation = validate_route_policy(route_policy, strict=True)
+    route_norm = dict(route_validation.get("normalized", {"conv": "auto", "attention": "auto", "graph": "auto"}))
+    budget_ms = float(overhead_budget_ms)
+    if (not np.isfinite(budget_ms)) or budget_ms <= 0.0:
+        raise ValueError("overhead_budget_ms must be a positive finite value")
+
+    model_path = str(coreml_model_path or "").strip()
+    bench_n = max(1, int(benchmark_n))
+    bench_iters = max(1, int(benchmark_iters))
+
+    class CoreMLRunnerAdapter:
+        def __init__(self, model_runner: TinyTransformerRunner):
+            self.runner = model_runner
+            self._last_telemetry: dict[str, Any] = _coreml_telemetry_default()
+
+        def infer(self, inputs: Any):
+            t0 = time.perf_counter_ns()
+            x_arr = np.asarray(inputs)
+            x_cpu = np.asarray(x_arr, dtype=np.float32 if not np.issubdtype(x_arr.dtype, np.integer) else np.int64)
+            t1 = time.perf_counter_ns()
+            y_np, run_meta = self.runner.run(
+                x_cpu,
+                mode=mode,
+                device=device,
+                route_policy=route_norm,
+                return_metadata=True,
+            )
+            t2 = time.perf_counter_ns()
+            out = np.asarray(y_np, dtype=np.float32)
+            t3 = time.perf_counter_ns()
+
+            runtime = "numpy_shim"
+            bridge_reason = "coreml_runtime_unavailable"
+            coreml_report: dict[str, Any] = {"ok": False, "status": "not_run", "avg_ms": -1.0}
+            runtime_available = bool(enable_coreml_runtime) and _coreml_runtime_available()
+            if runtime_available:
+                runtime = "coreml"
+                if not model_path:
+                    bridge_reason = "coreml_model_path_missing"
+                else:
+                    try:
+                        coreml_report = dict(lc.coreml_inference_benchmark(model_path, bench_n, bench_iters))
+                        if bool(coreml_report.get("ok", False)):
+                            bridge_reason = "none"
+                        else:
+                            bridge_reason = "coreml_inference_failed"
+                    except Exception:
+                        bridge_reason = "coreml_inference_failed"
+            elif not bool(allow_missing_runtime):
+                raise RuntimeError("coreml runtime is unavailable")
+
+            zero_copy_eligible = bool(np.asarray(x_cpu).dtype == np.float32 and np.asarray(x_cpu).flags.c_contiguous)
+            if bridge_reason == "none" and (not zero_copy_eligible):
+                bridge_reason = "coreml_tensor_boundary_copy"
+            copy_mode = "zero_copy" if zero_copy_eligible and bridge_reason == "none" else "fallback_copy"
+            copy_bytes = 0 if copy_mode == "zero_copy" else int(np.asarray(x_cpu).nbytes + np.asarray(out).nbytes)
+
+            runner_reason = _map_coreml_runner_fallback_reason(run_meta.get("fallback_reason_code", "none"))
+            if runner_reason != "none" and bridge_reason == "none":
+                bridge_reason = runner_reason
+
+            if bridge_reason not in _COREML_BRIDGE_REASON_CODES:
+                bridge_reason = "coreml_runner_unknown_fallback"
+
+            boundary_overhead_ns = int((t1 - t0) + (t3 - t2))
+            boundary_overhead_ms = float(boundary_overhead_ns / 1e6)
+            reason_covered = bool(
+                bridge_reason in _COREML_BRIDGE_REASON_CODES
+                and str(run_meta.get("fallback_reason_code", "none")) in _RUNNER_FALLBACK_REASON_CODES
+            )
+
+            self._last_telemetry = {
+                "schema_version": _COREML_RUNNER_ADAPTER_SCHEMA_VERSION,
+                "requested_mode": str(mode),
+                "resolved_mode": str(run_meta.get("resolved_mode", mode)),
+                "resolved_engine": str(run_meta.get("resolved_engine", "unknown")),
+                "runner_fallback_reason_code": str(run_meta.get("fallback_reason_code", "none")),
+                "boundary_reason_code": str(bridge_reason),
+                "boundary_copy_mode": str(copy_mode),
+                "boundary_copy_bytes_estimate": int(copy_bytes),
+                "boundary_overhead_est_ns": int(boundary_overhead_ns),
+                "boundary_overhead_est_ms": float(boundary_overhead_ms),
+                "boundary_overhead_budget_ms": float(budget_ms),
+                "boundary_overhead_budget_pass": bool(boundary_overhead_ms <= budget_ms + 1.0e-12),
+                "reason_code_covered": bool(reason_covered),
+                "zero_copy_eligible": bool(zero_copy_eligible),
+                "route_policy": dict(route_norm),
+                "input_kind": str(run_meta.get("input_kind", "unknown")),
+                "runtime": str(runtime),
+                "coreml_report": dict(coreml_report),
+                "supported_boundary_reason_codes": sorted(_COREML_BRIDGE_REASON_CODES),
+                "supported_runner_fallback_reason_codes": sorted(_RUNNER_FALLBACK_REASON_CODES),
+            }
+            return out
+
+        def run(self, inputs: Any):
+            return self.infer(inputs)
+
+        def benchmark(self, inputs: Any, *, warmup: int = 4, iters: int = 20) -> dict[str, Any]:
+            warm_i = max(0, int(warmup))
+            iter_i = max(1, int(iters))
+            for _ in range(warm_i):
+                self.infer(inputs)
+            samples: list[float] = []
+            for _ in range(iter_i):
+                t0 = time.perf_counter_ns()
+                self.infer(inputs)
+                t1 = time.perf_counter_ns()
+                samples.append((t1 - t0) / 1e6)
+            samples_sorted = sorted(samples)
+            med = float(samples_sorted[len(samples_sorted) // 2]) if samples_sorted else float("nan")
+            return {
+                "schema_version": "coreml_runner_model_bench_v1",
+                "warmup": warm_i,
+                "iters": iter_i,
+                "median_ms": med,
+                "min_ms": float(min(samples_sorted)) if samples_sorted else float("nan"),
+                "max_ms": float(max(samples_sorted)) if samples_sorted else float("nan"),
+                "telemetry": self.last_telemetry(),
+            }
+
+        def last_telemetry(self) -> dict[str, Any]:
+            return dict(self._last_telemetry)
+
+    return CoreMLRunnerAdapter(runner)
+
+
+def get_coreml_wrapper_telemetry(adapter: Any) -> dict[str, Any]:
+    getter = getattr(adapter, "last_telemetry", None)
+    if callable(getter):
+        out = getter()
+        if isinstance(out, dict):
+            return dict(out)
+    return _coreml_telemetry_default()
+
+
+def _mlx_telemetry_default() -> dict[str, Any]:
+    return {
+        "schema_version": _MLX_RUNNER_ADAPTER_SCHEMA_VERSION,
+        "requested_mode": "eager",
+        "resolved_mode": "eager",
+        "resolved_engine": "lightning",
+        "runner_fallback_reason_code": "none",
+        "boundary_reason_code": "mlx_runtime_unavailable",
+        "boundary_copy_mode": "fallback_copy",
+        "boundary_copy_bytes_estimate": 0,
+        "boundary_overhead_est_ns": 0,
+        "boundary_overhead_est_ms": 0.0,
+        "boundary_overhead_budget_ms": float(_DEFAULT_MLX_ADAPTER_OVERHEAD_BUDGET_MS),
+        "boundary_overhead_budget_pass": True,
+        "reason_code_covered": True,
+        "zero_copy_eligible": False,
+        "supported_boundary_reason_codes": sorted(_MLX_BRIDGE_REASON_CODES),
+        "supported_runner_fallback_reason_codes": sorted(_RUNNER_FALLBACK_REASON_CODES),
+        "runtime": "numpy_shim",
+    }
+
+
+def create_mlx_model_runner_adapter(
+    runner: TinyTransformerRunner,
+    *,
+    mode: str = "eager",
+    device: str = "auto",
+    route_policy: dict[str, Any] | None = None,
+    allow_missing_runtime: bool = True,
+    overhead_budget_ms: float = _DEFAULT_MLX_ADAPTER_OVERHEAD_BUDGET_MS,
+    mlx_module: Any | None = None,
+):
+    """MLX bridge alpha (runner-level)."""
+    route_validation = validate_route_policy(route_policy, strict=True)
+    route_norm = dict(route_validation.get("normalized", {"conv": "auto", "attention": "auto", "graph": "auto"}))
+    budget_ms = float(overhead_budget_ms)
+    if (not np.isfinite(budget_ms)) or budget_ms <= 0.0:
+        raise ValueError("overhead_budget_ms must be a positive finite value")
+
+    mx = mlx_module if mlx_module is not None else _import_mlx()
+    if mx is None and (not bool(allow_missing_runtime)):
+        raise RuntimeError("mlx runtime is unavailable")
+
+    class MLXRunnerAdapter:
+        def __init__(self, model_runner: TinyTransformerRunner):
+            self.runner = model_runner
+            self._last_telemetry: dict[str, Any] = _mlx_telemetry_default()
+
+        def infer(self, inputs: Any):
+            t0 = time.perf_counter_ns()
+            x_arr = np.asarray(inputs)
+            x_cpu = np.asarray(x_arr, dtype=np.float32 if not np.issubdtype(x_arr.dtype, np.integer) else np.int64)
+            t1 = time.perf_counter_ns()
+            y_np, run_meta = self.runner.run(
+                x_cpu,
+                mode=mode,
+                device=device,
+                route_policy=route_norm,
+                return_metadata=True,
+            )
+            t2 = time.perf_counter_ns()
+            out = np.asarray(y_np, dtype=np.float32)
+            t3 = time.perf_counter_ns()
+
+            runtime = "numpy_shim"
+            bridge_reason = "mlx_runtime_unavailable"
+            if mx is not None:
+                runtime = "mlx"
+                try:
+                    _ = mx.array(np.asarray(x_cpu, dtype=np.float32))
+                    bridge_reason = "none"
+                except Exception:
+                    bridge_reason = "mlx_bridge_execute_failed"
+
+            zero_copy_eligible = bool(np.asarray(x_cpu).dtype == np.float32 and np.asarray(x_cpu).flags.c_contiguous)
+            if bridge_reason == "none" and (not zero_copy_eligible):
+                bridge_reason = "mlx_tensor_boundary_copy"
+            copy_mode = "zero_copy" if zero_copy_eligible and bridge_reason == "none" else "fallback_copy"
+            copy_bytes = 0 if copy_mode == "zero_copy" else int(np.asarray(x_cpu).nbytes + np.asarray(out).nbytes)
+
+            runner_reason = _map_mlx_runner_fallback_reason(run_meta.get("fallback_reason_code", "none"))
+            if runner_reason != "none" and bridge_reason == "none":
+                bridge_reason = runner_reason
+            if bridge_reason not in _MLX_BRIDGE_REASON_CODES:
+                bridge_reason = "mlx_runner_unknown_fallback"
+
+            boundary_overhead_ns = int((t1 - t0) + (t3 - t2))
+            boundary_overhead_ms = float(boundary_overhead_ns / 1e6)
+            reason_covered = bool(
+                bridge_reason in _MLX_BRIDGE_REASON_CODES
+                and str(run_meta.get("fallback_reason_code", "none")) in _RUNNER_FALLBACK_REASON_CODES
+            )
+
+            self._last_telemetry = {
+                "schema_version": _MLX_RUNNER_ADAPTER_SCHEMA_VERSION,
+                "requested_mode": str(mode),
+                "resolved_mode": str(run_meta.get("resolved_mode", mode)),
+                "resolved_engine": str(run_meta.get("resolved_engine", "unknown")),
+                "runner_fallback_reason_code": str(run_meta.get("fallback_reason_code", "none")),
+                "boundary_reason_code": str(bridge_reason),
+                "boundary_copy_mode": str(copy_mode),
+                "boundary_copy_bytes_estimate": int(copy_bytes),
+                "boundary_overhead_est_ns": int(boundary_overhead_ns),
+                "boundary_overhead_est_ms": float(boundary_overhead_ms),
+                "boundary_overhead_budget_ms": float(budget_ms),
+                "boundary_overhead_budget_pass": bool(boundary_overhead_ms <= budget_ms + 1.0e-12),
+                "reason_code_covered": bool(reason_covered),
+                "zero_copy_eligible": bool(zero_copy_eligible),
+                "route_policy": dict(route_norm),
+                "input_kind": str(run_meta.get("input_kind", "unknown")),
+                "runtime": str(runtime),
+                "supported_boundary_reason_codes": sorted(_MLX_BRIDGE_REASON_CODES),
+                "supported_runner_fallback_reason_codes": sorted(_RUNNER_FALLBACK_REASON_CODES),
+            }
+            return out
+
+        def run(self, inputs: Any):
+            return self.infer(inputs)
+
+        def benchmark(self, inputs: Any, *, warmup: int = 4, iters: int = 20) -> dict[str, Any]:
+            warm_i = max(0, int(warmup))
+            iter_i = max(1, int(iters))
+            for _ in range(warm_i):
+                self.infer(inputs)
+            samples: list[float] = []
+            for _ in range(iter_i):
+                t0 = time.perf_counter_ns()
+                self.infer(inputs)
+                t1 = time.perf_counter_ns()
+                samples.append((t1 - t0) / 1e6)
+            samples_sorted = sorted(samples)
+            med = float(samples_sorted[len(samples_sorted) // 2]) if samples_sorted else float("nan")
+            return {
+                "schema_version": "mlx_runner_model_bench_v1",
+                "warmup": warm_i,
+                "iters": iter_i,
+                "median_ms": med,
+                "min_ms": float(min(samples_sorted)) if samples_sorted else float("nan"),
+                "max_ms": float(max(samples_sorted)) if samples_sorted else float("nan"),
+                "telemetry": self.last_telemetry(),
+            }
+
+        def last_telemetry(self) -> dict[str, Any]:
+            return dict(self._last_telemetry)
+
+    return MLXRunnerAdapter(runner)
+
+
+def get_mlx_wrapper_telemetry(adapter: Any) -> dict[str, Any]:
+    getter = getattr(adapter, "last_telemetry", None)
+    if callable(getter):
+        out = getter()
+        if isinstance(out, dict):
+            return dict(out)
+    return _mlx_telemetry_default()
 
 
 def _sum_to_shape(grad: np.ndarray, shape: tuple[int, ...]) -> np.ndarray:
@@ -4247,6 +4824,10 @@ def _install_lc_api_engine_bridge() -> bool:
         api.runner_artifact_schema = runner_artifact_schema
         api.torch_runner_adapter_schema = torch_runner_adapter_schema
         api.tf_runner_adapter_schema = tf_runner_adapter_schema
+        api.coreml_runner_adapter_schema = coreml_runner_adapter_schema
+        api.mlx_runner_adapter_schema = mlx_runner_adapter_schema
+        api.engine_federation_policy_schema = engine_federation_policy_schema
+        api.import_export_compatibility_matrix = import_export_compatibility_matrix
         api.runner_replay_report = runner_replay_report
         api.TinyTransformerRunner = TinyTransformerRunner
         api.create_torch_module_wrapper = create_torch_module_wrapper
@@ -4254,6 +4835,10 @@ def _install_lc_api_engine_bridge() -> bool:
         api.create_tf_keras_layer_wrapper = create_tf_keras_layer_wrapper
         api.create_tf_model_runner_adapter = create_tf_model_runner_adapter
         api.get_tf_wrapper_telemetry = get_tf_wrapper_telemetry
+        api.create_coreml_model_runner_adapter = create_coreml_model_runner_adapter
+        api.get_coreml_wrapper_telemetry = get_coreml_wrapper_telemetry
+        api.create_mlx_model_runner_adapter = create_mlx_model_runner_adapter
+        api.get_mlx_wrapper_telemetry = get_mlx_wrapper_telemetry
 
         def _api_conv_relu_nchw(
             x: Any,

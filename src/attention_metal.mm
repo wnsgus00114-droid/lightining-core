@@ -26,6 +26,10 @@ namespace {
 constexpr uint32_t kMaxAsyncInflight = 64;
 constexpr double kTrainVec4AdoptRatio = 0.95;
 constexpr uint32_t kTuneCacheFlushEvery = 8;
+constexpr const char* kTuneCacheHeaderTag = "#lc_tune_cache";
+constexpr uint32_t kTuneCacheFormatVersion = 2;
+constexpr uint32_t kTuneCacheMinSupportedVersion = 1;
+constexpr uint32_t kTuneCacheMaxSupportedVersion = 2;
 
 constexpr int kTrainPlanFusedScalar = 0;
 constexpr int kTrainPlanFusedVec4T32 = 1;
@@ -185,6 +189,31 @@ std::string resolveTuneCachePath() {
   return std::string(".lightning_core_attn_tune_cache.csv");
 }
 
+std::vector<std::string> splitCsvColumns(const std::string& line) {
+  std::stringstream ss(line);
+  std::string tok;
+  std::vector<std::string> cols;
+  while (std::getline(ss, tok, ',')) {
+    cols.push_back(tok);
+  }
+  return cols;
+}
+
+bool parseTuneCacheHeaderVersion(const std::vector<std::string>& cols, uint32_t* version_out) {
+  if (version_out == nullptr) {
+    return false;
+  }
+  if (cols.size() != 3 || cols[0] != kTuneCacheHeaderTag || cols[1] != "attention") {
+    return false;
+  }
+  try {
+    *version_out = static_cast<uint32_t>(std::stoul(cols[2]));
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
+
 void saveTuneCacheIfDirty(MetalAttentionContext& ctx) {
   if (!ctx.tune_cache_loaded || !ctx.tune_cache_dirty) {
     return;
@@ -197,6 +226,8 @@ void saveTuneCacheIfDirty(MetalAttentionContext& ctx) {
   if (!ofs.is_open()) {
     return;
   }
+  ofs << kTuneCacheHeaderTag << ",attention," << kTuneCacheFormatVersion << "\n";
+  ofs << "#columns,kind,seq,dim,causal,resident_hint,sync_hint,compute_loss_or_mode,mode\n";
 
   for (const auto& kv : ctx.forward_mode_cache) {
     const ForwardTuneKey& k = kv.first;
@@ -250,17 +281,27 @@ void loadTuneCacheIfNeeded(MetalAttentionContext& ctx) {
     return;
   }
 
+  bool unsupported_header = false;
   std::string line;
   while (std::getline(ifs, line)) {
     if (line.empty()) {
       continue;
     }
-
-    std::stringstream ss(line);
-    std::string tok;
-    std::vector<std::string> cols;
-    while (std::getline(ss, tok, ',')) {
-      cols.push_back(tok);
+    std::vector<std::string> cols = splitCsvColumns(line);
+    if (cols.empty()) {
+      continue;
+    }
+    if (!cols[0].empty() && cols[0][0] == '#') {
+      if (cols[0] == kTuneCacheHeaderTag) {
+        uint32_t version = 0;
+        if (!parseTuneCacheHeaderVersion(cols, &version) ||
+            version < kTuneCacheMinSupportedVersion ||
+            version > kTuneCacheMaxSupportedVersion) {
+          unsupported_header = true;
+          break;
+        }
+      }
+      continue;
     }
 
     try {
@@ -287,6 +328,10 @@ void loadTuneCacheIfNeeded(MetalAttentionContext& ctx) {
     } catch (...) {
       // Ignore malformed cache lines.
     }
+  }
+  if (unsupported_header) {
+    ctx.forward_mode_cache.clear();
+    ctx.train_mode_cache.clear();
   }
 }
 

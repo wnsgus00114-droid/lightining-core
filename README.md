@@ -13,7 +13,7 @@
 
 # 3. One-line Summary
 Lightning Core is a macOS-first, Metal-backed runtime that provides low-level control (resident IO, policy routing, fused paths) with easy Python APIs.
-Current public release: **v0.4.7** (2026-04-12).
+Current public release: **v0.5.6** (2026-04-14).
 
 # 4. Abstract
 Lightning Core targets high-iteration experimentation on Apple Silicon by combining:
@@ -658,11 +658,15 @@ Primary public benchmark path:
 - `benchmarks/python/model_runner_alpha_bench.py` (tiny transformer runner beta-contract benchmark: replay/schema/checkpoint-matrix fields)
 - `benchmarks/python/torch_runner_adapter_bench.py` (Torch adapter GA: boundary reason coverage + overhead budget gate)
 - `benchmarks/python/tf_runner_adapter_bench.py` (TF adapter beta: tensorflow/numpy-shim dual-path + artifact schema gate)
+- `benchmarks/python/coreml_runner_adapter_bench.py` (CoreML adapter alpha: deterministic runtime/model fallback reason coverage + budget gate)
+- `benchmarks/python/mlx_runner_adapter_bench.py` (MLX bridge alpha: runtime-optional reason coverage + budget gate)
+- `benchmarks/python/interop_perf_gate_v2.py` (bridge-wise overhead decomposition + federation reason/explain coverage gate)
 - `benchmarks/python/model_runner_variance_gate.py` (runner stability gate: trimmed suite CV threshold)
 - `benchmarks/python/cost_model_v2_calibration.py` (profile-signature keyed cost calibration with reproducible JSON/MD output)
 - `benchmarks/python/phase_b_exit_audit.py` (ROADMAP 11.2 success-metric audit + release-candidate evidence bundle generation)
 - `benchmarks/python/phase_c_exit_audit.py` (Phase C exit audit: fusion/cost/perf/interop trend bundle + rc-lock gate)
 - `benchmarks/python/phase_d_exit_audit.py` (Phase D exit audit: adapter coverage + quickstart <=50 lines + runner variance gate bundle)
+- `benchmarks/python/phase_e_exit_audit.py` (Phase E exit audit: engine-federation reason/budget/matrix-sync + evidence bundle gate)
 - `benchmarks/large_gemm_auto_sweep.py` (large GEMM policy sweep)
 - `benchmarks/generate_cross_suite_summary.py` (cross-suite summary report)
 
@@ -688,8 +692,12 @@ benchmarks/
     graph_eager_ab_bench.py
     engine_split_bench.py
     model_runner_alpha_bench.py
+    coreml_runner_adapter_bench.py
+    mlx_runner_adapter_bench.py
+    interop_perf_gate_v2.py
     cost_model_v2_calibration.py
     phase_c_exit_audit.py
+    phase_e_exit_audit.py
   large_gemm_auto_sweep.py
   generate_cross_suite_summary.py
   # optional native benchmarks (low-level):
@@ -717,7 +725,11 @@ python benchmarks/python/quick_bench.py --warmup 40 --iters 200 --out benchmark_
 python benchmarks/python/graph_eager_ab_bench.py --device auto --warmup 6 --iters 24 --trace-iters 8
 python benchmarks/python/engine_split_bench.py --device auto --warmup 20 --iters 120 --trace-iters 8 --require-boundary-reason-coverage --min-boundary-reason-coverage-pct 100 --require-max-boundary-overhead-ms --max-boundary-overhead-ms 0.35 --out-dir benchmark_results
 python benchmarks/python/model_runner_alpha_bench.py --device auto --warmup 4 --iters 20 --require-replay-match --validate-artifact-schema --csv benchmark_results/model_runner_alpha.csv --json benchmark_results/model_runner_alpha.json --md benchmark_results/model_runner_alpha.md
+python benchmarks/python/coreml_runner_adapter_bench.py --device cpu --warmup 4 --iters 20 --require-reason-coverage --min-reason-coverage-pct 100 --require-budget-gate --max-boundary-overhead-ms 6.0 --out-dir benchmark_results
+python benchmarks/python/mlx_runner_adapter_bench.py --device cpu --warmup 4 --iters 20 --require-reason-coverage --min-reason-coverage-pct 100 --require-budget-gate --max-boundary-overhead-ms 6.0 --out-dir benchmark_results
+python benchmarks/python/interop_perf_gate_v2.py --engine-interop-json benchmark_results/engine_split_interop.json --coreml-adapter-json benchmark_results/coreml_runner_adapter.json --mlx-adapter-json benchmark_results/mlx_runner_adapter.json --out-json benchmark_results/interop_perf_gate_v2.json --out-md benchmark_results/interop_perf_gate_v2.md --require-pass
 python benchmarks/python/phase_b_exit_audit.py --graph-json benchmark_results/graph_eager_ab.json --contract-json docs/phase_b_graph_contract.json --out-json benchmark_results/phase_b_exit_audit.json --out-md benchmark_results/phase_b_exit_audit.md --bundle-json benchmark_results/phase_b_exit_candidate_bundle.json
+python benchmarks/python/phase_e_exit_audit.py --interop-gate-json benchmark_results/interop_perf_gate_v2.json --coreml-adapter-json benchmark_results/coreml_runner_adapter.json --mlx-adapter-json benchmark_results/mlx_runner_adapter.json --matrix-json docs/import_export_compatibility_matrix.json --contract-json docs/engine_federation_contract.json --out-json benchmark_results/phase_e_exit_audit.json --out-md benchmark_results/phase_e_exit_audit.md --bundle-json benchmark_results/phase_e_exit_candidate_bundle.json --require-pass
 python benchmarks/large_gemm_auto_sweep.py
 python benchmarks/generate_cross_suite_summary.py
 ```
@@ -4987,7 +4999,7 @@ docs/                           # quickstart/advanced/contributor docs
 ```
 
 # 35. Roadmap
-Roadmap baseline is now aligned to **v0.4.7** and tracked in detail in [ROADMAP.md](ROADMAP.md).
+Roadmap baseline is now aligned to **v0.5.6** and tracked in detail in [ROADMAP.md](ROADMAP.md).
 
 Immediate replan (2026-04-01, roadmap-aligned):
 1. [completed] Complete backend abstraction split (compute/memory/sync/profiler) and lock public docs/examples.
@@ -5196,7 +5208,7 @@ Roadmap progress history is auto-generated from:
 
 Phase A (2026 Q2, `v0.1.32`-`v0.2.0`, completed): Runtime Core Hardening
 - Finalize backend contracts (compute/memory/sync/profiler split).
-- Stabilize integrated engine selector (`lightning` / `torch` / `auto`) for macOS-first workflows.
+- Stabilize integrated engine selector on one surface (`lightning` / `torch` / `tf` / `coreml` / `mlx` / `auto`) for macOS-first workflows.
 - Lock tensor lifetime and metadata rules across Metal/CPU parity tests.
 - Add deterministic trace/profiling hooks and fallback behavior.
 
@@ -5305,6 +5317,117 @@ Source of truth:
 
 <!-- AUTO-PHASE-B-CONTRACT:END -->
 
+## 35.2 Phase E Engine Federation Baseline
+
+Source of truth:
+- `docs/engine_federation_contract.json`
+- generated docs: `docs/phase_e_contracts.md`
+
+<!-- AUTO-PHASE-E-CONTRACT:BEGIN -->
+
+### Phase E Engine Federation Contract (Auto-generated)
+
+- Contract version: `phase_e_v0.5.x_lock`
+- As-of date: `2026-04-14`
+- Source of truth: `docs/engine_federation_contract.json`
+- CI sync checker: `python scripts/check_phase_e_contract_sync.py`
+
+#### Engine Values
+
+| Engine |
+| --- |
+| lightning |
+| torch |
+| tf |
+| coreml |
+| mlx |
+| auto |
+
+#### Route Policy Keys
+
+| Key |
+| --- |
+| conv |
+| attention |
+| graph |
+
+#### Bridge Reason Codes
+
+| Torch |
+| --- |
+| none |
+| interop_torch_tensor_boundary_copy |
+
+| TensorFlow |
+| --- |
+| none |
+| tf_runtime_unavailable |
+| tf_tensor_boundary_copy |
+| tf_runner_graph_policy_forced_eager |
+| tf_runner_graph_execute_failed |
+| tf_runner_interop_policy_forced_lightning |
+| tf_runner_unknown_fallback |
+
+| CoreML |
+| --- |
+| none |
+| coreml_runtime_unavailable |
+| coreml_model_path_missing |
+| coreml_inference_failed |
+| coreml_tensor_boundary_copy |
+| coreml_runner_graph_policy_forced_eager |
+| coreml_runner_unknown_fallback |
+
+| MLX |
+| --- |
+| none |
+| mlx_runtime_unavailable |
+| mlx_tensor_boundary_copy |
+| mlx_bridge_execute_failed |
+| mlx_runner_graph_policy_forced_eager |
+| mlx_runner_unknown_fallback |
+
+#### CI Constants (Phase E Exit Audit)
+
+| Key | Value |
+| --- | --- |
+| max_boundary_overhead_ms | 6.0 |
+| min_coreml_reason_coverage_pct | 100.0 |
+| min_federation_reason_coverage_pct | 100.0 |
+| min_mlx_reason_coverage_pct | 100.0 |
+| min_perf_explain_coverage_pct | 100.0 |
+| min_tf_reason_coverage_pct | 100.0 |
+| min_torch_reason_coverage_pct | 100.0 |
+| require_import_export_matrix_sync | True |
+| require_roundtrip_artifacts | True |
+
+<!-- AUTO-PHASE-E-CONTRACT:END -->
+
+## 35.3 Import/Export Compatibility Matrix
+
+Source of truth:
+- `docs/import_export_compatibility_matrix.json`
+- generated docs: `docs/import_export_matrix.md`
+
+<!-- AUTO-IMPORT-EXPORT-MATRIX:BEGIN -->
+
+### Import/Export Compatibility Matrix (Auto-generated)
+
+- Schema version: `interop_import_export_matrix_v1`
+- Snapshot generated at (UTC): `2026-04-14T00:00:00+00:00`
+- Source of truth: `docs/import_export_compatibility_matrix.json`
+- Generated by: `python scripts/generate_import_export_matrix_docs.py --refresh-runtime-snapshot`
+
+| Bridge | Runtime Available | Import | Export | DTypes | Layout | Shape Constraints | Zero-Copy | Fallback Reason Codes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| lightning | Yes | numpy_ndarray | numpy_ndarray | float32<br>int64(token_ids) | seq_dmodel_2d<br>nchw_4d | ops-specific (validated at runtime) | no | none |
+| torch | No | torch.Tensor | torch.Tensor | float32<br>int64(token_ids) | contiguous tensor preferred | runner/adapter contract validated | eligible on cpu+contiguous+dtype-match | none<br>interop_torch_tensor_boundary_copy |
+| tensorflow | No | tf.Tensor or numpy shim | tf.Tensor or numpy shim | float32<br>int64(token_ids) | tensor/ndarray contiguous preferred | runner/adapter contract validated | no | none<br>tf_runtime_unavailable<br>tf_tensor_boundary_copy<br>tf_runner_graph_policy_forced_eager<br>tf_runner_graph_execute_failed<br>tf_runner_interop_policy_forced_lightning<br>tf_runner_unknown_fallback |
+| coreml | Yes | runner input + optional .mlmodel/.mlmodelc path | runner output numpy + coreml benchmark report | float32<br>int64(token_ids)->runner preprocess | seq_dmodel_2d | alpha adapter; benchmark bridge path | eligible on float32 contiguous inputs | none<br>coreml_runtime_unavailable<br>coreml_model_path_missing<br>coreml_inference_failed<br>coreml_tensor_boundary_copy<br>coreml_runner_graph_policy_forced_eager<br>coreml_runner_unknown_fallback |
+| mlx | No | mlx.core array (or numpy shim) | numpy (and optional mlx bridge path) | float32<br>int64(token_ids)->runner preprocess | seq_dmodel_2d | alpha adapter; runtime optional | eligible on float32 contiguous inputs | none<br>mlx_runtime_unavailable<br>mlx_tensor_boundary_copy<br>mlx_bridge_execute_failed<br>mlx_runner_graph_policy_forced_eager<br>mlx_runner_unknown_fallback |
+
+<!-- AUTO-IMPORT-EXPORT-MATRIX:END -->
+
 # 36. Citation
 If you use Lightning Core in research, please cite it as software:
 
@@ -5342,4 +5465,4 @@ Community feedback channels we actively monitor:
 
 Lightning Core is stable enough for experimentation and benchmarking, while APIs and internals continue to evolve quickly.
 Visibility update: repository topics and benchmark discoverability documentation are actively maintained.
-Current release train: **v0.4.7**.
+Current release train: **v0.5.6**.

@@ -17,6 +17,7 @@ Main Python surfaces:
 - Tensor ops: `vector_add`, `matrix_add`, `matrix_sub`, `matmul2d`, `conv2d_nchw`
 - Attention: `attention2d`, `attention_forward`, `AttentionSession`
 - Integrated API namespace: `lc.api.*` (clean operation names for conv/attention/integrated paths)
+- Engine federation surfaces: `set_engine/get_engine`, `*_runner_adapter_schema`, `create_*_model_runner_adapter`, `import_export_compatibility_matrix`
 
 Related binding sources:
 

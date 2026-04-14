@@ -14,6 +14,7 @@ jobs:
       LC_PHASE_B_CONTRACT_JSON: docs/phase_b_graph_contract.json
       LC_PHASE_C_CONTRACT_JSON: docs/phase_c_engine_contract.json
       LC_PHASE_D_CONTRACT_JSON: docs/phase_d_runner_contract.json
+      LC_PHASE_E_CONTRACT_JSON: docs/engine_federation_contract.json
       LC_GRAPH_AB_WARMUP: "4"
       LC_GRAPH_AB_ITERS: "12"
       LC_GRAPH_AB_TRACE_ITERS: "6"
@@ -37,6 +38,13 @@ jobs:
       LC_TF_INTEROP_MIN_REASON_COVERAGE_PCT: "100.0"
       LC_TORCH_RUNNER_MIN_REASON_COVERAGE_PCT: "100.0"
       LC_TF_RUNNER_MIN_REASON_COVERAGE_PCT: "100.0"
+      LC_PHASE_E_MIN_TORCH_REASON_COVERAGE_PCT: "100.0"
+      LC_PHASE_E_MIN_TF_REASON_COVERAGE_PCT: "100.0"
+      LC_PHASE_E_MIN_COREML_REASON_COVERAGE_PCT: "100.0"
+      LC_PHASE_E_MIN_MLX_REASON_COVERAGE_PCT: "100.0"
+      LC_PHASE_E_MIN_FEDERATION_REASON_COVERAGE_PCT: "100.0"
+      LC_PHASE_E_MAX_BOUNDARY_OVERHEAD_MS: "6.0"
+      LC_PHASE_E_MIN_PERF_EXPLAIN_COVERAGE_PCT: "100.0"
       LC_RUNNER_VARIANCE_MAX_CV_PCT: "2.0"
     permissions:
       contents: read
@@ -59,9 +67,12 @@ jobs:
       - name: Verify Phase B contract sync
         run: |
           python scripts/generate_phase_b_contract_docs.py --check
+          python scripts/generate_phase_e_contract_docs.py --check
+          python scripts/generate_import_export_matrix_docs.py --check
           python scripts/check_phase_b_contract_sync.py
           python scripts/check_phase_c_contract_sync.py
           python scripts/check_phase_d_contract_sync.py
+          python scripts/check_phase_e_contract_sync.py
           python scripts/sync_release_metadata.py \
             --check \
             --report-json benchmarks/reports/ci/version_sync_report.json \
@@ -208,6 +219,60 @@ jobs:
             > benchmarks/reports/ci/tf_runner_adapter.log
           cat benchmarks/reports/ci/tf_runner_adapter.log
 
+      - name: Run CoreML runner adapter benchmark
+        run: |
+          python benchmarks/python/coreml_runner_adapter_bench.py \
+            --device cpu \
+            --warmup 4 \
+            --iters 20 \
+            --require-reason-coverage \
+            --min-reason-coverage-pct "$LC_PHASE_E_MIN_COREML_REASON_COVERAGE_PCT" \
+            --require-budget-gate \
+            --max-boundary-overhead-ms "$LC_PHASE_E_MAX_BOUNDARY_OVERHEAD_MS" \
+            --out-dir benchmarks/reports/ci \
+            --csv coreml_runner_adapter.csv \
+            --json coreml_runner_adapter.json \
+            --md coreml_runner_adapter.md \
+            > benchmarks/reports/ci/coreml_runner_adapter.log
+          cat benchmarks/reports/ci/coreml_runner_adapter.log
+
+      - name: Run MLX runner adapter benchmark
+        run: |
+          python benchmarks/python/mlx_runner_adapter_bench.py \
+            --device cpu \
+            --warmup 4 \
+            --iters 20 \
+            --require-reason-coverage \
+            --min-reason-coverage-pct "$LC_PHASE_E_MIN_MLX_REASON_COVERAGE_PCT" \
+            --require-budget-gate \
+            --max-boundary-overhead-ms "$LC_PHASE_E_MAX_BOUNDARY_OVERHEAD_MS" \
+            --out-dir benchmarks/reports/ci \
+            --csv mlx_runner_adapter.csv \
+            --json mlx_runner_adapter.json \
+            --md mlx_runner_adapter.md \
+            > benchmarks/reports/ci/mlx_runner_adapter.log
+          cat benchmarks/reports/ci/mlx_runner_adapter.log
+
+      - name: Run interop perf gate v2
+        run: |
+          python benchmarks/python/interop_perf_gate_v2.py \
+            --engine-interop-json benchmarks/reports/ci/engine_split_interop.json \
+            --torch-adapter-json benchmarks/reports/ci/torch_runner_adapter.json \
+            --tf-runner-json benchmarks/reports/ci/tf_runner_adapter.json \
+            --coreml-adapter-json benchmarks/reports/ci/coreml_runner_adapter.json \
+            --mlx-adapter-json benchmarks/reports/ci/mlx_runner_adapter.json \
+            --out-json benchmarks/reports/ci/interop_perf_gate_v2.json \
+            --out-md benchmarks/reports/ci/interop_perf_gate_v2.md \
+            --max-boundary-overhead-ms "$LC_PHASE_E_MAX_BOUNDARY_OVERHEAD_MS" \
+            --min-reason-coverage-pct "$LC_PHASE_E_MIN_FEDERATION_REASON_COVERAGE_PCT" \
+            --min-perf-explain-coverage-pct "$LC_PHASE_E_MIN_PERF_EXPLAIN_COVERAGE_PCT" \
+            --require-reason-coverage \
+            --require-perf-explain-coverage \
+            --require-max-boundary-overhead-ms \
+            --require-pass \
+            > benchmarks/reports/ci/interop_perf_gate_v2.log
+          cat benchmarks/reports/ci/interop_perf_gate_v2.log
+
       - name: Run model runner variance gate
         run: |
           python benchmarks/python/model_runner_variance_gate.py \
@@ -319,6 +384,26 @@ jobs:
             > benchmarks/reports/ci/phase_d_exit_audit.log
           cat benchmarks/reports/ci/phase_d_exit_audit.log
 
+      - name: Run Phase E exit audit
+        run: |
+          python benchmarks/python/phase_e_exit_audit.py \
+            --interop-gate-json benchmarks/reports/ci/interop_perf_gate_v2.json \
+            --coreml-adapter-json benchmarks/reports/ci/coreml_runner_adapter.json \
+            --mlx-adapter-json benchmarks/reports/ci/mlx_runner_adapter.json \
+            --matrix-json docs/import_export_compatibility_matrix.json \
+            --contract-json "$LC_PHASE_E_CONTRACT_JSON" \
+            --out-json benchmarks/reports/ci/phase_e_exit_audit.json \
+            --out-md benchmarks/reports/ci/phase_e_exit_audit.md \
+            --bundle-json benchmarks/reports/ci/phase_e_exit_candidate_bundle.json \
+            --require-artifacts \
+            --artifact benchmarks/reports/ci/interop_perf_gate_v2.json \
+            --artifact benchmarks/reports/ci/coreml_runner_adapter.json \
+            --artifact benchmarks/reports/ci/mlx_runner_adapter.json \
+            --artifact docs/import_export_compatibility_matrix.json \
+            --require-pass \
+            > benchmarks/reports/ci/phase_e_exit_audit.log
+          cat benchmarks/reports/ci/phase_e_exit_audit.log
+
       - name: Publish summary to workflow
         if: always()
         run: |
@@ -373,6 +458,18 @@ jobs:
             echo "" >> "$GITHUB_STEP_SUMMARY"
             cat benchmarks/reports/ci/tf_runner_adapter.md >> "$GITHUB_STEP_SUMMARY"
           fi
+          if [ -f benchmarks/reports/ci/coreml_runner_adapter.md ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            cat benchmarks/reports/ci/coreml_runner_adapter.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f benchmarks/reports/ci/mlx_runner_adapter.md ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            cat benchmarks/reports/ci/mlx_runner_adapter.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f benchmarks/reports/ci/interop_perf_gate_v2.md ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            cat benchmarks/reports/ci/interop_perf_gate_v2.md >> "$GITHUB_STEP_SUMMARY"
+          fi
           if [ -f benchmarks/reports/ci/model_runner_variance_summary.md ]; then
             echo "" >> "$GITHUB_STEP_SUMMARY"
             cat benchmarks/reports/ci/model_runner_variance_summary.md >> "$GITHUB_STEP_SUMMARY"
@@ -388,6 +485,12 @@ jobs:
             cat benchmarks/reports/ci/phase_d_exit_audit.md >> "$GITHUB_STEP_SUMMARY"
           else
             echo "phase_d_exit_audit summary not found." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f benchmarks/reports/ci/phase_e_exit_audit.md ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            cat benchmarks/reports/ci/phase_e_exit_audit.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "phase_e_exit_audit summary not found." >> "$GITHUB_STEP_SUMMARY"
           fi
           if [ -f benchmarks/reports/ci/version_sync_report.md ]; then
             echo "" >> "$GITHUB_STEP_SUMMARY"
@@ -435,6 +538,17 @@ jobs:
             benchmarks/reports/ci/tf_runner_adapter.json
             benchmarks/reports/ci/tf_runner_adapter.md
             benchmarks/reports/ci/tf_runner_adapter.log
+            benchmarks/reports/ci/coreml_runner_adapter.csv
+            benchmarks/reports/ci/coreml_runner_adapter.json
+            benchmarks/reports/ci/coreml_runner_adapter.md
+            benchmarks/reports/ci/coreml_runner_adapter.log
+            benchmarks/reports/ci/mlx_runner_adapter.csv
+            benchmarks/reports/ci/mlx_runner_adapter.json
+            benchmarks/reports/ci/mlx_runner_adapter.md
+            benchmarks/reports/ci/mlx_runner_adapter.log
+            benchmarks/reports/ci/interop_perf_gate_v2.json
+            benchmarks/reports/ci/interop_perf_gate_v2.md
+            benchmarks/reports/ci/interop_perf_gate_v2.log
             benchmarks/reports/ci/model_runner_variance_runs.csv
             benchmarks/reports/ci/model_runner_variance_summary.json
             benchmarks/reports/ci/model_runner_variance_summary.md
@@ -455,5 +569,9 @@ jobs:
             benchmarks/reports/ci/phase_d_exit_audit.md
             benchmarks/reports/ci/phase_d_exit_candidate_bundle.json
             benchmarks/reports/ci/phase_d_exit_audit.log
+            benchmarks/reports/ci/phase_e_exit_audit.json
+            benchmarks/reports/ci/phase_e_exit_audit.md
+            benchmarks/reports/ci/phase_e_exit_candidate_bundle.json
+            benchmarks/reports/ci/phase_e_exit_audit.log
             benchmarks/reports/ci/version_sync_report.json
             benchmarks/reports/ci/version_sync_report.md
