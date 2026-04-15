@@ -158,7 +158,6 @@ void bindTensorType(py::module_& m, const char* name) {
         return out;
       });
 }
-
 void bindTensor(py::module_& m) {
   bindTensorViewType<lc::TensorView>(m, "TensorView");
   bindTensorViewType<lc::Tensor64View>(m, "Tensor64View");

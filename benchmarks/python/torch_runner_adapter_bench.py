@@ -237,12 +237,16 @@ def main() -> None:
                     "runner_fallback_reason_code": runner_reason,
                     "boundary_reason_code": boundary_reason,
                     "boundary_copy_mode": str(telem.get("boundary_copy_mode", "n/a")),
+                    "boundary_bridge_path_in": str(telem.get("boundary_bridge_path_in", "n/a")),
+                    "boundary_bridge_path_out": str(telem.get("boundary_bridge_path_out", "n/a")),
                     "boundary_copy_bytes_estimate": float(telem.get("boundary_copy_bytes_estimate", 0.0)),
                     "boundary_overhead_est_ns": float(telem.get("boundary_overhead_est_ns", 0.0)),
                     "boundary_overhead_est_ms": float(telem.get("boundary_overhead_est_ms", 0.0)),
                     "boundary_overhead_budget_ms": float(telem.get("boundary_overhead_budget_ms", args.max_boundary_overhead_ms)),
                     "boundary_overhead_budget_pass": bool(budget_pass),
                     "reason_code_covered": bool(reason_covered),
+                    "zero_copy_eligible": bool(telem.get("zero_copy_eligible", False)),
+                    "zero_copy_effective": bool(telem.get("zero_copy_effective", False)),
                     "note": "",
                 }
             )
@@ -269,12 +273,16 @@ def main() -> None:
         "runner_fallback_reason_code",
         "boundary_reason_code",
         "boundary_copy_mode",
+        "boundary_bridge_path_in",
+        "boundary_bridge_path_out",
         "boundary_copy_bytes_estimate",
         "boundary_overhead_est_ns",
         "boundary_overhead_est_ms",
         "boundary_overhead_budget_ms",
         "boundary_overhead_budget_pass",
         "reason_code_covered",
+        "zero_copy_eligible",
+        "zero_copy_effective",
         "note",
     ]
 

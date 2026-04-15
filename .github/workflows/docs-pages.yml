@@ -47,7 +47,9 @@ jobs:
           python scripts/generate_capability_docs.py
           python scripts/generate_phase_b_contract_docs.py
           python scripts/generate_phase_e_contract_docs.py
+          python scripts/generate_phase_f_contract_docs.py
           python scripts/generate_import_export_matrix_docs.py
+          python scripts/generate_test_matrix_docs.py
           python scripts/sync_release_metadata.py
           python scripts/generate_roadmap_history.py
           python scripts/generate_api_reference_docs.py
@@ -77,7 +79,7 @@ jobs:
         run: |
           echo "## Docs Pages Build Summary" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "- generated docs blocks: capability + phase-b-contract + phase-e-contract + import/export matrix + release-notes + roadmap history + API reference" >> "$GITHUB_STEP_SUMMARY"
+          echo "- generated docs blocks: capability + phase-b/e/f contracts + import/export matrix + test matrix + release-notes + roadmap history + API reference" >> "$GITHUB_STEP_SUMMARY"
           echo "- operator onboarding kit: docs/operator_onboarding_kit.md" >> "$GITHUB_STEP_SUMMARY"
           echo "- docs link check: success" >> "$GITHUB_STEP_SUMMARY"
           echo "- mkdocs build: success" >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,12 @@
+{
+  "contract_version": "test_matrix_v0.5.x",
+  "as_of_date": "2026-04-15",
+  "scope": "Release/tested-environment matrix automation contract",
+  "ci_constants": {
+    "min_rows": 3,
+    "require_macos_runner": true,
+    "require_python_classifier_sync": true
+  },
+  "release_baseline_version": "v0.5.7",
+  "release_baseline_date": "2026-04-15"
+}

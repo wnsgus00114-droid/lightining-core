@@ -47,3 +47,8 @@ add_test(NAME test_graph_ir COMMAND test_graph_ir)
 add_executable(test_backend_parity test_backend_parity.cpp)
 target_link_libraries(test_backend_parity PRIVATE lightning_core::lightning_core)
 add_test(NAME test_backend_parity COMMAND test_backend_parity)
+
+# C API/ABI version + struct-size freeze smoke test.
+add_executable(test_c_api_abi_freeze test_c_api_abi_freeze.cpp)
+target_link_libraries(test_c_api_abi_freeze PRIVATE lightning_core::lightning_core)
+add_test(NAME test_c_api_abi_freeze COMMAND test_c_api_abi_freeze)

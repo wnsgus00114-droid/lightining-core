@@ -2,6 +2,11 @@
 
 #include <stddef.h>
 
+#define LC_API_VERSION_MAJOR 0
+#define LC_API_VERSION_MINOR 6
+#define LC_API_VERSION_PATCH 0
+#define LC_API_VERSION_STRING "0.6.0-rc0"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -96,6 +101,15 @@ typedef struct lcBackendInterfaceContract {
   lcProfilerInterfaceContract profiler;
 } lcBackendInterfaceContract;
 
+typedef enum lcStructId {
+  LC_STRUCT_BACKEND_CAPABILITIES = 1,
+  LC_STRUCT_COMPUTE_INTERFACE_CONTRACT = 2,
+  LC_STRUCT_MEMORY_INTERFACE_CONTRACT = 3,
+  LC_STRUCT_SYNC_INTERFACE_CONTRACT = 4,
+  LC_STRUCT_PROFILER_INTERFACE_CONTRACT = 5,
+  LC_STRUCT_BACKEND_INTERFACE_CONTRACT = 6
+} lcStructId;
+
 lcError_t lcMalloc(void** ptr, size_t size_bytes);
 lcError_t lcFree(void* ptr);
 lcError_t lcMemcpy(void* dst, const void* src, size_t size_bytes, lcMemcpyKind kind);
@@ -115,6 +129,10 @@ lcError_t lcGetBackendCapabilities(lcDeviceKind device, lcBackendCapabilities* o
 lcError_t lcGetActiveBackendCapabilities(lcBackendCapabilities* out_caps);
 lcError_t lcGetBackendInterfaceContract(lcDeviceKind device, lcBackendInterfaceContract* out_contract);
 lcError_t lcGetActiveBackendInterfaceContract(lcBackendInterfaceContract* out_contract);
+lcError_t lcGetApiVersion(int* out_major, int* out_minor, int* out_patch);
+const char* lcGetApiVersionString(void);
+size_t lcGetStructSize(lcStructId struct_id);
+int lcCheckStructSize(lcStructId struct_id, size_t observed_size);
 const char* lcBackendName(void);
 const char* lcGetErrorString(lcError_t error);
 

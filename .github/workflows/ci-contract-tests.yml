@@ -24,11 +24,14 @@ jobs:
           python3 scripts/generate_capability_docs.py --check
           python3 scripts/generate_phase_b_contract_docs.py --check
           python3 scripts/generate_phase_e_contract_docs.py --check
+          python3 scripts/generate_phase_f_contract_docs.py --check
           python3 scripts/generate_import_export_matrix_docs.py --check
+          python3 scripts/generate_test_matrix_docs.py --check
           python3 scripts/check_phase_b_contract_sync.py
           python3 scripts/check_phase_c_contract_sync.py
           python3 scripts/check_phase_d_contract_sync.py
           python3 scripts/check_phase_e_contract_sync.py
+          python3 scripts/check_phase_f_contract_sync.py
           python3 scripts/sync_release_metadata.py --check
           python3 scripts/generate_roadmap_history.py --check
           python3 scripts/generate_api_reference_docs.py --check
@@ -78,6 +81,7 @@ jobs:
           python3 tests/test_python_torch_engine_adapter_ga_smoke.py
           python3 tests/test_python_tf_engine_adapter_beta_smoke.py
           python3 tests/test_python_coreml_engine_adapter_alpha_smoke.py
+          python3 tests/test_python_coreml_roundtrip_beta_smoke.py
           python3 tests/test_python_mlx_bridge_alpha_smoke.py
           python3 tests/test_python_runner_cli_repro_pack_smoke.py
           python3 tests/test_python_tf_bridge_smoke.py
@@ -90,6 +94,7 @@ jobs:
           python3 tests/test_python_phase_c_exit_audit_smoke.py
           python3 tests/test_python_phase_d_exit_audit_smoke.py
           python3 tests/test_python_phase_e_exit_audit_smoke.py
+          python3 tests/test_python_phase_f_rc_audit_smoke.py
 
       - name: Publish CTest summary
         if: always()
@@ -121,6 +126,7 @@ jobs:
           echo "- python smoke: tests/test_python_torch_engine_adapter_ga_smoke.py" >> "$GITHUB_STEP_SUMMARY"
           echo "- python smoke: tests/test_python_tf_engine_adapter_beta_smoke.py" >> "$GITHUB_STEP_SUMMARY"
           echo "- python smoke: tests/test_python_coreml_engine_adapter_alpha_smoke.py" >> "$GITHUB_STEP_SUMMARY"
+          echo "- python smoke: tests/test_python_coreml_roundtrip_beta_smoke.py" >> "$GITHUB_STEP_SUMMARY"
           echo "- python smoke: tests/test_python_mlx_bridge_alpha_smoke.py" >> "$GITHUB_STEP_SUMMARY"
           echo "- python smoke: tests/test_python_runner_cli_repro_pack_smoke.py" >> "$GITHUB_STEP_SUMMARY"
           echo "- python smoke: tests/test_python_tf_bridge_smoke.py" >> "$GITHUB_STEP_SUMMARY"
@@ -133,6 +139,7 @@ jobs:
           echo "- python smoke: tests/test_python_phase_c_exit_audit_smoke.py" >> "$GITHUB_STEP_SUMMARY"
           echo "- python smoke: tests/test_python_phase_d_exit_audit_smoke.py" >> "$GITHUB_STEP_SUMMARY"
           echo "- python smoke: tests/test_python_phase_e_exit_audit_smoke.py" >> "$GITHUB_STEP_SUMMARY"
+          echo "- python smoke: tests/test_python_phase_f_rc_audit_smoke.py" >> "$GITHUB_STEP_SUMMARY"
           echo "- release metadata sync check: scripts/sync_release_metadata.py --check" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload CTest artifacts

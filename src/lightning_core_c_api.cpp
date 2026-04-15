@@ -283,6 +283,47 @@ lcError_t lcGetActiveBackendInterfaceContract(lcBackendInterfaceContract* out_co
   return LC_SUCCESS;
 }
 
+lcError_t lcGetApiVersion(int* out_major, int* out_minor, int* out_patch) {
+  if (out_major == nullptr || out_minor == nullptr || out_patch == nullptr) {
+    return LC_INVALID_VALUE;
+  }
+  *out_major = LC_API_VERSION_MAJOR;
+  *out_minor = LC_API_VERSION_MINOR;
+  *out_patch = LC_API_VERSION_PATCH;
+  return LC_SUCCESS;
+}
+
+const char* lcGetApiVersionString(void) {
+  return LC_API_VERSION_STRING;
+}
+
+size_t lcGetStructSize(lcStructId struct_id) {
+  switch (struct_id) {
+    case LC_STRUCT_BACKEND_CAPABILITIES:
+      return sizeof(lcBackendCapabilities);
+    case LC_STRUCT_COMPUTE_INTERFACE_CONTRACT:
+      return sizeof(lcComputeInterfaceContract);
+    case LC_STRUCT_MEMORY_INTERFACE_CONTRACT:
+      return sizeof(lcMemoryInterfaceContract);
+    case LC_STRUCT_SYNC_INTERFACE_CONTRACT:
+      return sizeof(lcSyncInterfaceContract);
+    case LC_STRUCT_PROFILER_INTERFACE_CONTRACT:
+      return sizeof(lcProfilerInterfaceContract);
+    case LC_STRUCT_BACKEND_INTERFACE_CONTRACT:
+      return sizeof(lcBackendInterfaceContract);
+    default:
+      return 0;
+  }
+}
+
+int lcCheckStructSize(lcStructId struct_id, size_t observed_size) {
+  const size_t expected = lcGetStructSize(struct_id);
+  if (expected == 0) {
+    return 0;
+  }
+  return (observed_size == expected) ? 1 : 0;
+}
+
 const char* lcBackendName(void) {
   static std::string backend;
   backend = lightning_core::runtime::backendName();

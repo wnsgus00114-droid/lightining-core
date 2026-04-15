@@ -1,6 +1,6 @@
 # Lightning Core Roadmap
 
-Version context: v0.5.6 (2026-04-14)
+Version context: v0.5.7 (2026-04-15)
 
 ## 1) North Star
 
@@ -20,7 +20,7 @@ Lightning Core started as a macOS Apple-Silicon performance runtime. The long-te
 - Keep API ergonomics improvements performance-safe by default.
 - Keep deprecation policy explicit; no silent API behavior changes.
 
-## 3) Current Baseline (v0.5.6)
+## 3) Current Baseline (v0.5.7)
 
 - Public package on PyPI/TestPyPI.
 - C++ core + Python bindings for runtime/tensor/ops/attention/integrated APIs.
@@ -455,6 +455,36 @@ Each milestone tracks:
    - deliverable: `phase_e_exit_audit.py` + candidate bundle manifest with matrix-sync/docs-sync/artifact-hash evidence lock.
    - acceptance: Phase E exit audit is wired into benchmark/release workflows as a hard gate.
 
+### Next Execution Queue (2026-04-15 Phase F RC Preflight)
+
+62. [completed] v0.5.7 release/test matrix automation (M-F docs/tooling)
+   - deliverable: `docs/test_matrix_contract.json` + auto-doc generator (`generate_test_matrix_docs.py`) for README/docs matrix sections.
+   - acceptance: `generate_test_matrix_docs.py --check` is wired in CI/docs workflows and remains stable.
+63. [completed] v0.5.8 phase F framework contract docs (M-F docs/ci)
+   - deliverable: `docs/phase_f_framework_contract.json` + `generate_phase_f_contract_docs.py` + `check_phase_f_contract_sync.py`.
+   - acceptance: benchmark/release workflows and CI contract checks include Phase F contract sync gates.
+64. [completed] v0.5.9 federation policy v3 schema surfaces (M-E runtime/python)
+   - deliverable: `engine_federation_policy_v3_schema` and `resolve_engine_federation_policy_v3` on `lc.api` and modular facade exports.
+   - acceptance: policy-v3 schema and resolver are queryable through Python API surface without breaking v2 schema users.
+65. [completed] v0.5.10 bridge telemetry v3 (DLPack-first) (M-E python/benchmark)
+   - deliverable: torch/tf bridge paths add `boundary_bridge_path_in/out` and `zero_copy_effective` with DLPack-first boundary conversion.
+   - acceptance: torch/tf runner adapter benchmarks include required telemetry fields and reason/budget gates remain compatible.
+66. [completed] v0.5.11 CoreML round-trip beta artifact path (M-E model/benchmark)
+   - deliverable: `coreml_roundtrip_beta_report` + schema API + benchmark runner (`coreml_roundtrip_bench.py`) + smoke coverage.
+   - acceptance: checkpoint/manifest/parity fields are emitted in fixed JSON/CSV/MD artifacts.
+67. [completed] v0.5.12 modular Python API split scaffold (M-D api/packaging)
+   - deliverable: `python/lightning_core_api` facade package (`bridges.py`, `checkpoint.py`) with wheel install wiring.
+   - acceptance: modular imports are available while legacy `lightning_core_integrated_api` compatibility is preserved.
+68. [completed] v0.5.13 C API/ABI freeze helpers v1 (M-F c-api/test)
+   - deliverable: C API version/struct-size helper functions (`lcGetApiVersion`, `lcGetStructSize`, `lcCheckStructSize`) and dedicated smoke test.
+   - acceptance: `test_c_api_abi_freeze` is buildable/runnable in local/CI test targets.
+69. [completed] v0.5.14 release workflow gate extension (M-F ci/release)
+   - deliverable: benchmark/release workflows include Phase F docs sync checks, coreml-roundtrip evidence, and `phase_f_rc_audit` execution.
+   - acceptance: release artifacts upload fixed `coreml_roundtrip` + `phase_f_rc_audit` evidence files.
+70. [completed] v0.5.15 release metadata sync expansion (M-A release/tooling)
+   - deliverable: `sync_release_metadata.py` now synchronizes Phase F/test-matrix contract baseline fields with pyproject version source.
+   - acceptance: release metadata checks include `docs/phase_f_framework_contract.json` and `docs/test_matrix_contract.json` without drift.
+
 Progress update history is auto-generated from:
 
 - `docs/roadmap_updates.json`
@@ -599,7 +629,7 @@ Progress update history is auto-generated from:
 
 <!-- AUTO-ROADMAP-HISTORY:END -->
 
-## 11) Release-Train Detail (v0.5.6 -> v1.0)
+## 11) Release-Train Detail (v0.5.7 -> v1.0)
 
 ## 11.1 2026 Q2 (v0.1.32 ~ v0.2.0): Runtime Contracts [completed]
 

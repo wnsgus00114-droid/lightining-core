@@ -6,7 +6,7 @@ Generated from pybind binding sources in `python/bindings/`.
 | --- | --- |
 | Binding files | 6 |
 | Submodules | 1 |
-| Module functions | 59 |
+| Module functions | 62 |
 | Classes | 7 |
 
 Regenerate:
@@ -103,9 +103,12 @@ Source: [python/bindings/bind_runtime.cpp](https://github.com/wnsgus00114-droid/
 
 Module-level functions:
 - `backend_name`
+- `coreml_inference_benchmark`
 - `cuda_available`
 - `memory_model_name`
 - `metal_available`
+- `mpsgraph_train_step_benchmark`
+- `mpsgraph_vector_add_benchmark`
 - `runtime_active_backend_capabilities`
 - `runtime_active_backend_interfaces`
 - `runtime_backend_capabilities`

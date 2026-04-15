@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import os
+from pathlib import Path
 from threading import Lock
 import time
 from typing import Any
@@ -38,6 +39,8 @@ _TF_RUNNER_ADAPTER_SCHEMA_VERSION = "tf_runner_adapter_v2"
 _COREML_RUNNER_ADAPTER_SCHEMA_VERSION = "coreml_runner_adapter_v1"
 _MLX_RUNNER_ADAPTER_SCHEMA_VERSION = "mlx_runner_adapter_v1"
 _ENGINE_FEDERATION_POLICY_SCHEMA_VERSION = "engine_federation_policy_v2"
+_ENGINE_FEDERATION_POLICY_V3_SCHEMA_VERSION = "engine_federation_policy_v3"
+_COREML_ROUNDTRIP_SCHEMA_VERSION = "coreml_roundtrip_beta_v1"
 _VALID_RUNNER_MODES = {"eager", "graph", "interop"}
 _VALID_RUNNER_DEVICES = {"auto", "metal", "cpu", "cuda"}
 _VALID_RUNNER_LAYOUTS = {"seq_dmodel_2d"}
@@ -83,6 +86,7 @@ _DEFAULT_TORCH_ADAPTER_OVERHEAD_BUDGET_MS = 5.0
 _DEFAULT_TF_ADAPTER_OVERHEAD_BUDGET_MS = 5.0
 _DEFAULT_COREML_ADAPTER_OVERHEAD_BUDGET_MS = 8.0
 _DEFAULT_MLX_ADAPTER_OVERHEAD_BUDGET_MS = 5.0
+_DEFAULT_FEDERATION_BOUNDARY_BUDGET_MS = 6.0
 
 
 class CheckpointValidationError(ValueError):
@@ -133,6 +137,84 @@ def _import_mlx():
 
 def _coreml_runtime_available() -> bool:
     return hasattr(lc, "coreml_inference_benchmark") and callable(getattr(lc, "coreml_inference_benchmark"))
+
+
+def _safe_np_from_dlpack(obj: Any) -> np.ndarray | None:
+    from_dlpack = getattr(np, "from_dlpack", None)
+    if from_dlpack is None:
+        return None
+    if not hasattr(obj, "__dlpack__"):
+        return None
+    try:
+        return np.asarray(from_dlpack(obj))
+    except Exception:
+        return None
+
+
+def _torch_tensor_to_numpy_bridge(x: Any) -> tuple[np.ndarray, bool, str]:
+    """Return (numpy_array, zero_copy, path)."""
+    x_detached = x.detach()
+    if getattr(getattr(x_detached, "device", None), "type", "") == "cpu" and bool(x_detached.is_contiguous()):
+        arr = _safe_np_from_dlpack(x_detached)
+        if arr is not None:
+            return arr, True, "dlpack"
+    x_cpu = x_detached.to("cpu").contiguous()
+    return np.asarray(x_cpu.numpy()), False, "numpy"
+
+
+def _torch_tensor_from_numpy_bridge(
+    arr: np.ndarray,
+    *,
+    torch_module: Any,
+    target_device: Any,
+    target_dtype: Any,
+) -> tuple[Any, bool, str]:
+    """Return (torch_tensor, zero_copy, path)."""
+    device_type = str(getattr(target_device, "type", "cpu"))
+    if device_type == "cpu":
+        torch_dlpack = getattr(getattr(torch_module, "utils", None), "dlpack", None)
+        from_dlpack = getattr(torch_dlpack, "from_dlpack", None)
+        if callable(from_dlpack) and hasattr(arr, "__dlpack__"):
+            try:
+                out = from_dlpack(arr)
+                if target_dtype is not None and getattr(out, "dtype", None) != target_dtype:
+                    out = out.to(dtype=target_dtype)
+                    return out, False, "dlpack+cast"
+                return out, True, "dlpack"
+            except Exception:
+                pass
+    out = torch_module.as_tensor(arr, dtype=target_dtype, device=target_device)
+    return out, False, "as_tensor"
+
+
+def _tf_tensor_to_numpy_bridge(inputs: Any, *, tf_module: Any | None = None) -> tuple[np.ndarray, bool, str]:
+    """Return (numpy_array, zero_copy, path)."""
+    arr = _safe_np_from_dlpack(inputs)
+    if arr is not None:
+        return arr, True, "dlpack"
+    if tf_module is not None and hasattr(inputs, "numpy"):
+        try:
+            return np.asarray(inputs.numpy()), False, "numpy"
+        except Exception:
+            pass
+    return np.asarray(inputs), False, "numpy"
+
+
+def _tf_tensor_from_numpy_bridge(y_np: np.ndarray, *, tf_module: Any, out_dtype: Any) -> tuple[Any, bool, str]:
+    """Return (tf_tensor, zero_copy, path)."""
+    tf_dlpack = getattr(getattr(tf_module, "experimental", None), "dlpack", None)
+    from_dlpack = getattr(tf_dlpack, "from_dlpack", None)
+    if callable(from_dlpack) and hasattr(y_np, "__dlpack__"):
+        try:
+            out = from_dlpack(y_np)
+            if out_dtype is not None and getattr(out, "dtype", None) != out_dtype:
+                out = tf_module.cast(out, out_dtype)
+                return out, False, "dlpack+cast"
+            return out, True, "dlpack"
+        except Exception:
+            pass
+    out = tf_module.convert_to_tensor(y_np, dtype=out_dtype)
+    return out, False, "convert_to_tensor"
 
 
 def _torch_device_for(device: str) -> str:
@@ -369,6 +451,9 @@ def torch_runner_adapter_schema() -> dict[str, Any]:
             "boundary_overhead_budget_pass",
             "reason_code_covered",
             "zero_copy_eligible",
+            "zero_copy_effective",
+            "boundary_bridge_path_in",
+            "boundary_bridge_path_out",
             "route_policy",
             "runtime",
         ],
@@ -398,6 +483,9 @@ def tf_runner_adapter_schema() -> dict[str, Any]:
             "boundary_overhead_budget_pass",
             "reason_code_covered",
             "zero_copy_eligible",
+            "zero_copy_effective",
+            "boundary_bridge_path_in",
+            "boundary_bridge_path_out",
             "route_policy",
             "runtime",
         ],
@@ -489,6 +577,91 @@ def engine_federation_policy_schema() -> dict[str, Any]:
     }
 
 
+def engine_federation_policy_v3_schema() -> dict[str, Any]:
+    """Engine federation policy v3 contract with explicit boundary budget and priority order."""
+    return {
+        "schema_version": _ENGINE_FEDERATION_POLICY_V3_SCHEMA_VERSION,
+        "engines": sorted(_VALID_ENGINES),
+        "route_policy_keys": sorted(_VALID_ROUTE_POLICY_KEYS),
+        "route_engines": sorted(_VALID_ROUTE_ENGINES),
+        "runner_modes": sorted(_VALID_RUNNER_MODES),
+        "required_fields": [
+            "schema_version",
+            "route_policy",
+            "priority_order",
+            "boundary_budget_ms",
+            "resolved_graph_engine",
+            "resolved_attention_engine",
+            "resolved_conv_engine",
+        ],
+        "default_boundary_budget_ms": float(_DEFAULT_FEDERATION_BOUNDARY_BUDGET_MS),
+        "default_priority_order": ["lightning", "torch", "tf", "coreml", "mlx"],
+    }
+
+
+def resolve_engine_federation_policy_v3(
+    *,
+    route_policy: dict[str, Any] | None = None,
+    priority_order: list[str] | tuple[str, ...] | None = None,
+    boundary_budget_ms: float = _DEFAULT_FEDERATION_BOUNDARY_BUDGET_MS,
+) -> dict[str, Any]:
+    """Normalize v3 policy payload for runtime/benchmark telemetry."""
+    route_validation = validate_route_policy(route_policy, strict=True)
+    route_norm = dict(route_validation.get("normalized", {"conv": "auto", "attention": "auto", "graph": "auto"}))
+
+    budget_ms = float(boundary_budget_ms)
+    if (not np.isfinite(budget_ms)) or budget_ms <= 0.0:
+        raise ValueError("boundary_budget_ms must be a positive finite value")
+
+    default_order = ["lightning", "torch", "tf", "coreml", "mlx"]
+    order_raw = list(priority_order) if priority_order is not None else list(default_order)
+    resolved_order: list[str] = []
+    seen: set[str] = set()
+    for token in order_raw:
+        name = _normalize_engine_name(token)
+        if name == "auto":
+            continue
+        if name in seen:
+            continue
+        seen.add(name)
+        resolved_order.append(name)
+    for name in default_order:
+        if name not in seen:
+            resolved_order.append(name)
+
+    def _resolve_pref(pref: str) -> str:
+        if pref != "auto":
+            return pref
+        for name in resolved_order:
+            if name == "lightning":
+                return "lightning"
+            if name == "torch":
+                torch, _ = _import_torch()
+                if torch is not None:
+                    return "torch"
+            if name == "tf":
+                if _import_tensorflow() is not None:
+                    return "tf"
+            if name == "coreml":
+                if _coreml_runtime_available():
+                    return "coreml"
+            if name == "mlx":
+                if _import_mlx() is not None:
+                    return "mlx"
+        return "lightning"
+
+    resolved = {
+        "schema_version": _ENGINE_FEDERATION_POLICY_V3_SCHEMA_VERSION,
+        "route_policy": dict(route_norm),
+        "priority_order": list(resolved_order),
+        "boundary_budget_ms": float(budget_ms),
+        "resolved_conv_engine": _resolve_pref(str(route_norm.get("conv", "auto"))),
+        "resolved_attention_engine": _resolve_pref(str(route_norm.get("attention", "auto"))),
+        "resolved_graph_engine": _resolve_pref(str(route_norm.get("graph", "auto"))),
+    }
+    return resolved
+
+
 def import_export_compatibility_matrix() -> dict[str, Any]:
     """Auto-generated compatibility matrix source for interop import/export docs."""
     torch, _ = _import_torch()
@@ -513,7 +686,7 @@ def import_export_compatibility_matrix() -> dict[str, Any]:
             "dtypes": ["float32", "int64(token_ids)"],
             "layout": ["contiguous tensor preferred"],
             "shape_constraints": "runner/adapter contract validated",
-            "zero_copy": "eligible on cpu+contiguous+dtype-match",
+            "zero_copy": "dlpack-first on cpu+contiguous+dtype-match (fallback copy with reason code)",
             "fallback_reason_codes": sorted(_TORCH_BRIDGE_BOUNDARY_REASON_CODES),
         },
         {
@@ -524,7 +697,7 @@ def import_export_compatibility_matrix() -> dict[str, Any]:
             "dtypes": ["float32", "int64(token_ids)"],
             "layout": ["tensor/ndarray contiguous preferred"],
             "shape_constraints": "runner/adapter contract validated",
-            "zero_copy": "no",
+            "zero_copy": "dlpack-first when runtime supports __dlpack__ (fallback copy with reason code)",
             "fallback_reason_codes": sorted(_TF_BRIDGE_REASON_CODES),
         },
         {
@@ -1992,6 +2165,8 @@ def create_torch_module_wrapper(
                 "schema_version": _TORCH_RUNNER_ADAPTER_SCHEMA_VERSION,
                 "boundary_reason_code": "none",
                 "boundary_copy_mode": "zero_copy",
+                "boundary_bridge_path_in": "dlpack",
+                "boundary_bridge_path_out": "dlpack",
                 "boundary_overhead_budget_ms": float(budget_ms),
                 "boundary_overhead_budget_pass": True,
                 "reason_code_covered": True,
@@ -2003,8 +2178,7 @@ def create_torch_module_wrapper(
 
         def forward(self, x):  # type: ignore[override]
             t0 = time.perf_counter_ns()
-            x_cpu = x.detach().to("cpu").contiguous()
-            x_np_raw = x_cpu.numpy()
+            x_np_raw, x_zero_copy, x_bridge_path = _torch_tensor_to_numpy_bridge(x)
             if np.issubdtype(x_np_raw.dtype, np.integer):
                 x_np = np.asarray(x_np_raw, dtype=np.int64)
             else:
@@ -2021,16 +2195,27 @@ def create_torch_module_wrapper(
             out_dtype = getattr(torch, "float32", None)
             if out_dtype is None:
                 out_dtype = x.dtype
-            out = torch.as_tensor(y_np, dtype=out_dtype, device=x.device)
+            out, y_zero_copy, y_bridge_path = _torch_tensor_from_numpy_bridge(
+                np.asarray(y_np),
+                torch_module=torch,
+                target_device=x.device,
+                target_dtype=out_dtype,
+            )
             t3 = time.perf_counter_ns()
 
             torch_int64 = getattr(torch, "int64", None)
             torch_float32 = getattr(torch, "float32", None)
-            zero_copy_dtype_ok = bool((torch_float32 is not None and x.dtype == torch_float32) or (torch_int64 is not None and x.dtype == torch_int64))
+            zero_copy_dtype_ok = bool(
+                (torch_float32 is not None and x.dtype == torch_float32)
+                or (torch_int64 is not None and x.dtype == torch_int64)
+            )
             zero_copy_eligible = bool(x.device.type == "cpu" and zero_copy_dtype_ok and bool(x.is_contiguous()))
+            zero_copy_effective = bool(zero_copy_eligible and x_zero_copy and y_zero_copy)
             boundary_reason = "none" if zero_copy_eligible else "interop_torch_tensor_boundary_copy"
-            copy_mode = "zero_copy" if zero_copy_eligible else "fallback_copy"
-            copy_bytes = 0 if zero_copy_eligible else int(np.asarray(x_np).nbytes + np.asarray(y_np).nbytes)
+            if zero_copy_eligible and (not zero_copy_effective):
+                boundary_reason = "interop_torch_tensor_boundary_copy"
+            copy_mode = "zero_copy" if zero_copy_effective else "fallback_copy"
+            copy_bytes = 0 if zero_copy_effective else int(np.asarray(x_np).nbytes + np.asarray(y_np).nbytes)
             boundary_overhead_ns = int((t1 - t0) + (t3 - t2))
             boundary_overhead_ms = float(boundary_overhead_ns / 1e6)
             if boundary_reason not in _TORCH_BRIDGE_BOUNDARY_REASON_CODES:
@@ -2057,6 +2242,9 @@ def create_torch_module_wrapper(
                 "boundary_overhead_budget_pass": bool(budget_pass),
                 "reason_code_covered": bool(reason_covered),
                 "zero_copy_eligible": bool(zero_copy_eligible),
+                "zero_copy_effective": bool(zero_copy_effective),
+                "boundary_bridge_path_in": str(x_bridge_path),
+                "boundary_bridge_path_out": str(y_bridge_path),
                 "input_kind": str(run_meta.get("input_kind", "unknown")),
                 "route_policy": dict(route_norm),
                 "supported_boundary_reason_codes": sorted(_TORCH_BRIDGE_BOUNDARY_REASON_CODES),
@@ -2078,6 +2266,8 @@ def get_torch_wrapper_telemetry(module: Any) -> dict[str, Any]:
         "schema_version": _TORCH_RUNNER_ADAPTER_SCHEMA_VERSION,
         "boundary_reason_code": "none",
         "boundary_copy_mode": "zero_copy",
+        "boundary_bridge_path_in": "dlpack",
+        "boundary_bridge_path_out": "dlpack",
         "boundary_overhead_budget_ms": float(_DEFAULT_TORCH_ADAPTER_OVERHEAD_BUDGET_MS),
         "boundary_overhead_budget_pass": True,
         "reason_code_covered": True,
@@ -2103,10 +2293,13 @@ def _tf_telemetry_default() -> dict[str, Any]:
         "schema_version": _TF_RUNNER_ADAPTER_SCHEMA_VERSION,
         "boundary_reason_code": "tf_runtime_unavailable",
         "boundary_copy_mode": "fallback_copy",
+        "boundary_bridge_path_in": "numpy",
+        "boundary_bridge_path_out": "numpy",
         "boundary_overhead_budget_ms": float(_DEFAULT_TF_ADAPTER_OVERHEAD_BUDGET_MS),
         "boundary_overhead_budget_pass": True,
         "reason_code_covered": True,
         "zero_copy_eligible": False,
+        "zero_copy_effective": False,
         "supported_boundary_reason_codes": sorted(_TF_BRIDGE_REASON_CODES),
         "supported_runner_fallback_reason_codes": sorted(_RUNNER_FALLBACK_REASON_CODES),
         "runtime": "numpy_shim",
@@ -2148,7 +2341,8 @@ def create_tf_keras_layer_wrapper(
 
         def call(self, inputs, *args, **kwargs):
             t0 = time.perf_counter_ns()
-            x_np = np.asarray(inputs, dtype=np.float32)
+            x_np_raw, x_zero_copy, x_bridge_path = _tf_tensor_to_numpy_bridge(inputs, tf_module=None)
+            x_np = np.asarray(x_np_raw, dtype=np.float32)
             t1 = time.perf_counter_ns()
             y_np, run_meta = self.model_runner.run(
                 x_np,
@@ -2163,7 +2357,9 @@ def create_tf_keras_layer_wrapper(
 
             runner_reason = _map_tf_runner_fallback_reason(run_meta.get("fallback_reason_code", "none"))
             bridge_reason = "tf_runtime_unavailable" if runner_reason == "none" else runner_reason
-            copy_bytes = int(np.asarray(x_np).nbytes + np.asarray(out).nbytes)
+            zero_copy_eligible = bool(x_zero_copy and np.asarray(x_np).dtype == np.float32 and np.asarray(x_np).flags.c_contiguous)
+            zero_copy_effective = bool(zero_copy_eligible and bridge_reason == "none")
+            copy_bytes = 0 if zero_copy_effective else int(np.asarray(x_np).nbytes + np.asarray(out).nbytes)
             boundary_overhead_ns = int((t1 - t0) + (t3 - t2))
             boundary_overhead_ms = float(boundary_overhead_ns / 1e6)
             if bridge_reason not in _TF_BRIDGE_REASON_CODES:
@@ -2179,14 +2375,17 @@ def create_tf_keras_layer_wrapper(
                 "resolved_engine": str(run_meta.get("resolved_engine", "unknown")),
                 "runner_fallback_reason_code": str(run_meta.get("fallback_reason_code", "none")),
                 "boundary_reason_code": bridge_reason,
-                "boundary_copy_mode": "fallback_copy",
+                "boundary_copy_mode": "zero_copy" if zero_copy_effective else "fallback_copy",
                 "boundary_copy_bytes_estimate": int(copy_bytes),
                 "boundary_overhead_est_ns": int(boundary_overhead_ns),
                 "boundary_overhead_est_ms": float(boundary_overhead_ms),
                 "boundary_overhead_budget_ms": float(budget_ms),
                 "boundary_overhead_budget_pass": bool(boundary_overhead_ms <= budget_ms + 1.0e-12),
                 "reason_code_covered": bool(reason_covered),
-                "zero_copy_eligible": False,
+                "zero_copy_eligible": bool(zero_copy_eligible),
+                "zero_copy_effective": bool(zero_copy_effective),
+                "boundary_bridge_path_in": str(x_bridge_path),
+                "boundary_bridge_path_out": "numpy_shim",
                 "input_kind": str(run_meta.get("input_kind", "unknown")),
                 "route_policy": dict(route_norm),
                 "supported_boundary_reason_codes": sorted(_TF_BRIDGE_REASON_CODES),
@@ -2214,7 +2413,8 @@ def create_tf_keras_layer_wrapper(
 
         def call(self, inputs, *args, **kwargs):  # type: ignore[override]
             t0 = time.perf_counter_ns()
-            x_np = np.asarray(inputs, dtype=np.float32)
+            x_np_raw, x_zero_copy, x_bridge_path = _tf_tensor_to_numpy_bridge(inputs, tf_module=tf)
+            x_np = np.asarray(x_np_raw, dtype=np.float32)
             t1 = time.perf_counter_ns()
             y_np, run_meta = self.model_runner.run(
                 x_np,
@@ -2224,12 +2424,18 @@ def create_tf_keras_layer_wrapper(
                 return_metadata=True,
             )
             t2 = time.perf_counter_ns()
-            out = tf.convert_to_tensor(y_np, dtype=inputs.dtype)
+            out, y_zero_copy, y_bridge_path = _tf_tensor_from_numpy_bridge(
+                np.asarray(y_np, dtype=np.float32),
+                tf_module=tf,
+                out_dtype=inputs.dtype,
+            )
             t3 = time.perf_counter_ns()
 
             runner_reason = _map_tf_runner_fallback_reason(run_meta.get("fallback_reason_code", "none"))
             bridge_reason = runner_reason if runner_reason != "none" else "tf_tensor_boundary_copy"
-            copy_bytes = int(np.asarray(x_np).nbytes + np.asarray(y_np).nbytes)
+            zero_copy_eligible = bool(x_zero_copy and np.asarray(x_np).dtype == np.float32 and np.asarray(x_np).flags.c_contiguous)
+            zero_copy_effective = bool(zero_copy_eligible and y_zero_copy and bridge_reason == "none")
+            copy_bytes = 0 if zero_copy_effective else int(np.asarray(x_np).nbytes + np.asarray(y_np).nbytes)
             boundary_overhead_ns = int((t1 - t0) + (t3 - t2))
             boundary_overhead_ms = float(boundary_overhead_ns / 1e6)
             if bridge_reason not in _TF_BRIDGE_REASON_CODES:
@@ -2245,14 +2451,17 @@ def create_tf_keras_layer_wrapper(
                 "resolved_engine": str(run_meta.get("resolved_engine", "unknown")),
                 "runner_fallback_reason_code": str(run_meta.get("fallback_reason_code", "none")),
                 "boundary_reason_code": bridge_reason,
-                "boundary_copy_mode": "fallback_copy",
+                "boundary_copy_mode": "zero_copy" if zero_copy_effective else "fallback_copy",
                 "boundary_copy_bytes_estimate": int(copy_bytes),
                 "boundary_overhead_est_ns": int(boundary_overhead_ns),
                 "boundary_overhead_est_ms": float(boundary_overhead_ms),
                 "boundary_overhead_budget_ms": float(budget_ms),
                 "boundary_overhead_budget_pass": bool(boundary_overhead_ms <= budget_ms + 1.0e-12),
                 "reason_code_covered": bool(reason_covered),
-                "zero_copy_eligible": False,
+                "zero_copy_eligible": bool(zero_copy_eligible),
+                "zero_copy_effective": bool(zero_copy_effective),
+                "boundary_bridge_path_in": str(x_bridge_path),
+                "boundary_bridge_path_out": str(y_bridge_path),
                 "input_kind": str(run_meta.get("input_kind", "unknown")),
                 "route_policy": dict(route_norm),
                 "supported_boundary_reason_codes": sorted(_TF_BRIDGE_REASON_CODES),
@@ -2535,6 +2744,197 @@ def get_coreml_wrapper_telemetry(adapter: Any) -> dict[str, Any]:
         if isinstance(out, dict):
             return dict(out)
     return _coreml_telemetry_default()
+
+
+def coreml_roundtrip_schema() -> dict[str, Any]:
+    """CoreML round-trip beta artifact schema contract."""
+    return {
+        "schema_version": _COREML_ROUNDTRIP_SCHEMA_VERSION,
+        "required_report_fields": [
+            "schema_version",
+            "status",
+            "roundtrip_reason_code",
+            "bundle_dir",
+            "checkpoint_path",
+            "manifest_path",
+            "baseline_median_ms",
+            "reload_median_ms",
+            "max_abs_diff",
+            "parity_pass",
+            "coreml_runtime_available",
+            "coreml_benchmark_status",
+            "coreml_model_path",
+        ],
+        "reason_codes": [
+            "none",
+            "coreml_runtime_unavailable",
+            "coreml_model_path_missing",
+            "coreml_model_path_not_found",
+            "coreml_inference_failed",
+            "checkpoint_roundtrip_failed",
+        ],
+    }
+
+
+def _clone_tiny_transformer_runner(runner: TinyTransformerRunner) -> TinyTransformerRunner:
+    cloned = TinyTransformerRunner(
+        seq_len=int(runner.seq_len),
+        d_model=int(runner.d_model),
+        d_ff=int(runner.d_ff),
+        vocab_size=int(runner.vocab_size),
+        seed=int(runner.seed),
+    )
+    cloned.load_state_dict(runner.state_dict(), strict=True)
+    if hasattr(runner, "layout"):
+        cloned.layout = str(getattr(runner, "layout"))
+    if hasattr(runner, "dtype"):
+        cloned.dtype = str(getattr(runner, "dtype"))
+    return cloned
+
+
+def coreml_roundtrip_beta_report(
+    runner: TinyTransformerRunner,
+    inputs: Any,
+    *,
+    bundle_dir: str | os.PathLike[str],
+    coreml_model_path: str | None = None,
+    mode: str = "eager",
+    device: str = "auto",
+    route_policy: dict[str, Any] | None = None,
+    warmup: int = 2,
+    iters: int = 5,
+) -> dict[str, Any]:
+    """Run beta round-trip: save/load runner checkpoint + optional CoreML runtime benchmark."""
+    root = Path(os.fspath(bundle_dir)).resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    ckpt_path = root / "coreml_roundtrip_runner_checkpoint_v2.npz"
+    manifest_path = root / "coreml_roundtrip_manifest.json"
+
+    warm_i = max(0, int(warmup))
+    iter_i = max(1, int(iters))
+    mode_s = str(mode)
+    device_s = str(device)
+    route_norm = dict(validate_route_policy(route_policy, strict=True).get("normalized", {"conv": "auto", "attention": "auto", "graph": "auto"}))
+
+    x_np = np.asarray(inputs)
+    base_runner = _clone_tiny_transformer_runner(runner)
+    reload_runner = _clone_tiny_transformer_runner(runner)
+
+    save_runner_checkpoint_v2(
+        ckpt_path,
+        base_runner,
+        metadata={
+            "coreml_roundtrip_beta": {
+                "schema_version": _COREML_ROUNDTRIP_SCHEMA_VERSION,
+                "mode": mode_s,
+                "device": device_s,
+                "route_policy": dict(route_norm),
+            }
+        },
+        compressed=True,
+    )
+
+    status = "ok"
+    reason_code = "none"
+    try:
+        load_runner_checkpoint(ckpt_path, into_runner=reload_runner, strict=True, validate=True)
+    except Exception:
+        status = "fallback"
+        reason_code = "checkpoint_roundtrip_failed"
+
+    baseline_samples: list[float] = []
+    reload_samples: list[float] = []
+    baseline_out: np.ndarray | None = None
+    reload_out: np.ndarray | None = None
+    for _ in range(warm_i):
+        _ = base_runner.run(x_np, mode=mode_s, device=device_s, route_policy=route_norm, return_metadata=False)
+        _ = reload_runner.run(x_np, mode=mode_s, device=device_s, route_policy=route_norm, return_metadata=False)
+    for _ in range(iter_i):
+        t0 = time.perf_counter_ns()
+        baseline_out = np.asarray(
+            base_runner.run(x_np, mode=mode_s, device=device_s, route_policy=route_norm, return_metadata=False),
+            dtype=np.float32,
+        )
+        t1 = time.perf_counter_ns()
+        reload_out = np.asarray(
+            reload_runner.run(x_np, mode=mode_s, device=device_s, route_policy=route_norm, return_metadata=False),
+            dtype=np.float32,
+        )
+        t2 = time.perf_counter_ns()
+        baseline_samples.append((t1 - t0) / 1e6)
+        reload_samples.append((t2 - t1) / 1e6)
+
+    baseline_med = float(np.median(np.asarray(baseline_samples, dtype=np.float64))) if baseline_samples else float("nan")
+    reload_med = float(np.median(np.asarray(reload_samples, dtype=np.float64))) if reload_samples else float("nan")
+    max_abs_diff = float("nan")
+    parity_pass = False
+    if baseline_out is not None and reload_out is not None and baseline_out.shape == reload_out.shape:
+        max_abs_diff = float(np.max(np.abs(baseline_out - reload_out))) if baseline_out.size else 0.0
+        parity_pass = bool(np.allclose(baseline_out, reload_out, atol=1.0e-6, rtol=1.0e-6))
+
+    coreml_runtime_ok = bool(_coreml_runtime_available())
+    model_path = str(coreml_model_path or "").strip()
+    coreml_status = "not_run"
+    coreml_avg_ms = float("nan")
+    if coreml_runtime_ok:
+        if not model_path:
+            coreml_status = "model_path_missing"
+            if reason_code == "none":
+                reason_code = "coreml_model_path_missing"
+                status = "fallback"
+        elif not Path(model_path).exists():
+            coreml_status = "model_path_not_found"
+            if reason_code == "none":
+                reason_code = "coreml_model_path_not_found"
+                status = "fallback"
+        else:
+            try:
+                report = dict(lc.coreml_inference_benchmark(model_path, 1024, 1))
+                coreml_status = str(report.get("status", "unknown"))
+                coreml_avg_ms = float(report.get("avg_ms", float("nan")))
+                if not bool(report.get("ok", False)):
+                    if reason_code == "none":
+                        reason_code = "coreml_inference_failed"
+                        status = "fallback"
+            except Exception:
+                coreml_status = "inference_failed"
+                if reason_code == "none":
+                    reason_code = "coreml_inference_failed"
+                    status = "fallback"
+    else:
+        if reason_code == "none":
+            reason_code = "coreml_runtime_unavailable"
+            status = "fallback"
+
+    manifest = {
+        "schema_version": _COREML_ROUNDTRIP_SCHEMA_VERSION,
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "bundle_dir": str(root),
+        "checkpoint_path": str(ckpt_path),
+        "mode": mode_s,
+        "device": device_s,
+        "route_policy": dict(route_norm),
+        "runner_contract": runner_contract_manifest(),
+        "coreml_model_path": model_path,
+    }
+    manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    return {
+        "schema_version": _COREML_ROUNDTRIP_SCHEMA_VERSION,
+        "status": str(status),
+        "roundtrip_reason_code": str(reason_code),
+        "bundle_dir": str(root),
+        "checkpoint_path": str(ckpt_path),
+        "manifest_path": str(manifest_path),
+        "baseline_median_ms": float(baseline_med),
+        "reload_median_ms": float(reload_med),
+        "max_abs_diff": float(max_abs_diff),
+        "parity_pass": bool(parity_pass),
+        "coreml_runtime_available": bool(coreml_runtime_ok),
+        "coreml_benchmark_status": str(coreml_status),
+        "coreml_benchmark_avg_ms": float(coreml_avg_ms),
+        "coreml_model_path": model_path,
+    }
 
 
 def _mlx_telemetry_default() -> dict[str, Any]:
@@ -4827,7 +5227,11 @@ def _install_lc_api_engine_bridge() -> bool:
         api.coreml_runner_adapter_schema = coreml_runner_adapter_schema
         api.mlx_runner_adapter_schema = mlx_runner_adapter_schema
         api.engine_federation_policy_schema = engine_federation_policy_schema
+        api.engine_federation_policy_v3_schema = engine_federation_policy_v3_schema
+        api.resolve_engine_federation_policy_v3 = resolve_engine_federation_policy_v3
         api.import_export_compatibility_matrix = import_export_compatibility_matrix
+        api.coreml_roundtrip_schema = coreml_roundtrip_schema
+        api.coreml_roundtrip_beta_report = coreml_roundtrip_beta_report
         api.runner_replay_report = runner_replay_report
         api.TinyTransformerRunner = TinyTransformerRunner
         api.create_torch_module_wrapper = create_torch_module_wrapper

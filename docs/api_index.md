@@ -17,7 +17,8 @@ Main Python surfaces:
 - Tensor ops: `vector_add`, `matrix_add`, `matrix_sub`, `matmul2d`, `conv2d_nchw`
 - Attention: `attention2d`, `attention_forward`, `AttentionSession`
 - Integrated API namespace: `lc.api.*` (clean operation names for conv/attention/integrated paths)
-- Engine federation surfaces: `set_engine/get_engine`, `*_runner_adapter_schema`, `create_*_model_runner_adapter`, `import_export_compatibility_matrix`
+- Engine federation surfaces: `set_engine/get_engine`, `*_runner_adapter_schema`, `create_*_model_runner_adapter`, `import_export_compatibility_matrix`, `engine_federation_policy_v3_schema`
+- Modular facade package (split-in-progress): `lightning_core_api.bridges`, `lightning_core_api.checkpoint`
 
 Related binding sources:
 
@@ -48,6 +49,10 @@ Canonical core headers:
 Public C API header:
 
 - [include/lightning_core/lightning_core.h](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h)
+
+ABI/version helpers:
+
+- `lcGetApiVersion`, `lcGetApiVersionString`, `lcGetStructSize`, `lcCheckStructSize`
 
 Implementation:
 

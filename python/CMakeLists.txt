@@ -79,6 +79,11 @@ if(pybind11_FOUND)
     ${CMAKE_CURRENT_SOURCE_DIR}/lc_run.py
     DESTINATION .
   )
+  install(DIRECTORY
+    ${CMAKE_CURRENT_SOURCE_DIR}/lightning_core_api
+    DESTINATION .
+    FILES_MATCHING PATTERN "*.py"
+  )
   message(STATUS "pybind11 found. Python module target enabled.")
 else()
   if(DEFINED SKBUILD)

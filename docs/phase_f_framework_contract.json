@@ -1,0 +1,22 @@
+{
+  "contract_version": "phase_f_v0.6.0_rc0_lock",
+  "as_of_date": "2026-04-15",
+  "scope": "Phase F rc contract for API/ABI freeze, deprecation policy sync, and release-candidate audit.",
+  "api_version": {
+    "major": 0,
+    "minor": 6,
+    "patch": 0,
+    "label": "v0.6.0-rc0"
+  },
+  "ci_constants": {
+    "phase_f_rc_audit": {
+      "require_semver_sync": true,
+      "require_deprecation_policy_section": true,
+      "require_phase_f_docs_sync": true,
+      "require_phase_e_exit_bundle": true,
+      "require_test_matrix_sync": true
+    }
+  },
+  "release_baseline_version": "v0.5.7",
+  "release_baseline_date": "2026-04-15"
+}

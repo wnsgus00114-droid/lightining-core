@@ -15,6 +15,7 @@ jobs:
       LC_PHASE_C_CONTRACT_JSON: docs/phase_c_engine_contract.json
       LC_PHASE_D_CONTRACT_JSON: docs/phase_d_runner_contract.json
       LC_PHASE_E_CONTRACT_JSON: docs/engine_federation_contract.json
+      LC_PHASE_F_CONTRACT_JSON: docs/phase_f_framework_contract.json
       LC_GRAPH_AB_WARMUP: "4"
       LC_GRAPH_AB_ITERS: "12"
       LC_GRAPH_AB_TRACE_ITERS: "6"
@@ -68,11 +69,14 @@ jobs:
         run: |
           python scripts/generate_phase_b_contract_docs.py --check
           python scripts/generate_phase_e_contract_docs.py --check
+          python scripts/generate_phase_f_contract_docs.py --check
           python scripts/generate_import_export_matrix_docs.py --check
+          python scripts/generate_test_matrix_docs.py --check
           python scripts/check_phase_b_contract_sync.py
           python scripts/check_phase_c_contract_sync.py
           python scripts/check_phase_d_contract_sync.py
           python scripts/check_phase_e_contract_sync.py
+          python scripts/check_phase_f_contract_sync.py
           python scripts/sync_release_metadata.py \
             --check \
             --report-json benchmarks/reports/ci/version_sync_report.json \
@@ -235,6 +239,21 @@ jobs:
             --md coreml_runner_adapter.md \
             > benchmarks/reports/ci/coreml_runner_adapter.log
           cat benchmarks/reports/ci/coreml_runner_adapter.log
+
+      - name: Run CoreML roundtrip beta benchmark
+        run: |
+          python benchmarks/python/coreml_roundtrip_bench.py \
+            --device cpu \
+            --mode eager \
+            --warmup 2 \
+            --iters 5 \
+            --bundle-dir benchmarks/reports/ci/coreml_roundtrip_bundle \
+            --out-dir benchmarks/reports/ci \
+            --csv coreml_roundtrip.csv \
+            --json coreml_roundtrip.json \
+            --md coreml_roundtrip.md \
+            > benchmarks/reports/ci/coreml_roundtrip.log
+          cat benchmarks/reports/ci/coreml_roundtrip.log
 
       - name: Run MLX runner adapter benchmark
         run: |
@@ -404,6 +423,20 @@ jobs:
             > benchmarks/reports/ci/phase_e_exit_audit.log
           cat benchmarks/reports/ci/phase_e_exit_audit.log
 
+      - name: Run Phase F RC audit
+        run: |
+          python benchmarks/python/phase_f_rc_audit.py \
+            --contract-json "$LC_PHASE_F_CONTRACT_JSON" \
+            --phase-e-audit-json benchmarks/reports/ci/phase_e_exit_audit.json \
+            --test-matrix-json docs/test_matrix_contract.json \
+            --readme README.md \
+            --roadmap ROADMAP.md \
+            --out-json benchmarks/reports/ci/phase_f_rc_audit.json \
+            --out-md benchmarks/reports/ci/phase_f_rc_audit.md \
+            --require-pass \
+            > benchmarks/reports/ci/phase_f_rc_audit.log
+          cat benchmarks/reports/ci/phase_f_rc_audit.log
+
       - name: Publish summary to workflow
         if: always()
         run: |
@@ -462,6 +495,10 @@ jobs:
             echo "" >> "$GITHUB_STEP_SUMMARY"
             cat benchmarks/reports/ci/coreml_runner_adapter.md >> "$GITHUB_STEP_SUMMARY"
           fi
+          if [ -f benchmarks/reports/ci/coreml_roundtrip.md ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            cat benchmarks/reports/ci/coreml_roundtrip.md >> "$GITHUB_STEP_SUMMARY"
+          fi
           if [ -f benchmarks/reports/ci/mlx_runner_adapter.md ]; then
             echo "" >> "$GITHUB_STEP_SUMMARY"
             cat benchmarks/reports/ci/mlx_runner_adapter.md >> "$GITHUB_STEP_SUMMARY"
@@ -491,6 +528,12 @@ jobs:
             cat benchmarks/reports/ci/phase_e_exit_audit.md >> "$GITHUB_STEP_SUMMARY"
           else
             echo "phase_e_exit_audit summary not found." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f benchmarks/reports/ci/phase_f_rc_audit.md ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            cat benchmarks/reports/ci/phase_f_rc_audit.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "phase_f_rc_audit summary not found." >> "$GITHUB_STEP_SUMMARY"
           fi
           if [ -f benchmarks/reports/ci/version_sync_report.md ]; then
             echo "" >> "$GITHUB_STEP_SUMMARY"
@@ -542,6 +585,11 @@ jobs:
             benchmarks/reports/ci/coreml_runner_adapter.json
             benchmarks/reports/ci/coreml_runner_adapter.md
             benchmarks/reports/ci/coreml_runner_adapter.log
+            benchmarks/reports/ci/coreml_roundtrip.csv
+            benchmarks/reports/ci/coreml_roundtrip.json
+            benchmarks/reports/ci/coreml_roundtrip.md
+            benchmarks/reports/ci/coreml_roundtrip.log
+            benchmarks/reports/ci/coreml_roundtrip_bundle/**
             benchmarks/reports/ci/mlx_runner_adapter.csv
             benchmarks/reports/ci/mlx_runner_adapter.json
             benchmarks/reports/ci/mlx_runner_adapter.md
@@ -573,5 +621,8 @@ jobs:
             benchmarks/reports/ci/phase_e_exit_audit.md
             benchmarks/reports/ci/phase_e_exit_candidate_bundle.json
             benchmarks/reports/ci/phase_e_exit_audit.log
+            benchmarks/reports/ci/phase_f_rc_audit.json
+            benchmarks/reports/ci/phase_f_rc_audit.md
+            benchmarks/reports/ci/phase_f_rc_audit.log
             benchmarks/reports/ci/version_sync_report.json
             benchmarks/reports/ci/version_sync_report.md

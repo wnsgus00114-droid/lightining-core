@@ -58,6 +58,6 @@
       "min_perf_explain_coverage_pct": 100.0
     }
   },
-  "release_baseline_version": "v0.5.6",
-  "release_baseline_date": "2026-04-14"
+  "release_baseline_version": "v0.5.7",
+  "release_baseline_date": "2026-04-15"
 }

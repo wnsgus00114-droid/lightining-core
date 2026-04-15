@@ -71,6 +71,7 @@ jobs:
       LC_PHASE_C_CONTRACT_JSON: docs/phase_c_engine_contract.json
       LC_PHASE_D_CONTRACT_JSON: docs/phase_d_runner_contract.json
       LC_PHASE_E_CONTRACT_JSON: docs/engine_federation_contract.json
+      LC_PHASE_F_CONTRACT_JSON: docs/phase_f_framework_contract.json
       LC_INTEROP_BOUNDARY_MAX_OVERHEAD_MS: "0.35"
       LC_INTEROP_BOUNDARY_MIN_REASON_COVERAGE_PCT: "100.0"
       LC_INTEROP_BOUNDARY_MAX_UPLOAD_OVERHEAD_MS: "0.12"
@@ -122,11 +123,14 @@ jobs:
         run: |
           python scripts/generate_phase_b_contract_docs.py --check
           python scripts/generate_phase_e_contract_docs.py --check
+          python scripts/generate_phase_f_contract_docs.py --check
           python scripts/generate_import_export_matrix_docs.py --check
+          python scripts/generate_test_matrix_docs.py --check
           python scripts/check_phase_b_contract_sync.py
           python scripts/check_phase_c_contract_sync.py
           python scripts/check_phase_d_contract_sync.py
           python scripts/check_phase_e_contract_sync.py
+          python scripts/check_phase_f_contract_sync.py
           python scripts/sync_release_metadata.py --check --expected-version "$GITHUB_REF_NAME"
 
       - name: Prepare release benchmark evidence directory
@@ -148,6 +152,7 @@ jobs:
           python benchmarks/python/torch_runner_adapter_bench.py --device cpu --warmup 4 --iters 20 --allow-fake-torch --require-reason-coverage --min-reason-coverage-pct ${LC_TORCH_RUNNER_MIN_REASON_COVERAGE_PCT} --require-budget-gate --max-boundary-overhead-ms 5.0 --out-dir ${REPORT_DIR} --csv torch_runner_adapter.csv --json torch_runner_adapter.json --md torch_runner_adapter.md
           python benchmarks/python/tf_runner_adapter_bench.py --device cpu --warmup 4 --iters 20 --require-reason-coverage --min-reason-coverage-pct ${LC_TF_RUNNER_MIN_REASON_COVERAGE_PCT} --require-artifact-schema --out-dir ${REPORT_DIR} --csv tf_runner_adapter.csv --json tf_runner_adapter.json --md tf_runner_adapter.md
           python benchmarks/python/coreml_runner_adapter_bench.py --device cpu --warmup 4 --iters 20 --require-reason-coverage --min-reason-coverage-pct ${LC_PHASE_E_MIN_COREML_REASON_COVERAGE_PCT} --require-budget-gate --max-boundary-overhead-ms ${LC_PHASE_E_MAX_BOUNDARY_OVERHEAD_MS} --out-dir ${REPORT_DIR} --csv coreml_runner_adapter.csv --json coreml_runner_adapter.json --md coreml_runner_adapter.md
+          python benchmarks/python/coreml_roundtrip_bench.py --device cpu --mode eager --warmup 2 --iters 5 --bundle-dir ${REPORT_DIR}/coreml_roundtrip_bundle --out-dir ${REPORT_DIR} --csv coreml_roundtrip.csv --json coreml_roundtrip.json --md coreml_roundtrip.md
           python benchmarks/python/mlx_runner_adapter_bench.py --device cpu --warmup 4 --iters 20 --require-reason-coverage --min-reason-coverage-pct ${LC_PHASE_E_MIN_MLX_REASON_COVERAGE_PCT} --require-budget-gate --max-boundary-overhead-ms ${LC_PHASE_E_MAX_BOUNDARY_OVERHEAD_MS} --out-dir ${REPORT_DIR} --csv mlx_runner_adapter.csv --json mlx_runner_adapter.json --md mlx_runner_adapter.md
           python benchmarks/python/interop_perf_gate_v2.py --engine-interop-json ${REPORT_DIR}/engine_split_interop.json --torch-adapter-json ${REPORT_DIR}/torch_runner_adapter.json --tf-runner-json ${REPORT_DIR}/tf_runner_adapter.json --coreml-adapter-json ${REPORT_DIR}/coreml_runner_adapter.json --mlx-adapter-json ${REPORT_DIR}/mlx_runner_adapter.json --out-json ${REPORT_DIR}/interop_perf_gate_v2.json --out-md ${REPORT_DIR}/interop_perf_gate_v2.md --max-boundary-overhead-ms ${LC_PHASE_E_MAX_BOUNDARY_OVERHEAD_MS} --min-reason-coverage-pct ${LC_PHASE_E_MIN_FEDERATION_REASON_COVERAGE_PCT} --min-perf-explain-coverage-pct ${LC_PHASE_E_MIN_PERF_EXPLAIN_COVERAGE_PCT} --require-reason-coverage --require-perf-explain-coverage --require-max-boundary-overhead-ms --require-pass
           python benchmarks/python/model_runner_variance_gate.py --runs-csv ${REPORT_DIR}/model_runner_variance_runs.csv --json ${REPORT_DIR}/model_runner_variance_summary.json --md ${REPORT_DIR}/model_runner_variance_summary.md --repeats 5 --variance-threshold-pct ${LC_RUNNER_VARIANCE_MAX_CV_PCT} --device cpu --warmup 2 --iters 8 --seed 20260411 --trim-runs 1 --require-pass
@@ -155,6 +160,7 @@ jobs:
           python benchmarks/python/phase_c_exit_audit.py --graph-json ${REPORT_DIR}/graph_eager_ab.json --fusion-json ${REPORT_DIR}/fusion_pilot.json --engine-interop-json ${REPORT_DIR}/engine_split_interop.json --tf-interop-json ${REPORT_DIR}/tf_interop.json --model-runner-json ${REPORT_DIR}/model_runner_alpha.json --cost-calibration-json ${REPORT_DIR}/cost_model_v2_calibration.json --prior-audit-json ${REPORT_DIR}/phase_c_exit_audit_prev.json --contract-json ${LC_PHASE_C_CONTRACT_JSON} --out-json ${REPORT_DIR}/phase_c_exit_audit.json --out-md ${REPORT_DIR}/phase_c_exit_audit.md --bundle-json ${REPORT_DIR}/phase_c_exit_candidate_bundle.json --require-artifacts --artifact ${REPORT_DIR}/graph_eager_ab.json --artifact ${REPORT_DIR}/fusion_pilot.json --artifact ${REPORT_DIR}/engine_split_interop.json --artifact ${REPORT_DIR}/tf_interop.json --artifact ${REPORT_DIR}/model_runner_alpha.json --artifact ${REPORT_DIR}/cost_model_v2_calibration.json --readme README.md --roadmap ROADMAP.md --expected-version ${GITHUB_REF_NAME} --require-doc-sync --require-pass
           python benchmarks/python/phase_d_exit_audit.py --torch-adapter-json ${REPORT_DIR}/torch_runner_adapter.json --tf-runner-json ${REPORT_DIR}/tf_runner_adapter.json --runner-variance-json ${REPORT_DIR}/model_runner_variance_summary.json --contract-json ${LC_PHASE_D_CONTRACT_JSON} --quickstart docs/quickstart.md --out-json ${REPORT_DIR}/phase_d_exit_audit.json --out-md ${REPORT_DIR}/phase_d_exit_audit.md --bundle-json ${REPORT_DIR}/phase_d_exit_candidate_bundle.json --require-artifacts --artifact ${REPORT_DIR}/torch_runner_adapter.json --artifact ${REPORT_DIR}/tf_runner_adapter.json --artifact ${REPORT_DIR}/model_runner_variance_summary.json --readme README.md --roadmap ROADMAP.md --expected-version ${GITHUB_REF_NAME} --require-doc-sync --require-pass
           python benchmarks/python/phase_e_exit_audit.py --interop-gate-json ${REPORT_DIR}/interop_perf_gate_v2.json --coreml-adapter-json ${REPORT_DIR}/coreml_runner_adapter.json --mlx-adapter-json ${REPORT_DIR}/mlx_runner_adapter.json --matrix-json docs/import_export_compatibility_matrix.json --contract-json ${LC_PHASE_E_CONTRACT_JSON} --out-json ${REPORT_DIR}/phase_e_exit_audit.json --out-md ${REPORT_DIR}/phase_e_exit_audit.md --bundle-json ${REPORT_DIR}/phase_e_exit_candidate_bundle.json --require-artifacts --artifact ${REPORT_DIR}/interop_perf_gate_v2.json --artifact ${REPORT_DIR}/coreml_runner_adapter.json --artifact ${REPORT_DIR}/mlx_runner_adapter.json --artifact docs/import_export_compatibility_matrix.json --readme README.md --roadmap ROADMAP.md --expected-version ${GITHUB_REF_NAME} --require-doc-sync --require-pass
+          python benchmarks/python/phase_f_rc_audit.py --contract-json ${LC_PHASE_F_CONTRACT_JSON} --phase-e-audit-json ${REPORT_DIR}/phase_e_exit_audit.json --test-matrix-json docs/test_matrix_contract.json --readme README.md --roadmap ROADMAP.md --expected-version ${GITHUB_REF_NAME} --out-json ${REPORT_DIR}/phase_f_rc_audit.json --out-md ${REPORT_DIR}/phase_f_rc_audit.md --require-pass
           CMD
 
       - name: Generate version sync report (hard gate)
@@ -419,6 +425,21 @@ jobs:
             > "$REPORT_DIR/coreml_runner_adapter.log"
           cat "$REPORT_DIR/coreml_runner_adapter.log"
 
+      - name: Run release CoreML roundtrip beta benchmark
+        run: |
+          python benchmarks/python/coreml_roundtrip_bench.py \
+            --device cpu \
+            --mode eager \
+            --warmup 2 \
+            --iters 5 \
+            --bundle-dir "$REPORT_DIR/coreml_roundtrip_bundle" \
+            --out-dir "$REPORT_DIR" \
+            --csv coreml_roundtrip.csv \
+            --json coreml_roundtrip.json \
+            --md coreml_roundtrip.md \
+            > "$REPORT_DIR/coreml_roundtrip.log"
+          cat "$REPORT_DIR/coreml_roundtrip.log"
+
       - name: Run release MLX runner adapter benchmark
         run: |
           python benchmarks/python/mlx_runner_adapter_bench.py \
@@ -587,6 +608,21 @@ jobs:
             > "$REPORT_DIR/phase_e_exit_audit.log"
           cat "$REPORT_DIR/phase_e_exit_audit.log"
 
+      - name: Run Phase F RC audit
+        run: |
+          python benchmarks/python/phase_f_rc_audit.py \
+            --contract-json "$LC_PHASE_F_CONTRACT_JSON" \
+            --phase-e-audit-json "$REPORT_DIR/phase_e_exit_audit.json" \
+            --test-matrix-json docs/test_matrix_contract.json \
+            --readme README.md \
+            --roadmap ROADMAP.md \
+            --expected-version "$GITHUB_REF_NAME" \
+            --out-json "$REPORT_DIR/phase_f_rc_audit.json" \
+            --out-md "$REPORT_DIR/phase_f_rc_audit.md" \
+            --require-pass \
+            > "$REPORT_DIR/phase_f_rc_audit.log"
+          cat "$REPORT_DIR/phase_f_rc_audit.log"
+
       - name: Build release benchmark manifest
         run: |
           python - <<'PY'
@@ -639,6 +675,10 @@ jobs:
               "coreml_runner_adapter.json",
               "coreml_runner_adapter.md",
               "coreml_runner_adapter.log",
+              "coreml_roundtrip.csv",
+              "coreml_roundtrip.json",
+              "coreml_roundtrip.md",
+              "coreml_roundtrip.log",
               "mlx_runner_adapter.csv",
               "mlx_runner_adapter.json",
               "mlx_runner_adapter.md",
@@ -666,6 +706,9 @@ jobs:
               "phase_e_exit_audit.md",
               "phase_e_exit_candidate_bundle.json",
               "phase_e_exit_audit.log",
+              "phase_f_rc_audit.json",
+              "phase_f_rc_audit.md",
+              "phase_f_rc_audit.log",
               "version_sync_report.json",
               "version_sync_report.md",
               "release_bench_environment.json",
@@ -725,12 +768,14 @@ jobs:
           echo "- torch runner adapter: \`$REPORT_DIR/torch_runner_adapter.json\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- tf runner adapter: \`$REPORT_DIR/tf_runner_adapter.json\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- coreml runner adapter: \`$REPORT_DIR/coreml_runner_adapter.json\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- coreml roundtrip beta: \`$REPORT_DIR/coreml_roundtrip.json\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- mlx runner adapter: \`$REPORT_DIR/mlx_runner_adapter.json\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- interop perf gate v2: \`$REPORT_DIR/interop_perf_gate_v2.json\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- model runner variance: \`$REPORT_DIR/model_runner_variance_summary.json\` (CV gate)" >> "$GITHUB_STEP_SUMMARY"
           echo "- phase-c exit audit: \`$REPORT_DIR/phase_c_exit_audit.json\`, \`$REPORT_DIR/phase_c_exit_candidate_bundle.json\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- phase-d exit audit: \`$REPORT_DIR/phase_d_exit_audit.json\`, \`$REPORT_DIR/phase_d_exit_candidate_bundle.json\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- phase-e exit audit: \`$REPORT_DIR/phase_e_exit_audit.json\`, \`$REPORT_DIR/phase_e_exit_candidate_bundle.json\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- phase-f rc audit: \`$REPORT_DIR/phase_f_rc_audit.json\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- version sync report: \`$REPORT_DIR/version_sync_report.json\`, \`$REPORT_DIR/version_sync_report.md\`" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           cat "$REPORT_DIR/quick_bench_summary.md" >> "$GITHUB_STEP_SUMMARY"
@@ -764,6 +809,10 @@ jobs:
             echo "" >> "$GITHUB_STEP_SUMMARY"
             cat "$REPORT_DIR/coreml_runner_adapter.md" >> "$GITHUB_STEP_SUMMARY"
           fi
+          if [ -f "$REPORT_DIR/coreml_roundtrip.md" ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            cat "$REPORT_DIR/coreml_roundtrip.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
           if [ -f "$REPORT_DIR/mlx_runner_adapter.md" ]; then
             echo "" >> "$GITHUB_STEP_SUMMARY"
             cat "$REPORT_DIR/mlx_runner_adapter.md" >> "$GITHUB_STEP_SUMMARY"
@@ -787,6 +836,10 @@ jobs:
           if [ -f "$REPORT_DIR/phase_e_exit_audit.md" ]; then
             echo "" >> "$GITHUB_STEP_SUMMARY"
             cat "$REPORT_DIR/phase_e_exit_audit.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f "$REPORT_DIR/phase_f_rc_audit.md" ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            cat "$REPORT_DIR/phase_f_rc_audit.md" >> "$GITHUB_STEP_SUMMARY"
           fi
           if [ -f "$REPORT_DIR/version_sync_report.md" ]; then
             echo "" >> "$GITHUB_STEP_SUMMARY"
@@ -844,6 +897,11 @@ jobs:
             ${{ env.REPORT_DIR }}/coreml_runner_adapter.json
             ${{ env.REPORT_DIR }}/coreml_runner_adapter.md
             ${{ env.REPORT_DIR }}/coreml_runner_adapter.log
+            ${{ env.REPORT_DIR }}/coreml_roundtrip.csv
+            ${{ env.REPORT_DIR }}/coreml_roundtrip.json
+            ${{ env.REPORT_DIR }}/coreml_roundtrip.md
+            ${{ env.REPORT_DIR }}/coreml_roundtrip.log
+            ${{ env.REPORT_DIR }}/coreml_roundtrip_bundle/**
             ${{ env.REPORT_DIR }}/mlx_runner_adapter.csv
             ${{ env.REPORT_DIR }}/mlx_runner_adapter.json
             ${{ env.REPORT_DIR }}/mlx_runner_adapter.md
@@ -871,6 +929,9 @@ jobs:
             ${{ env.REPORT_DIR }}/phase_e_exit_audit.md
             ${{ env.REPORT_DIR }}/phase_e_exit_candidate_bundle.json
             ${{ env.REPORT_DIR }}/phase_e_exit_audit.log
+            ${{ env.REPORT_DIR }}/phase_f_rc_audit.json
+            ${{ env.REPORT_DIR }}/phase_f_rc_audit.md
+            ${{ env.REPORT_DIR }}/phase_f_rc_audit.log
             ${{ env.REPORT_DIR }}/version_sync_report.json
             ${{ env.REPORT_DIR }}/version_sync_report.md
             ${{ env.REPORT_DIR }}/release_bench_environment.json

@@ -10,7 +10,7 @@ Regenerate:
 | Headers scanned | 7 |
 | Types (enum/struct/class) | 56 |
 | C++ functions | 38 |
-| C API functions | 21 |
+| C API functions | 25 |
 
 ## Header Set
 
@@ -26,27 +26,31 @@ Regenerate:
 
 | Function | Source |
 | --- | --- |
-| `lcApplyDefaultSyncPolicy` | [include/lightning_core/lightning_core.h:113](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L113) |
-| `lcApplySyncPolicy` | [include/lightning_core/lightning_core.h:112](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L112) |
-| `lcBackendName` | [include/lightning_core/lightning_core.h:118](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L118) |
-| `lcDeviceSynchronize` | [include/lightning_core/lightning_core.h:102](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L102) |
-| `lcFree` | [include/lightning_core/lightning_core.h:100](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L100) |
-| `lcGetActiveBackendCapabilities` | [include/lightning_core/lightning_core.h:115](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L115) |
-| `lcGetActiveBackendInterfaceContract` | [include/lightning_core/lightning_core.h:117](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L117) |
-| `lcGetBackendCapabilities` | [include/lightning_core/lightning_core.h:114](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L114) |
-| `lcGetBackendInterfaceContract` | [include/lightning_core/lightning_core.h:116](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L116) |
-| `lcGetDefaultSyncPolicy` | [include/lightning_core/lightning_core.h:111](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L111) |
-| `lcGetDeviceCount` | [include/lightning_core/lightning_core.h:103](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L103) |
-| `lcGetErrorString` | [include/lightning_core/lightning_core.h:119](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L119) |
-| `lcGetMemoryModel` | [include/lightning_core/lightning_core.h:108](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L108) |
-| `lcGetMemoryModelName` | [include/lightning_core/lightning_core.h:109](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L109) |
-| `lcGetPreferredDeviceForInference` | [include/lightning_core/lightning_core.h:104](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L104) |
-| `lcGetPreferredDeviceForTraining` | [include/lightning_core/lightning_core.h:105](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L105) |
-| `lcIsCudaAvailable` | [include/lightning_core/lightning_core.h:106](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L106) |
-| `lcIsMetalAvailable` | [include/lightning_core/lightning_core.h:107](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L107) |
-| `lcMalloc` | [include/lightning_core/lightning_core.h:99](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L99) |
-| `lcMemcpy` | [include/lightning_core/lightning_core.h:101](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L101) |
-| `lcSetDefaultSyncPolicy` | [include/lightning_core/lightning_core.h:110](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L110) |
+| `lcApplyDefaultSyncPolicy` | [include/lightning_core/lightning_core.h:127](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L127) |
+| `lcApplySyncPolicy` | [include/lightning_core/lightning_core.h:126](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L126) |
+| `lcBackendName` | [include/lightning_core/lightning_core.h:136](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L136) |
+| `lcCheckStructSize` | [include/lightning_core/lightning_core.h:135](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L135) |
+| `lcDeviceSynchronize` | [include/lightning_core/lightning_core.h:116](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L116) |
+| `lcFree` | [include/lightning_core/lightning_core.h:114](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L114) |
+| `lcGetActiveBackendCapabilities` | [include/lightning_core/lightning_core.h:129](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L129) |
+| `lcGetActiveBackendInterfaceContract` | [include/lightning_core/lightning_core.h:131](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L131) |
+| `lcGetApiVersion` | [include/lightning_core/lightning_core.h:132](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L132) |
+| `lcGetApiVersionString` | [include/lightning_core/lightning_core.h:133](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L133) |
+| `lcGetBackendCapabilities` | [include/lightning_core/lightning_core.h:128](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L128) |
+| `lcGetBackendInterfaceContract` | [include/lightning_core/lightning_core.h:130](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L130) |
+| `lcGetDefaultSyncPolicy` | [include/lightning_core/lightning_core.h:125](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L125) |
+| `lcGetDeviceCount` | [include/lightning_core/lightning_core.h:117](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L117) |
+| `lcGetErrorString` | [include/lightning_core/lightning_core.h:137](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L137) |
+| `lcGetMemoryModel` | [include/lightning_core/lightning_core.h:122](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L122) |
+| `lcGetMemoryModelName` | [include/lightning_core/lightning_core.h:123](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L123) |
+| `lcGetPreferredDeviceForInference` | [include/lightning_core/lightning_core.h:118](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L118) |
+| `lcGetPreferredDeviceForTraining` | [include/lightning_core/lightning_core.h:119](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L119) |
+| `lcGetStructSize` | [include/lightning_core/lightning_core.h:134](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L134) |
+| `lcIsCudaAvailable` | [include/lightning_core/lightning_core.h:120](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L120) |
+| `lcIsMetalAvailable` | [include/lightning_core/lightning_core.h:121](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L121) |
+| `lcMalloc` | [include/lightning_core/lightning_core.h:113](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L113) |
+| `lcMemcpy` | [include/lightning_core/lightning_core.h:115](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L115) |
+| `lcSetDefaultSyncPolicy` | [include/lightning_core/lightning_core.h:124](https://github.com/wnsgus00114-droid/lightning-core/blob/main/include/lightning_core/lightning_core.h#L124) |
 
 ## Types
 

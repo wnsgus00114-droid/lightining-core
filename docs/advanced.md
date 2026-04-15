@@ -59,7 +59,9 @@ The docs workflow now regenerates API references and validates markdown links be
 ```bash
 python3 scripts/generate_capability_docs.py
 python3 scripts/generate_phase_e_contract_docs.py
+python3 scripts/generate_phase_f_contract_docs.py
 python3 scripts/generate_import_export_matrix_docs.py
+python3 scripts/generate_test_matrix_docs.py
 python3 scripts/generate_roadmap_history.py
 python3 scripts/generate_api_reference_docs.py
 python3 scripts/check_docs_links.py README.md docs
@@ -73,7 +75,9 @@ Generated API reference outputs:
 Generated interop contract outputs:
 
 - [docs/phase_e_contracts.md](phase_e_contracts.md)
+- [docs/phase_f_contracts.md](phase_f_contracts.md)
 - [docs/import_export_matrix.md](import_export_matrix.md)
+- [docs/test_matrix.md](test_matrix.md)
 
 ## Benchmark Suite
 
@@ -130,6 +134,16 @@ python benchmarks/python/engine_split_bench.py \
   --warmup 20 \
   --iters 120 \
   --out-dir benchmark_results
+
+CoreML round-trip beta benchmark:
+
+```bash
+python benchmarks/python/coreml_roundtrip_bench.py \
+  --device cpu \
+  --mode eager \
+  --bundle-dir benchmarks/reports/ci/coreml_roundtrip_bundle \
+  --out-dir benchmarks/reports/ci
+```
 ```
 
 ### Attention benchmark parameters

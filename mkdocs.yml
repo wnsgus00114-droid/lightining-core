@@ -19,7 +19,9 @@ nav:
   - Capability Matrix: capability_matrix.md
   - Phase B Contracts: phase_b_contracts.md
   - Phase E Contracts: phase_e_contracts.md
+  - Phase F Contracts: phase_f_contracts.md
   - Import/Export Matrix: import_export_matrix.md
+  - Test Matrix: test_matrix.md
   - Operator Onboarding Kit: operator_onboarding_kit.md
   - Release Notes: release_notes.md
   - API:
